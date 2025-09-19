@@ -327,11 +327,17 @@ OLD_IP="192.168.1.1"
 NEW_IP="192.168.3.1"
 CONFIG_FILE="package/base-files/files/bin/config_generate"
 
-sed -i "s/$OLD_IP/$NEW_IP/g" "$CONFIG_FILE"
+# 文件存在检查
+if [ ! -f "$CONFIG_FILE" ]; then
+    log_error "配置文件不存在：$CONFIG_FILE"
+fi
 
-# 判断是否修改成功
-if grep -q "$NEW_IP" "$CONFIG_FILE"; then
-    log_success "默认 IP 修改成功：$NEW_IP"
+# 修改 IP
+sed -i "s/${OLD_IP}/${NEW_IP}/g" "$CONFIG_FILE"
+
+# 输出日志
+if grep -q "${NEW_IP}" "$CONFIG_FILE"; then
+    log_success "默认 IP 修改成功：${NEW_IP}"
 else
     log_error "默认 IP 修改失败，请检查 $CONFIG_FILE"
 fi

@@ -362,6 +362,25 @@ log_info "更新 feeds 并安装..."
 log_success "feeds 更新完成"
 
 
+# 适用于云编译 OpenWrt，自动处理 AdGuardHome v0.107.66
+
+# 1. 删除旧 patch（避免 patch 失败）
+rm -f feeds/my_packages/adguardhome/patches/010-go-mod-tidy.patch
+
+# 2. 清理旧源码和 build
+rm -rf dl/adguardhome-0.107.66.tar.zst
+rm -rf build_dir/target-*/adguardhome-0.107.66
+
+# 3. 重新下载源码
+make package/feeds/my_packages/adguardhome/download
+
+# 4. 进入源码目录，自动 tidy
+cd feeds/my_packages/adguardhome
+GOOS=linux GOARCH=arm GOARM=7 go mod tidy
+cd ../../../
+log_success "AdGuardHome 预处理完成（源码下载 + go mod tidy）"
+
+
 # 1️⃣a 自动启用 PassWall2
 sed -i 's/# CONFIG_PACKAGE_luci-app-passwall2 is not set/CONFIG_PACKAGE_luci-app-passwall2=y/' .config || echo 'CONFIG_PACKAGE_luci-app-passwall2=y' >> .config
 make defconfig

@@ -373,23 +373,33 @@ log_info "更新 feeds 并安装..."
 log_success "feeds 更新完成"
 
 # =================================================================
-# 适用于云编译 OpenWrt，自动处理 AdGuardHome v0.107.66
 
-# 1. 删除旧 patch（避免 patch 失败）
-rm -f feeds/my_packages/adguardhome/patches/010-go-mod-tidy.patch
+# AdGuardHome 配置
+AGH_DIR="feeds/my_packages/adguardhome"
+OUTPUT_DIR="package/custom/AdGuardHome/files/usr/bin"
 
-# 2. 清理旧源码和 build
-rm -rf dl/adguardhome-0.107.66.tar.zst
-rm -rf build_dir/target-*/adguardhome-0.107.66
+echo "[INFO] 编译 AdGuardHome..."
+cd "$AGH_DIR"
 
-# 3. 重新下载源码
-make package/feeds/my_packages/adguardhome/download
+# 清理旧二进制
+rm -f AdGuardHome
 
-# 4. 进入源码目录，自动 tidy
-cd feeds/my_packages/adguardhome
-GOOS=linux GOARCH=arm GOARM=7 go mod tidy
-cd ../../../
-log_success "AdGuardHome 预处理完成（源码下载 + go mod tidy）"
+# 下载依赖
+go mod tidy
+
+# 设置交叉编译环境
+export GOOS=linux
+export GOARCH=arm
+export GOARM=7
+
+# 编译
+go build -o AdGuardHome -v
+
+# 拷贝到 OpenWrt package 目录
+mkdir -p "$OUTPUT_DIR"
+cp AdGuardHome "$OUTPUT_DIR/"
+
+echo "[INFO] AdGuardHome 编译完成并集成到 OpenWrt package！"
 
 # =================================================================
 # 1️⃣a 自动启用 PassWall2

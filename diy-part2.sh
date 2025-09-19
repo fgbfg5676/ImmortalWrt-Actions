@@ -353,47 +353,6 @@ log_info "生成基础配置..."
 make defconfig
 log_success "基础配置完成"
 
-# -------------------- 步驟 11：集成官方 AdGuardHome Package --------------------
-AGH_DIR="package/custom/AdGuardHome"
-mkdir -p "$AGH_DIR/files/usr/bin"
-cat > "$AGH_DIR/Makefile" <<'EOF'
-include $(TOPDIR)/rules.mk
-PKG_NAME:=AdGuardHome
-PKG_VERSION:=0.107.66
-PKG_RELEASE:=1
-PKG_BUILD_DIR:=$(BUILD_DIR)/$(PKG_NAME)
-PKG_LICENSE:=GPL-2.0-or-later
-PKG_MAINTAINER:=You <you@example.com>
-include $(INCLUDE_DIR)/package.mk
-define Package/AdGuardHome
-  SECTION:=net
-  CATEGORY:=Network
-  TITLE:=AdGuardHome DNS adblock server
-  DEPENDS:=+ca-bundle
-endef
-define Package/AdGuardHome/description
-  AdGuardHome is a network-wide ads & trackers blocking DNS server.
-endef
-define Build/Prepare
-	mkdir -p $(PKG_BUILD_DIR)
-endef
-define Build/Compile
-	export GOOS=linux
-	export GOARCH=arm
-	export GOARM=7
-	export CGO_ENABLED=0
-	cd $(PKG_BUILD_DIR) && \
-	git clone --depth 1 --branch v$(PKG_VERSION) https://github.com/AdguardTeam/AdGuardHome.git . && \
-	go build -v -o AdGuardHome main.go
-endef
-define Package/AdGuardHome/install
-	$(INSTALL_DIR) $(1)/usr/bin
-	$(INSTALL_BIN) $(PKG_BUILD_DIR)/AdGuardHome $(1)/usr/bin/
-endef
-$(eval $(call BuildPackage,AdGuardHome))
-EOF
-grep -q "CONFIG_PACKAGE_AdGuardHome=y" .config || echo "CONFIG_PACKAGE_AdGuardHome=y" >> .config
-log_success "AdGuardHome 已启用"
 
 # -------------------- 步驟 12：zh-cn -> zh_Hans --------------------
 for po in $(find feeds/luci/modules -type f -name 'zh-cn.po'); do

@@ -415,7 +415,4 @@ log_success "LuCI ACL 创建完成"
 rm -rf ./tmp
 log_success "临时文件 tmp 已删除"
 
-# -------------------- 步驟 15：开始全自动编译 --------------------
-log_info "===== 开始全自动编译固件 ====="
-make -j$(nproc) || log_error "固件编译失败"
-log_success "固件编译完成"
+

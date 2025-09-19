@@ -380,12 +380,18 @@ log_success "feeds 更新完成"
 
 # =================================================================
 
+# =================================================================
 # AdGuardHome 配置
 AGH_DIR="feeds/my_packages/adguardhome"
 OUTPUT_DIR="package/custom/AdGuardHome/files/usr/bin"
 
 echo "[INFO] 编译 AdGuardHome..."
 cd "$AGH_DIR"
+
+# ✅ 检查 go.mod 是否存在
+if [ ! -f "go.mod" ]; then
+    log_error "go.mod 文件不存在，目录不完整：$AGH_DIR"
+fi
 
 # 清理旧二进制
 rm -f AdGuardHome

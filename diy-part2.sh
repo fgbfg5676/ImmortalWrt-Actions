@@ -19,7 +19,10 @@ DTS_DIR="target/linux/ipq40xx/files/arch/arm/boot/dts"
 DTS_FILE="$DTS_DIR/qcom-ipq4019-cm520-79f.dts"
 GENERIC_MK="target/linux/ipq40xx/image/generic.mk"
 CUSTOM_PLUGINS_DIR="package/custom"
+PARTE_EXP_DIR="$CUSTOM_PLUGINS_DIR/luci-app-partexp"
 log_success "基礎變量定義完成。"
+mkdir -p "$CUSTOM_PLUGINS_DIR"
+log_info "自定义插件目录已创建：$CUSTOM_PLUGINS_DIR"
 
 # -------------------- 步驟 2：創建必要的目錄 --------------------
 log_info "步驟 2：創建必要的目錄..."
@@ -323,13 +326,34 @@ fi
 sed -i 's/192.168.1.1/192.168.3.1/g' package/base-files/files/bin/config_generate
 
 # -------------------- 步骤 7：集成 sirpdboy 插件 --------------------
-log_info "集成 sirpdboy 插件..."
+log_info "===== 集成 sirpdboy 插件 ====="
+
+CUSTOM_PLUGINS_DIR="package/custom"
+PARTE_EXP_DIR="$CUSTOM_PLUGINS_DIR/luci-app-partexp"
+
+# 创建目录
 mkdir -p "$CUSTOM_PLUGINS_DIR"
-if [ ! -d "$CUSTOM_PLUGINS_DIR/luci-app-partexp/.git" ]; then
-    git clone --depth 1 https://github.com/sirpdboy/luci-app-partexp.git "$CUSTOM_PLUGINS_DIR/luci-app-partexp" \
-    || log_error "sirpdboy 插件克隆失败"
+
+# 克隆插件（如果不存在）
+if [ ! -d "$PARTE_EXP_DIR/.git" ]; then
+    log_info "sirpdboy 插件不存在，开始克隆..."
+    if git clone --depth 1 https://github.com/sirpdboy/luci-app-partexp.git "$PARTE_EXP_DIR"; then
+        log_success "sirpdboy 插件克隆成功"
+    else
+        log_error "sirpdboy 插件克隆失败"
+    fi
+else
+    log_info "sirpdboy 插件已存在，跳过克隆"
 fi
-log_success "sirpdboy 插件已准备好"
+
+# 自动启用插件
+if ! grep -q "CONFIG_PACKAGE_luci-app-partexp=y" .config; then
+    echo "CONFIG_PACKAGE_luci-app-partexp=y" >> .config
+    log_success "sirpdboy 插件已自动启用"
+else
+    log_info "sirpdboy 插件已启用，无需重复操作"
+fi
+
 
 # -------------------- 步骤 8：更新 feeds 并安装 --------------------
 log_info "更新 feeds 并安装..."

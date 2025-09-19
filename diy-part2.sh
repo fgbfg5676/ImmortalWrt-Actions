@@ -321,11 +321,22 @@ else
     sed -i 's/IMAGE_SIZE := 32768k/IMAGE_SIZE := 81920k/' "$GENERIC_MK"
     log_info "设备规则已存在，更新IMAGE_SIZE。"
 fi
-
+# =================================================================
 # 0️⃣ 修改默认 IP
-sed -i 's/192.168.1.1/192.168.3.1/g' package/base-files/files/bin/config_generate
+OLD_IP="192.168.1.1"
+NEW_IP="192.168.3.1"
+CONFIG_FILE="package/base-files/files/bin/config_generate"
 
-# -------------------- 步骤 7：集成 sirpdboy 插件 --------------------
+sed -i "s/$OLD_IP/$NEW_IP/g" "$CONFIG_FILE"
+
+# 判断是否修改成功
+if grep -q "$NEW_IP" "$CONFIG_FILE"; then
+    log_success "默认 IP 修改成功：$NEW_IP"
+else
+    log_error "默认 IP 修改失败，请检查 $CONFIG_FILE"
+fi
+
+# -------------------- 集成 sirpdboy 插件 --------------------
 log_info "===== 集成 sirpdboy 插件 ====="
 
 CUSTOM_PLUGINS_DIR="package/custom"
@@ -361,7 +372,7 @@ log_info "更新 feeds 并安装..."
 ./scripts/feeds install -a
 log_success "feeds 更新完成"
 
-
+# =================================================================
 # 适用于云编译 OpenWrt，自动处理 AdGuardHome v0.107.66
 
 # 1. 删除旧 patch（避免 patch 失败）
@@ -380,7 +391,7 @@ GOOS=linux GOARCH=arm GOARM=7 go mod tidy
 cd ../../../
 log_success "AdGuardHome 预处理完成（源码下载 + go mod tidy）"
 
-
+# =================================================================
 # 1️⃣a 自动启用 PassWall2
 sed -i 's/# CONFIG_PACKAGE_luci-app-passwall2 is not set/CONFIG_PACKAGE_luci-app-passwall2=y/' .config || echo 'CONFIG_PACKAGE_luci-app-passwall2=y' >> .config
 make defconfig

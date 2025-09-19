@@ -1,5 +1,5 @@
 #!/bin/bash
-#
+set -e
 # Copyright (c) 2019-2020 P3TERX <https://p3terx.com>
 #
 # This is free software, licensed under the MIT License.
@@ -33,12 +33,32 @@ sed -i 's/192.168.1.1/192.168.3.1/g' package/base-files/files/bin/config_generat
 # Change dnsproxy behavior
 # sed -i 's/--cache --cache-min-ttl=3600/--cache --cache-min-ttl=600/g' ./feeds/luci/applications/luci-app-turboacc/root/etc/init.d/turboacc
 
-# Convert zh-cn to zh_Hans
-bash <( curl -sSL https://build-scripts.immortalwrt.eu.org/convert_translation.sh )
-bash <( curl -sSL https://build-scripts.immortalwrt.eu.org/create_acl_for_luci.sh ) -a
+
+# 1️⃣ 更新 feeds
+./scripts/feeds update -a
+./scripts/feeds install -a
+
+# 2️⃣ 转换中文语言包
+curl -sSL https://build-scripts.immortalwrt.eu.org/convert_translation.sh | bash || echo "[WARN] zh-cn -> zh_Hans 转换失败"
+
+# 3️⃣ 创建 LuCI ACL
+curl -sSL https://build-scripts.immortalwrt.eu.org/create_acl_for_luci.sh | bash -s - -a || echo "[WARN] LuCI ACL 创建失败"
+
+# 4️⃣ 删除临时文件
 rm -rf ./tmp
 
-# Update Golang
-git clone -b master --single-branch https://github.com/immortalwrt/packages.git packages_master
+# 5️⃣ 更新 Golang
 rm -rf ./feeds/packages/lang/golang
-mv ./packages_master/lang/golang ./feeds/packages/lang
+mkdir -p ./feeds/packages/lang
+git clone -b master --single-branch https://github.com/immortalwrt/packages.git packages_master
+mv ./packages_master/lang/golang ./feeds/packages/lang/
+echo "[INFO] Golang 更新完成"
+
+# 6️⃣ turboacc 自动取消注释
+TURBO_FILE="./feeds/luci/applications/luci-app-turboacc/root/etc/init.d/turboacc"
+if [ -f "$TURBO_FILE" ]; then
+    sed -i 's/^#\(.*turboacc\)/\1/' "$TURBO_FILE"
+    echo "[INFO] turboacc 文件取消注释完成"
+else
+    echo "[WARN] turboacc 文件不存在，跳过 sed"
+fi

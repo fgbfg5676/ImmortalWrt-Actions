@@ -29,7 +29,7 @@ git submodule add https://github.com/Gzxhwq/openwrt-packages.git package/others/
 # svn co https://github.com/xiaorouji/openwrt-passwall-packages/trunk/tuic-client package/others/tuic-client
 
 # svn co https://github.com/xiaorouji/openwrt-passwall/trunk/luci-app-passwall package/others/luci-app-passwall
-svn co https://github.com/xiaorouji/openwrt-passwall2/trunk/luci-app-passwall2 package/others/luci-app-passwall2
+# svn co https://github.com/xiaorouji/openwrt-passwall2/trunk/luci-app-passwall2 package/others/luci-app-passwall2
 
 # git submodule add https://github.com/jerrykuku/luci-app-argon-config.git package/others/luci-app-argon-config
 # git submodule add https://github.com/jerrykuku/luci-theme-argon.git package/others/luci-theme-argon

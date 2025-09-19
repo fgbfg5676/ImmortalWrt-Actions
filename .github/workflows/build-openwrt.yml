@@ -37,9 +37,16 @@ jobs:
         run: |
           sudo apt update
           sudo apt install -y build-essential git wget curl unzip ccache libncurses5-dev zlib1g-dev python3
-          sudo apt install -y golang      # <<<<<< 安装 Go
           sudo timedatectl set-timezone "$TZ"
           sudo chown $USER:$GROUPS $GITHUB_WORKSPACE
+
+      - name: Install Go 1.25.1
+        run: |
+          wget https://go.dev/dl/go1.25.1.linux-amd64.tar.gz
+          sudo rm -rf /usr/local/go
+          sudo tar -C /usr/local -xzf go1.25.1.linux-amd64.tar.gz
+          export PATH=$PATH:/usr/local/go/bin
+          go version
 
       - name: Clone OpenWrt source
         run: |

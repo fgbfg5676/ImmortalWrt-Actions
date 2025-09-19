@@ -381,28 +381,30 @@ log_success "feeds 更新完成"
 # =================================================================
 
 # =================================================================
+# =================================================================
 # AdGuardHome 配置
 AGH_DIR="feeds/my_packages/adguardhome"
 OUTPUT_DIR="package/custom/AdGuardHome/files/usr/bin"
 
-echo "[INFO] 编译 AdGuardHome..."
-cd "$AGH_DIR"
+log_info "===== 编译 AdGuardHome ====="
 
-# ✅ 检查 go.mod 是否存在
-if [ ! -f "go.mod" ]; then
-    log_error "go.mod 文件不存在，目录不完整：$AGH_DIR"
+# 检查源码完整性
+if [ ! -f "$AGH_DIR/go.mod" ] || [ ! -f "$AGH_DIR/main.go" ]; then
+    log_error "go.mod 或 main.go 文件不存在，目录不完整：$AGH_DIR"
 fi
+
+cd "$AGH_DIR"
 
 # 清理旧二进制
 rm -f AdGuardHome
-
-# 下载依赖
-go mod tidy
 
 # 设置交叉编译环境
 export GOOS=linux
 export GOARCH=arm
 export GOARM=7
+export CGO_ENABLED=0
+
+log_info "开始交叉编译 AdGuardHome (GOOS=$GOOS GOARCH=$GOARCH GOARM=$GOARM)..."
 
 # 编译
 go build -o AdGuardHome -v
@@ -411,7 +413,7 @@ go build -o AdGuardHome -v
 mkdir -p "$OUTPUT_DIR"
 cp AdGuardHome "$OUTPUT_DIR/"
 
-echo "[INFO] AdGuardHome 编译完成并集成到 OpenWrt package！"
+log_success "AdGuardHome 编译完成并集成到 OpenWrt package！"
 
 # =================================================================
 # 1️⃣a 自动启用 PassWall2

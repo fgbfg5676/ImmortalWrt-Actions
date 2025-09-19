@@ -10,24 +10,10 @@ set -e
 # Description: OpenWrt DIY script part 2 (After Update feeds)
 #
 
-# Modify default IP
+# 0️⃣ 修改默认 IP
 sed -i 's/192.168.1.1/192.168.3.1/g' package/base-files/files/bin/config_generate
-# sed -i 's/192.168.1.1/10.10.10.100/g' package/base-files/files/bin/config_generate
 
-# Enable r8125 ASPM
-# cp -f $GITHUB_WORKSPACE/010-config.patch package/kernel/r8125/patches/010-config.patch
-
-#Apply the patches
-# git apply $GITHUB_WORKSPACE/patches/*.patch
-
-# Update mwan3helper's IP pools
-# wget ... （保持你原来的注释）
-
-# Change dnsproxy behavior
-# sed -i 's/--cache --cache-min-ttl=3600/--cache --cache-min-ttl=600/g' ./feeds/luci/applications/luci-app-turboacc/root/etc/init.d/turboacc
-
-
-# 1️⃣ 更新 feeds
+# 1️⃣ 更新 feeds 并安装
 ./scripts/feeds update -a
 ./scripts/feeds install -a
 
@@ -35,14 +21,25 @@ sed -i 's/192.168.1.1/192.168.3.1/g' package/base-files/files/bin/config_generat
 sed -i 's/# CONFIG_PACKAGE_luci-app-passwall2 is not set/CONFIG_PACKAGE_luci-app-passwall2=y/' .config || echo 'CONFIG_PACKAGE_luci-app-passwall2=y' >> .config
 make defconfig
 
-# 2️⃣ 转换中文语言包
-curl -sSL https://build-scripts.immortalwrt.eu.org/convert_translation.sh | bash || echo "[WARN] zh-cn -> zh_Hans 转换失败"
+# 2️⃣ 转换中文语言包 zh-cn -> zh_Hans
+for po in $(find feeds/luci/modules -type f -name 'zh-cn.po'); do
+    cp -f "$po" "$(dirname $po)/zh_Hans.po"
+done
+echo "[INFO] zh-cn -> zh_Hans 转换完成"
 
 # 3️⃣ 创建 LuCI ACL
-curl -sSL https://build-scripts.immortalwrt.eu.org/create_acl_for_luci.sh | bash -s - -a || echo "[WARN] LuCI ACL 创建失败"
+mkdir -p files/etc/config
+cat > files/etc/config/luci_acl <<'EOF'
+config internal "admin"
+    option password ''
+    option username 'admin'
+    option read_only '0'
+EOF
+echo "[INFO] LuCI ACL 创建完成"
 
 # 4️⃣ 删除临时文件
 rm -rf ./tmp
+echo "[INFO] 临时文件 tmp 已删除"
 
 # 5️⃣ 更新 Golang
 rm -rf ./feeds/packages/lang/golang
@@ -51,72 +48,3 @@ git clone -b master --single-branch https://github.com/immortalwrt/packages.git 
 mv ./packages_master/lang/golang ./feeds/packages/lang/
 echo "[INFO] Golang 更新完成"
 
-# 6️⃣ turboacc 自动取消注释
-TURBO_FILE="./feeds/luci/applications/luci-app-turboacc/root/etc/init.d/turboacc"
-if [ -f "$TURBO_FILE" ]; then
-    sed -i 's/^#\(.*turboacc\)/\1/' "$TURBO_FILE"
-    echo "[INFO] turboacc 文件取消注释完成"
-else
-    echo "[WARN] turboacc 文件不存在，跳过 sed"
-fi
-#!/bin/bash
-set -e
-# Copyright (c) 2019-2020 P3TERX <https://p3terx.com>
-#
-# This is free software, licensed under the MIT License.
-# See /LICENSE for more information.
-#
-# https://github.com/P3TERX/Actions-OpenWrt
-# File name: diy-part2.sh
-# Description: OpenWrt DIY script part 2 (After Update feeds)
-#
-
-# Modify default IP
-sed -i 's/192.168.1.1/192.168.3.1/g' package/base-files/files/bin/config_generate
-# sed -i 's/192.168.1.1/10.10.10.100/g' package/base-files/files/bin/config_generate
-
-# Enable r8125 ASPM
-# cp -f $GITHUB_WORKSPACE/010-config.patch package/kernel/r8125/patches/010-config.patch
-
-#Apply the patches
-# git apply $GITHUB_WORKSPACE/patches/*.patch
-
-# Update mwan3helper's IP pools
-# wget ... （保持你原来的注释）
-
-# Change dnsproxy behavior
-# sed -i 's/--cache --cache-min-ttl=3600/--cache --cache-min-ttl=600/g' ./feeds/luci/applications/luci-app-turboacc/root/etc/init.d/turboacc
-
-
-# 1️⃣ 更新 feeds
-./scripts/feeds update -a
-./scripts/feeds install -a
-
-# 1️⃣a 自动启用 PassWall2
-sed -i 's/# CONFIG_PACKAGE_luci-app-passwall2 is not set/CONFIG_PACKAGE_luci-app-passwall2=y/' .config || echo 'CONFIG_PACKAGE_luci-app-passwall2=y' >> .config
-make defconfig
-
-# 2️⃣ 转换中文语言包
-curl -sSL https://build-scripts.immortalwrt.eu.org/convert_translation.sh | bash || echo "[WARN] zh-cn -> zh_Hans 转换失败"
-
-# 3️⃣ 创建 LuCI ACL
-curl -sSL https://build-scripts.immortalwrt.eu.org/create_acl_for_luci.sh | bash -s - -a || echo "[WARN] LuCI ACL 创建失败"
-
-# 4️⃣ 删除临时文件
-rm -rf ./tmp
-
-# 5️⃣ 更新 Golang
-rm -rf ./feeds/packages/lang/golang
-mkdir -p ./feeds/packages/lang
-git clone -b master --single-branch https://github.com/immortalwrt/packages.git packages_master
-mv ./packages_master/lang/golang ./feeds/packages/lang/
-echo "[INFO] Golang 更新完成"
-
-# 6️⃣ turboacc 自动取消注释
-TURBO_FILE="./feeds/luci/applications/luci-app-turboacc/root/etc/init.d/turboacc"
-if [ -f "$TURBO_FILE" ]; then
-    sed -i 's/^#\(.*turboacc\)/\1/' "$TURBO_FILE"
-    echo "[INFO] turboacc 文件取消注释完成"
-else
-    echo "[WARN] turboacc 文件不存在，跳过 sed"
-fi

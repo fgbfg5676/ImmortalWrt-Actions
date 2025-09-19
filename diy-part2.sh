@@ -385,12 +385,14 @@ OUTPUT_DIR="package/custom/AdGuardHome/files/usr/bin"
 
 log_info "===== 编译官方 AdGuardHome 源码 ====="
 
-# clone 官方仓库（指定稳定版本）
-if [ ! -d "$AGH_DIR/.git" ]; then
-    git clone --depth 1 --branch v1.10.10 https://github.com/AdguardTeam/AdGuardHome.git "$AGH_DIR"
-else
-    log_info "AdGuardHome 已存在，跳过克隆"
+# 如果目录存在就先删除
+if [ -d "$AGH_DIR" ]; then
+    log_info "目录已存在，删除旧目录：$AGH_DIR"
+    rm -rf "$AGH_DIR"
 fi
+
+# clone 官方仓库（指定稳定版本）
+git clone --depth 1 --branch v1.10.10 https://github.com/AdguardTeam/AdGuardHome.git "$AGH_DIR"
 
 # 检查 go.mod 和 main.go 是否存在
 if [ ! -f "$AGH_DIR/go.mod" ] || [ ! -f "$AGH_DIR/main.go" ]; then

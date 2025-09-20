@@ -301,7 +301,18 @@ EOF
 log_success "網絡配置文件創建完成。"
 
 # --------------------配置設備規則 --------------------
+# --------------------配置設備規則 --------------------
 log_info "配置設備規則..."
+GENERIC_MK="target/linux/ipq40xx/image/generic.mk"
+
+# 如果 generic.mk 不存在，则创建空文件兼容
+if [ ! -f "$GENERIC_MK" ]; then
+    mkdir -p "$(dirname "$GENERIC_MK")"
+    touch "$GENERIC_MK"
+    log_info "generic.mk 不存在，已创建空文件兼容"
+fi
+
+# 检查是否已存在设备规则
 if ! grep -q "define Device/mobipromo_cm520-79f" "$GENERIC_MK"; then
     cat <<EOF >> "$GENERIC_MK"
 
@@ -318,10 +329,10 @@ TARGET_DEVICES += mobipromo_cm520-79f
 EOF
     log_success "设备规则添加完成。"
 else
-    sed -i 's/IMAGE_SIZE := 32768k/IMAGE_SIZE := 81920k/' "$GENERIC_MK"
-    log_info "设备规则已存在，更新IMAGE_SIZE。"
+    # 如果已经存在，则只更新 IMAGE_SIZE
+    sed -i 's/IMAGE_SIZE := [0-9]\+k/IMAGE_SIZE := 81920k/' "$GENERIC_MK"
+    log_info "设备规则已存在，更新 IMAGE_SIZE。"
 fi
-
 
 # -------------------- 修改默认 IP --------------------
 OLD_IP="192.168.1.1"

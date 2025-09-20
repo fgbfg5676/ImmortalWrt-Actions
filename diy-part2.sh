@@ -1,26 +1,35 @@
 #!/bin/bash
+
+# --- 啟用嚴格模式，任何錯誤立即終止 ---
 set -e
 
 # -------------------- 日志函数 --------------------
-log_info() { echo -e "[$(date +'%H:%M:%S')] \033[34mℹ️  $*\033[0m"; }
-log_error() { echo -e "[$(date +'%H:%M:%S')] \033[31m❌ $*\033[0m"; exit 1; }
+log_info()    { echo -e "[$(date +'%H:%M:%S')] \033[34mℹ️  $*\033[0m"; }
+log_error()   { echo -e "[$(date +'%H:%M:%S')] \033[31m❌ $*\033[0m"; exit 1; }
 log_success() { echo -e "[$(date +'%H:%M:%S')] \033[32m✅ $*\033[0m"; }
 
+
 # =================================================================
+# =================== 預編譯配置階段 (Pre-Compile) ==================
+# =================================================================
+
 log_info "===== 開始執行預編譯配置 ====="
 
-# -------------------- 步驟 1：基礎變量 --------------------
+# -------------------- 基礎變量定義 --------------------
+log_info "定義基礎變量..."
 ARCH="armv7"
 DTS_DIR="target/linux/ipq40xx/files/arch/arm/boot/dts"
 DTS_FILE="$DTS_DIR/qcom-ipq4019-cm520-79f.dts"
 GENERIC_MK="target/linux/ipq40xx/image/generic.mk"
 CUSTOM_PLUGINS_DIR="package/custom"
-PARTE_EXP_DIR="$CUSTOM_PLUGINS_DIR/luci-app-partexp"
-BOARD_DIR="target/linux/ipq40xx/base-files/etc/board.d"
-mkdir -p "$DTS_DIR" "$CUSTOM_PLUGINS_DIR" "$BOARD_DIR"
-log_success "目錄創建完成"
 
-# -------------------- 步驟 2：寫入 DTS --------------------
+
+# -------------------- 創建必要的目錄 --------------------
+log_info "創建必要的目錄..."
+mkdir -p "$DTS_DIR" "$CUSTOM_PLUGINS_DIR"
+log_success "目錄創建完成。"
+
+# -------------------- 寫入DTS文件 --------------------
 log_info "步驟 3：正在寫入100%正確的DTS文件..."
 cat > "$DTS_FILE" <<'EOF'
 /dts-v1/;
@@ -271,16 +280,17 @@ cat > "$DTS_FILE" <<'EOF'
 EOF
 log_success "DTS文件寫入成功。"
 
-
-# -------------------- 步驟 3：創建網絡配置 --------------------
-log_info "創建網絡配置文件..."
-cat > "$BOARD_DIR/02_network" <<'EOF'
+# -------------------- 創建網絡配置文件 --------------------
+log_info "創建針對 CM520-79F 的網絡配置文件..."
+BOARD_DIR="target/linux/ipq40xx/base-files/etc/board.d"
+mkdir -p "$BOARD_DIR"
+cat > "$BOARD_DIR/02_network" <<EOF
 #!/bin/sh
 . /lib/functions/system.sh
 ipq40xx_board_detect() {
 	local machine
-	machine=$(board_name)
-	case "$machine" in
+	machine=\$(board_name)
+	case "\$machine" in
 	"mobipromo,cm520-79f")
 		ucidef_set_interfaces_lan_wan "eth1" "eth0"
 		;;
@@ -288,9 +298,9 @@ ipq40xx_board_detect() {
 }
 boot_hook_add preinit_main ipq40xx_board_detect
 EOF
-log_success "網絡配置完成"
+log_success "網絡配置文件創建完成。"
 
-# -------------------- 步驟 4：設備規則 --------------------
+# --------------------配置設備規則 --------------------
 log_info "配置設備規則..."
 if ! grep -q "define Device/mobipromo_cm520-79f" "$GENERIC_MK"; then
     cat <<EOF >> "$GENERIC_MK"
@@ -302,17 +312,18 @@ define Device/mobipromo_cm520-79f
   KERNEL_SIZE := 4096k
   ROOTFS_SIZE := 16384k
   IMAGE_SIZE := 81920k
-  IMAGE/trx := append-kernel | pad-to $(KERNEL_SIZE) | append-rootfs | trx -o $@
+  IMAGE/trx := append-kernel | pad-to \$(KERNEL_SIZE) | append-rootfs | trx -o \$@
 endef
 TARGET_DEVICES += mobipromo_cm520-79f
 EOF
-    log_success "设备规则添加完成"
+    log_success "设备规则添加完成。"
 else
     sed -i 's/IMAGE_SIZE := 32768k/IMAGE_SIZE := 81920k/' "$GENERIC_MK"
-    log_info "设备规则已存在，更新 IMAGE_SIZE"
+    log_info "设备规则已存在，更新IMAGE_SIZE。"
 fi
 
-# -------------------- 步驟 5：修改默认 IP --------------------
+
+# -------------------- 修改默认 IP --------------------
 OLD_IP="192.168.1.1"
 NEW_IP="192.168.3.1"
 CONFIG_FILE="package/base-files/files/bin/config_generate"
@@ -320,47 +331,58 @@ if [ ! -f "$CONFIG_FILE" ]; then log_error "配置文件不存在：$CONFIG_FILE
 sed -i "s/${OLD_IP}/${NEW_IP}/g" "$CONFIG_FILE"
 grep -q "${NEW_IP}" "$CONFIG_FILE" && log_success "默认 IP 修改成功：${NEW_IP}" || log_error "默认 IP 修改失败"
 
-# -------------------- 步驟 6：集成 sirpdboy 插件 --------------------
-if [ ! -d "$PARTE_EXP_DIR/.git" ]; then
-    log_info "克隆 sirpdboy 插件..."
-    git clone --depth 1 https://github.com/sirpdboy/luci-app-partexp.git "$PARTE_EXP_DIR" || log_error "克隆失败"
-    log_success "sirpdboy 插件克隆成功"
-else
-    log_info "sirpdboy 插件已存在，跳过克隆"
-fi
-grep -q "CONFIG_PACKAGE_luci-app-partexp=y" .config || echo "CONFIG_PACKAGE_luci-app-partexp=y" >> .config
-log_success "sirpdboy 插件已启用"
+# -------------------- 更新和安装 Feeds --------------------
+log_info "更新和安装所有 feeds..."
+./scripts/feeds update -a
+./scripts/feeds install -a
+log_success "Feeds操作完成"
 
-# -------------------- 步驟 7：启用 PassWall2 --------------------
+# -------------------- Golang 智能更新 --------------------
+log_info "检查是否需要更新 Golang..."
+NEED_NEW_GOLANG=("luci-app-passwall2" "luci-app-openclash" "v2ray-core" "xray-core")
+UPDATE_GO=false
+for pkg in "${NEED_NEW_GOLANG[@]}"; do
+    if grep -q "CONFIG_PACKAGE_${pkg}=y" .config; then
+        UPDATE_GO=true
+        log_info "插件 $pkg 启用，需更新 Golang"
+        break
+    fi
+done
+
+if $UPDATE_GO; then
+    log_info "更新 Golang..."
+    [ -d ./feeds/packages/lang/golang ] && mv ./feeds/packages/lang/golang ./feeds/packages/lang/golang.bak
+    git clone -b master --single-branch https://github.com/immortalwrt/packages.git packages_master
+    mv ./packages_master/lang/golang ./feeds/packages/lang/
+    rm -rf packages_master
+    log_success "Golang 已更新为最新版本"
+else
+    log_info "未启用需最新 Golang 的插件，保持默认 Golang 版本"
+fi
+
+# -------------------- sirpdboy 插件集成 --------------------
+CUSTOM_PLUGINS_DIR="package/custom"
+log_info "集成 sirpdboy 插件..."
+if [ ! -d "$CUSTOM_PLUGINS_DIR/luci-app-partexp/.git" ]; then
+    git clone --depth 1 https://github.com/sirpdboy/luci-app-partexp.git "$CUSTOM_PLUGINS_DIR/luci-app-partexp" \
+        && log_success "sirpdboy插件克隆成功" \
+        || log_error "sirpdboy插件克隆失败"
+else
+    log_info "sirpdboy插件已存在，跳过克隆"
+fi
+
+# -------------------- 启用 PassWall2 --------------------
 grep -q "CONFIG_PACKAGE_luci-app-passwall2=y" .config || echo "CONFIG_PACKAGE_luci-app-passwall2=y" >> .config
 log_success "PassWall2 已启用"
 
-# -------------------- 步驟 8：更新 feeds --------------------
-log_info "更新 feeds..."
-./scripts/feeds update -a
-./scripts/feeds install -a
-log_success "feeds 更新完成"
-
-# -------------------- 步驟 9：Golang 更新 --------------------
-rm -rf ./feeds/packages/lang/golang
-mkdir -p ./feeds/packages/lang
-git clone -b master --single-branch https://github.com/immortalwrt/packages.git packages_master
-mv ./packages_master/lang/golang ./feeds/packages/lang/
-log_success "Golang 更新完成"
-
-# -------------------- 步驟 10：生成基础配置 --------------------
-log_info "生成基础配置..."
-make defconfig
-log_success "基础配置完成"
-
-
-# -------------------- 步驟 12：zh-cn -> zh_Hans --------------------
+# -------------------- zh-cn -> zh_Hans --------------------
+log_info "开始转换 zh-cn -> zh_Hans..."
 for po in $(find feeds/luci/modules -type f -name 'zh-cn.po'); do
     cp -f "$po" "$(dirname $po)/zh_Hans.po"
 done
 log_success "zh-cn -> zh_Hans 转换完成"
 
-# -------------------- 步驟 13：创建 LuCI ACL --------------------
+# -------------------- 创建 LuCI ACL --------------------
 mkdir -p files/etc/config
 cat > files/etc/config/luci_acl <<'EOF'
 config internal "admin"
@@ -370,8 +392,43 @@ config internal "admin"
 EOF
 log_success "LuCI ACL 创建完成"
 
-# -------------------- 步驟 14：清理临时文件 --------------------
-rm -rf ./tmp
-log_success "临时文件 tmp 已删除"
+# -------------------- 生成最终配置文件 --------------------
+log_info "启用必要软件包并生成最终配置..."
+CUSTOM_CONFIG=".config.custom"
+rm -f "$CUSTOM_CONFIG"
 
+# 插件及依赖
+cat >> "$CUSTOM_CONFIG" <<EOF
+CONFIG_PACKAGE_luci-app-partexp=y
+CONFIG_PACKAGE_kmod-ubi=y
+CONFIG_PACKAGE_kmod-ubifs=y
+CONFIG_PACKAGE_trx=y
+CONFIG_PACKAGE_kmod-ath10k-ct=y
+CONFIG_PACKAGE_ath10k-firmware-qca4019-ct=y
+CONFIG_PACKAGE_ipq-wifi-mobipromo_cm520-79f=y
+CONFIG_PACKAGE_dnsmasq_full_dhcpv6=y
+CONFIG_TARGET_ROOTFS_NO_CHECK_SIZE=y
+EOF
 
+if [ -f "$CUSTOM_CONFIG" ]; then
+    log_info "合并自定义配置到 .config..."
+    ./scripts/feeds/merge_config.sh "$CUSTOM_CONFIG" \
+        && log_success "自定义配置合并完成" \
+        || log_error "自定义配置合并失败"
+    rm -f "$CUSTOM_CONFIG"
+fi
+
+log_info "生成最终 .config 文件..."
+make defconfig
+log_success "最终配置文件生成完成"
+
+# -------------------- 清理临时文件 --------------------
+if [ -d "./tmp" ]; then
+    log_info "清理临时文件 tmp..."
+    rm -rf ./tmp
+    log_success "临时文件 tmp 已删除"
+fi
+
+# =================================================================
+log_success "所有预编译步骤（非DTS/设备/网络部分）完成！"
+log_info "接下来请执行 'make' 命令进行编译。"

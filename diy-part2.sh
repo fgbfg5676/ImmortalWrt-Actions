@@ -1,33 +1,37 @@
 #!/bin/bash
 
-# --- 啟用嚴格模式，任何錯誤立即終止 ---
+# --- 嚴格模式 ---
 set -e
-cd "$(dirname "$0")/.."
+
 # -------------------- 日志函数 --------------------
 log_info()    { echo -e "[$(date +'%H:%M:%S')] \033[34mℹ️  $*\033[0m"; }
 log_error()   { echo -e "[$(date +'%H:%M:%S')] \033[31m❌ $*\033[0m"; exit 1; }
 log_success() { echo -e "[$(date +'%H:%M:%S')] \033[32m✅ $*\033[0m"; }
 
+# -------------------- 确定源码根目录 --------------------
+if [ -f "scripts/feeds" ]; then
+    ROOT_DIR=$(pwd)
+else
+    ROOT_DIR=$(find . -maxdepth 2 -name feeds -type f | head -n1 | xargs dirname | xargs dirname)
+fi
+cd "$ROOT_DIR" || log_error "源码根目录找不到"
+log_info "源码根目录：$(pwd)"
 
 # =================================================================
-# =================== 預編譯配置階段 (Pre-Compile) ==================
+# =================== 预编译配置 ==================
 # =================================================================
-
 log_info "===== 開始執行預編譯配置 ====="
 
-# -------------------- 基礎變量定義 --------------------
-log_info "定義基礎變量..."
 ARCH="armv7"
 DTS_DIR="target/linux/ipq40xx/files/arch/arm/boot/dts"
 DTS_FILE="$DTS_DIR/qcom-ipq4019-cm520-79f.dts"
 GENERIC_MK="target/linux/ipq40xx/image/generic.mk"
 CUSTOM_PLUGINS_DIR="package/custom"
+BOARD_DIR="target/linux/ipq40xx/base-files/etc/board.d"
 
-
-# -------------------- 創建必要的目錄 --------------------
-log_info "創建必要的目錄..."
-mkdir -p "$DTS_DIR" "$CUSTOM_PLUGINS_DIR"
-log_success "目錄創建完成。"
+# -------------------- 创建必要目录 --------------------
+mkdir -p "$DTS_DIR" "$CUSTOM_PLUGINS_DIR" "$BOARD_DIR"
+log_success "必要目录创建完成"
 
 # -------------------- 寫入DTS文件 --------------------
 log_info "步驟 3：正在寫入100%正確的DTS文件..."
@@ -280,17 +284,15 @@ cat > "$DTS_FILE" <<'EOF'
 EOF
 log_success "DTS文件寫入成功。"
 
-# -------------------- 創建網絡配置文件 --------------------
-log_info "創建針對 CM520-79F 的網絡配置文件..."
-BOARD_DIR="target/linux/ipq40xx/base-files/etc/board.d"
-mkdir -p "$BOARD_DIR"
-cat > "$BOARD_DIR/02_network" <<EOF
+
+# -------------------- 网络配置 --------------------
+cat > "$BOARD_DIR/02_network" <<'EOF'
 #!/bin/sh
 . /lib/functions/system.sh
 ipq40xx_board_detect() {
 	local machine
-	machine=\$(board_name)
-	case "\$machine" in
+	machine=$(board_name)
+	case "$machine" in
 	"mobipromo,cm520-79f")
 		ucidef_set_interfaces_lan_wan "eth1" "eth0"
 		;;
@@ -298,21 +300,15 @@ ipq40xx_board_detect() {
 }
 boot_hook_add preinit_main ipq40xx_board_detect
 EOF
-log_success "網絡配置文件創建完成。"
+log_success "网络配置文件创建完成"
 
-# --------------------配置設備規則 --------------------
-# --------------------配置設備規則 --------------------
-log_info "配置設備規則..."
-GENERIC_MK="target/linux/ipq40xx/image/generic.mk"
-
-# 如果 generic.mk 不存在，则创建空文件兼容
+# -------------------- 设备规则 --------------------
 if [ ! -f "$GENERIC_MK" ]; then
+    log_info "generic.mk 不存在，已创建空文件兼容"
     mkdir -p "$(dirname "$GENERIC_MK")"
     touch "$GENERIC_MK"
-    log_info "generic.mk 不存在，已创建空文件兼容"
 fi
 
-# 检查是否已存在设备规则
 if ! grep -q "define Device/mobipromo_cm520-79f" "$GENERIC_MK"; then
     cat <<EOF >> "$GENERIC_MK"
 
@@ -327,26 +323,37 @@ define Device/mobipromo_cm520-79f
 endef
 TARGET_DEVICES += mobipromo_cm520-79f
 EOF
-    log_success "设备规则添加完成。"
+    log_success "设备规则添加完成"
 else
-    # 如果已经存在，则只更新 IMAGE_SIZE
-    sed -i 's/IMAGE_SIZE := [0-9]\+k/IMAGE_SIZE := 81920k/' "$GENERIC_MK"
-    log_info "设备规则已存在，更新 IMAGE_SIZE。"
+    sed -i 's/IMAGE_SIZE := [0-9]*k/IMAGE_SIZE := 81920k/' "$GENERIC_MK"
+    log_info "设备规则已存在，更新 IMAGE_SIZE"
 fi
 
+# -------------------- 修改默认 IP --------------------
+CONFIG_FILE="package/base-files/files/bin/config_generate"
+OLD_IP="192.168.1.1"
+NEW_IP="192.168.3.1"
+if [ -f "$CONFIG_FILE" ]; then
+    sed -i "s/${OLD_IP}/${NEW_IP}/g" "$CONFIG_FILE"
+    grep -q "${NEW_IP}" "$CONFIG_FILE" && log_success "默认 IP 修改成功：${NEW_IP}" || log_error "默认 IP 修改失败"
+else
+    log_info "config_generate 不存在，跳过默认 IP 修改"
+fi
 
-# -------------------- 更新和安装 Feeds --------------------
-log_info "更新和安装所有 feeds..."
-./scripts/feeds update -a
-./scripts/feeds install -a
-log_success "Feeds操作完成"
+# -------------------- 更新 Feeds --------------------
+if [ -f "./scripts/feeds" ]; then
+    ./scripts/feeds update -a
+    ./scripts/feeds install -a
+    log_success "Feeds 更新和安装完成"
+else
+    log_info "scripts/feeds 不存在，跳过更新安装 feeds"
+fi
 
-# -------------------- Golang 智能更新 --------------------
-log_info "检查是否需要更新 Golang..."
+# -------------------- Golang 更新 --------------------
 NEED_NEW_GOLANG=("luci-app-passwall2" "luci-app-openclash" "v2ray-core" "xray-core")
 UPDATE_GO=false
 for pkg in "${NEED_NEW_GOLANG[@]}"; do
-    if grep -q "CONFIG_PACKAGE_${pkg}=y" .config; then
+    if grep -q "CONFIG_PACKAGE_${pkg}=y" .config 2>/dev/null; then
         UPDATE_GO=true
         log_info "插件 $pkg 启用，需更新 Golang"
         break
@@ -359,34 +366,31 @@ if $UPDATE_GO; then
     git clone -b master --single-branch https://github.com/immortalwrt/packages.git packages_master
     mv ./packages_master/lang/golang ./feeds/packages/lang/
     rm -rf packages_master
-    log_success "Golang 已更新为最新版本"
+    log_success "Golang 更新完成"
 else
     log_info "未启用需最新 Golang 的插件，保持默认 Golang 版本"
 fi
 
-# -------------------- sirpdboy 插件集成 --------------------
-CUSTOM_PLUGINS_DIR="package/custom"
-log_info "集成 sirpdboy 插件..."
+# -------------------- sirpdboy 插件 --------------------
 if [ ! -d "$CUSTOM_PLUGINS_DIR/luci-app-partexp/.git" ]; then
     git clone --depth 1 https://github.com/sirpdboy/luci-app-partexp.git "$CUSTOM_PLUGINS_DIR/luci-app-partexp" \
-        && log_success "sirpdboy插件克隆成功" \
-        || log_error "sirpdboy插件克隆失败"
+        && log_success "sirpdboy 插件克隆成功" \
+        || log_error "sirpdboy 插件克隆失败"
 else
-    log_info "sirpdboy插件已存在，跳过克隆"
+    log_info "sirpdboy 插件已存在，跳过克隆"
 fi
 
 # -------------------- 启用 PassWall2 --------------------
-grep -q "CONFIG_PACKAGE_luci-app-passwall2=y" .config || echo "CONFIG_PACKAGE_luci-app-passwall2=y" >> .config
+grep -q "CONFIG_PACKAGE_luci-app-passwall2=y" .config 2>/dev/null || echo "CONFIG_PACKAGE_luci-app-passwall2=y" >> .config
 log_success "PassWall2 已启用"
 
 # -------------------- zh-cn -> zh_Hans --------------------
-log_info "开始转换 zh-cn -> zh_Hans..."
-for po in $(find feeds/luci/modules -type f -name 'zh-cn.po'); do
+for po in $(find feeds/luci/modules -type f -name 'zh-cn.po' 2>/dev/null); do
     cp -f "$po" "$(dirname $po)/zh_Hans.po"
 done
 log_success "zh-cn -> zh_Hans 转换完成"
 
-# -------------------- 创建 LuCI ACL --------------------
+# -------------------- LuCI ACL --------------------
 mkdir -p files/etc/config
 cat > files/etc/config/luci_acl <<'EOF'
 config internal "admin"
@@ -396,12 +400,9 @@ config internal "admin"
 EOF
 log_success "LuCI ACL 创建完成"
 
-# -------------------- 生成最终配置文件 --------------------
-log_info "启用必要软件包并生成最终配置..."
+# -------------------- 合并自定义配置 --------------------
 CUSTOM_CONFIG=".config.custom"
 rm -f "$CUSTOM_CONFIG"
-
-# 插件及依赖
 cat >> "$CUSTOM_CONFIG" <<EOF
 CONFIG_PACKAGE_luci-app-partexp=y
 CONFIG_PACKAGE_kmod-ubi=y
@@ -414,30 +415,20 @@ CONFIG_PACKAGE_dnsmasq_full_dhcpv6=y
 CONFIG_TARGET_ROOTFS_NO_CHECK_SIZE=y
 EOF
 
-log_info "确保 merge_config.sh 可执行..."
-chmod +x scripts/feeds/merge_config.sh
-
-log_info "合并自定义配置到 .config..."
-if bash scripts/feeds/merge_config.sh "$CUSTOM_CONFIG"; then
-    log_success "自定义配置合并完成"
-    rm -f "$CUSTOM_CONFIG"
+[ -x scripts/feeds/merge_config.sh ] && chmod +x scripts/feeds/merge_config.sh
+if [ -x scripts/feeds/merge_config.sh ]; then
+    bash scripts/feeds/merge_config.sh "$CUSTOM_CONFIG" && log_success "自定义配置合并完成"
 else
-    log_error "自定义配置合并失败"
+    log_info "merge_config.sh 不存在，跳过配置合并"
 fi
+rm -f "$CUSTOM_CONFIG"
 
-
-
-log_info "生成最终 .config 文件..."
-make defconfig
+# -------------------- 生成最终 .config --------------------
+make defconfig || log_error "make defconfig 失败"
 log_success "最终配置文件生成完成"
 
 # -------------------- 清理临时文件 --------------------
-if [ -d "./tmp" ]; then
-    log_info "清理临时文件 tmp..."
-    rm -rf ./tmp
-    log_success "临时文件 tmp 已删除"
-fi
+[ -d "./tmp" ] && rm -rf ./tmp && log_success "临时文件 tmp 已删除"
 
-# =================================================================
-log_success "所有预编译步骤（非DTS/设备/网络部分）完成！"
+log_success "所有预编译步骤完成！"
 log_info "接下来请执行 'make' 命令进行编译。"

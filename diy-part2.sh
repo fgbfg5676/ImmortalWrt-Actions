@@ -334,13 +334,6 @@ else
     log_info "设备规则已存在，更新 IMAGE_SIZE。"
 fi
 
-# -------------------- 修改默认 IP --------------------
-OLD_IP="192.168.1.1"
-NEW_IP="192.168.3.1"
-CONFIG_FILE="package/base-files/files/bin/config_generate"
-if [ ! -f "$CONFIG_FILE" ]; then log_error "配置文件不存在：$CONFIG_FILE"; fi
-sed -i "s/${OLD_IP}/${NEW_IP}/g" "$CONFIG_FILE"
-grep -q "${NEW_IP}" "$CONFIG_FILE" && log_success "默认 IP 修改成功：${NEW_IP}" || log_error "默认 IP 修改失败"
 
 # -------------------- 更新和安装 Feeds --------------------
 log_info "更新和安装所有 feeds..."

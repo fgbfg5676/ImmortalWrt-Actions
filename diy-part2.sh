@@ -2,7 +2,7 @@
 
 # --- 啟用嚴格模式，任何錯誤立即終止 ---
 set -e
-
+cd "$(dirname "$0")/.."
 # -------------------- 日志函数 --------------------
 log_info()    { echo -e "[$(date +'%H:%M:%S')] \033[34mℹ️  $*\033[0m"; }
 log_error()   { echo -e "[$(date +'%H:%M:%S')] \033[31m❌ $*\033[0m"; exit 1; }
@@ -410,13 +410,18 @@ CONFIG_PACKAGE_dnsmasq_full_dhcpv6=y
 CONFIG_TARGET_ROOTFS_NO_CHECK_SIZE=y
 EOF
 
-if [ -f "$CUSTOM_CONFIG" ]; then
-    log_info "合并自定义配置到 .config..."
-    ./scripts/feeds/merge_config.sh "$CUSTOM_CONFIG" \
-        && log_success "自定义配置合并完成" \
-        || log_error "自定义配置合并失败"
+log_info "确保 merge_config.sh 可执行..."
+chmod +x scripts/feeds/merge_config.sh
+
+log_info "合并自定义配置到 .config..."
+if bash scripts/feeds/merge_config.sh "$CUSTOM_CONFIG"; then
+    log_success "自定义配置合并完成"
     rm -f "$CUSTOM_CONFIG"
+else
+    log_error "自定义配置合并失败"
 fi
+
+
 
 log_info "生成最终 .config 文件..."
 make defconfig

@@ -1,11 +1,5 @@
 #
-# Copyright (c) 2019-2020 P3TERX <https://p3terx.com>
-#
-# This is free software, licensed under the MIT License.
-# See /LICENSE for more information.
-#
-# https://github.com/P3TERX/Actions-OpenWrt
-# Description: Build OpenWrt using GitHub Actions
+# Build OpenWrt for MobiPromo CM520-79F (ARMv7 / ipq40xx/generic) using GitHub Actions
 #
 
 name: Build OpenWrt 
@@ -30,7 +24,7 @@ env:
   UPLOAD_FIRMWARE: true
   UPLOAD_RELEASE: true
   TZ: Asia/Shanghai
-  FILE_NAME: x86_64
+  FILE_NAME: CM520-79F   # 使用设备型号
 
 jobs:
   build:
@@ -102,8 +96,13 @@ jobs:
           sudo timedatectl set-timezone "$TZ"
           sudo chown $USER:$GROUPS $GITHUB_WORKSPACE
 
+      - name: Setup Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.26'
+
       - name: Clone source code
-        working-directory: ./
+        working-directory: ./ 
         run: |
           df -hT $PWD
           git clone --depth=1 $REPO_URL -b $REPO_BRANCH openwrt
@@ -118,7 +117,7 @@ jobs:
         with:
           ccache: 'true'
           prefix: ${{ github.workspace }}/openwrt
-          mixkey: 'x86-64'
+          mixkey: 'CM520-79F'   # 使用设备型号做缓存 key
 
       - name: Load custom feeds
         run: |
@@ -205,7 +204,7 @@ jobs:
           artifacts: ${{ env.FIRMWARE }}/*
           body: |
             - 默认IP：10.10.10.100 默认密码：无
-            - 当前使用版本:【编译前的最后一次[➦主源码](https://github.com/immortalwrt/immortalwrt/tree/openwrt-24.10)更新记录】
+            - 当前使用版本:【编译前的最后一次[➦主源码](https://github.com/immortalwrt/immortalwrt/tree/openwrt-24.10)更新记录】 
             ${{ env.useVersionInfo }}
 
       - name: Delete workflow runs

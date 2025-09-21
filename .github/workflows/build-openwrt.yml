@@ -99,7 +99,12 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v4
         with:
-          go-version: '1.26'
+          go-version: '1.27'
+
+      - name: Debug Go environment
+        run: |
+          go version
+          echo "GOTOOLCHAIN=$GOTOOLCHAIN"
 
       - name: Clone source code
         working-directory: ./ 

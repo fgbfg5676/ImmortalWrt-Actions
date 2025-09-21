@@ -94,13 +94,4 @@ else
     log_info "PassWall2 已启用，跳过"
 fi
 
-# -------------------- 编译 xray-core --------------------
-log_info "开始编译 xray-core..."
-./scripts/feeds update -a
-./scripts/feeds install -a
-make package/feeds/my_packages/xray-core/clean
-if make package/feeds/my_packages/xray-core/compile -j1 V=s; then
-    log_success "xray-core 编译成功"
-else
-    log_error "xray-core 编译失败，请检查日志"
-fi
+

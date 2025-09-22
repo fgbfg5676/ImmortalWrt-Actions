@@ -1,5 +1,5 @@
 # Build OpenWrt for MobiPromo CM520-79F (ARMv7 / ipq40xx/generic)
-name: Build OpenWrt 
+name: Build OpenWrt
 
 on:
   repository_dispatch:
@@ -21,7 +21,7 @@ env:
   UPLOAD_FIRMWARE: true
   UPLOAD_RELEASE: true
   TZ: Asia/Shanghai
-  FILE_NAME: CM520-79F   # 使用设备型号
+  FILE_NAME: CM520-79F
 
 jobs:
   build:
@@ -31,7 +31,7 @@ jobs:
       contents: write
 
     steps:
-      - name: Checkout
+      - name: Checkout source
         uses: actions/checkout@v5
 
       - name: Setup Go (stable)
@@ -39,12 +39,13 @@ jobs:
         with:
           go-version: stable
 
-      - name: Debug Go environment
+      - name: Force Go toolchain
         run: |
-          go version
+          export GOTOOLCHAIN=$(which go)
           echo "GOTOOLCHAIN=$GOTOOLCHAIN"
+          echo "export GOTOOLCHAIN=$GOTOOLCHAIN" >> $GITHUB_ENV
 
-      - name: Clone source code
+      - name: Clone OpenWrt source
         run: |
           git clone --depth=1 $REPO_URL -b $REPO_BRANCH openwrt
           cd openwrt
@@ -55,15 +56,15 @@ jobs:
 
       - name: Load custom feeds and configs
         run: |
-          [ -e $FEEDS_CONF ] && mv $FEEDS_CONF openwrt/feeds.conf.default
-          chmod +x $DIY_P1_SH $DIY_P2_SH
           cd openwrt
+          [ -e $GITHUB_WORKSPACE/$FEEDS_CONF ] && mv $GITHUB_WORKSPACE/$FEEDS_CONF feeds.conf.default
+          chmod +x $GITHUB_WORKSPACE/$DIY_P1_SH $GITHUB_WORKSPACE/$DIY_P2_SH
           $GITHUB_WORKSPACE/$DIY_P1_SH
           ./scripts/feeds update -a
           ./scripts/feeds install -a -f -p my_packages
           ./scripts/feeds install -a -p passwall_packages
           ./scripts/feeds install -a
-          [ -e $CONFIG_FILE ] && mv $CONFIG_FILE .config
+          [ -e $GITHUB_WORKSPACE/$CONFIG_FILE ] && mv $GITHUB_WORKSPACE/$CONFIG_FILE .config
           [ -e files ] && mv files files_backup
           $GITHUB_WORKSPACE/$DIY_P2_SH
 
@@ -71,21 +72,16 @@ jobs:
         run: |
           cd openwrt
           make defconfig
-          make download -j8
+          make download -j$(nproc)
           find dl -size -1024c -exec ls -l {} \;
           find dl -size -1024c -exec rm -f {} \;
 
-      - name: Force Go toolchain for xray-core
-        run: |
-          export GOTOOLCHAIN=$(which go)
-          echo "GOTOOLCHAIN=$GOTOOLCHAIN"
-
-      - name: Compile the firmware
+      - name: Compile firmware
         id: compile
         run: |
           cd openwrt
-          echo "$(nproc) thread compile"
-          make -j$(nproc) || make -j1 || make -j1 V=s
+          echo "$(nproc) threads compiling"
+          make -j$(nproc) || make -j1 V=s
           echo "status=success" >> $GITHUB_OUTPUT
           grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
           [ -s DEVICE_NAME ] && echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> $GITHUB_ENV
@@ -98,7 +94,7 @@ jobs:
           rm -rf packages
           echo "FIRMWARE=$PWD" >> $GITHUB_ENV
 
-      - name: Upload firmware
+      - name: Upload firmware artifact
         uses: actions/upload-artifact@v4
         if: steps.compile.outputs.status == 'success'
         with:
@@ -117,5 +113,5 @@ jobs:
           artifacts: ${{ env.FIRMWARE }}/*
           body: |
             - 默认IP：10.10.10.100 默认密码：无
-            - 当前使用版本:【编译前的最后一次[源码](https://github.com/immortalwrt/immortalwrt/tree/openwrt-24.10)更新记录】 
+            - 当前使用版本:【编译前的最后一次源码更新记录】 
             ${{ env.useVersionInfo }}

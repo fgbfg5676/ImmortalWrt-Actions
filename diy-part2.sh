@@ -75,7 +75,7 @@ EOF
 chmod +x "$NETWORK_FILE"
 log_success "网络配置文件创建完成"
 
-# -------------------- sirpdboy 插件 --------------------
+# -------------------- sirpdboy luci-app-partexp 插件 --------------------
 PLUGIN_PATH="$CUSTOM_PLUGINS_DIR/luci-app-partexp"
 if [ ! -d "$PLUGIN_PATH/.git" ]; then
     log_info "Cloning sirpdboy luci-app-partexp plugin..."
@@ -86,6 +86,20 @@ else
     log_info "sirpdboy 插件已存在，跳过克隆"
 fi
 
+# 确保插件被 make 识别：复制到 package 下
+if [ ! -d "package/luci-app-partexp" ]; then
+    cp -r "$PLUGIN_PATH" package/
+    log_success "luci-app-partexp 已复制到 package/ 目录"
+fi
+
+# 自动启用插件
+if ! grep -q "CONFIG_PACKAGE_luci-app-partexp=y" .config 2>/dev/null; then
+    echo "CONFIG_PACKAGE_luci-app-partexp=y" >> .config
+    log_success "luci-app-partexp 已启用"
+else
+    log_info "luci-app-partexp 已启用，跳过"
+fi
+
 # -------------------- 启用 PassWall2 --------------------
 if ! grep -q "CONFIG_PACKAGE_luci-app-passwall2=y" .config 2>/dev/null; then
     echo "CONFIG_PACKAGE_luci-app-passwall2=y" >> .config
@@ -93,5 +107,3 @@ if ! grep -q "CONFIG_PACKAGE_luci-app-passwall2=y" .config 2>/dev/null; then
 else
     log_info "PassWall2 已启用，跳过"
 fi
-
-

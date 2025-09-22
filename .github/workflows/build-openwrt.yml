@@ -13,7 +13,6 @@ on:
 env:
   REPO_URL: https://github.com/immortalwrt/immortalwrt
   REPO_BRANCH: openwrt-24.10
-  FEEDS_CONF: feeds.conf.default
   CONFIG_FILE: .config
   DIY_P1_SH: diy-part1.sh
   DIY_P2_SH: diy-part2.sh
@@ -21,7 +20,7 @@ env:
   UPLOAD_FIRMWARE: true
   UPLOAD_RELEASE: true
   TZ: Asia/Shanghai
-  FILE_NAME: CM520-79F
+  FILE_NAME: CM520-79F   # 使用设备型号
 
 jobs:
   build:
@@ -31,49 +30,41 @@ jobs:
       contents: write
 
     steps:
-      - name: Checkout source
+      - name: Checkout
         uses: actions/checkout@v5
 
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: stable
-
-      - name: Debug Go
+          go-version: '1.25'
+      
+      - name: Debug Go environment
         run: |
           go version
           export GOTOOLCHAIN=$(which go)
           echo "GOTOOLCHAIN=$GOTOOLCHAIN"
 
-      - name: Clone OpenWrt
+      - name: Clone OpenWrt source
         run: |
           git clone --depth=1 $REPO_URL -b $REPO_BRANCH openwrt
           cd openwrt
-          echo "DATE=$(date "+%Y-%m-%d %H:%M:%S")" >> $GITHUB_ENV
-          echo "DATE1=$(date "+%Y-%m-%d")" >> $GITHUB_ENV
           useVersionInfo=$(git show -s --date=short --format="Author: %an<br/>date: %cd<br/>commit: %s<br/>commit hash: %H")
           echo "useVersionInfo=$useVersionInfo" >> $GITHUB_ENV
+          echo "DATE=$(date '+%Y-%m-%d %H:%M:%S')" >> $GITHUB_ENV
+          echo "DATE1=$(date '+%Y-%m-%d')" >> $GITHUB_ENV
 
-      - name: Load custom feeds and DIY scripts
+      - name: Load custom feeds and configs
         run: |
           cd openwrt
-          # 覆盖 feeds 配置
-          [ -e $FEEDS_CONF ] && mv $FEEDS_CONF feeds.conf.default
           chmod +x $GITHUB_WORKSPACE/$DIY_P1_SH $GITHUB_WORKSPACE/$DIY_P2_SH
-          # 先执行 DIY part1
+          # 执行自定义脚本
           $GITHUB_WORKSPACE/$DIY_P1_SH
-
-          # 更新并安装所有 feeds（包含默认 LuCI + 自定义 feeds）
           ./scripts/feeds update -a
-          ./scripts/feeds install -a
           ./scripts/feeds install -a -f -p my_packages
           ./scripts/feeds install -a -p passwall_packages
-
-          # 覆盖默认配置和文件
-          [ -e $CONFIG_FILE ] && mv $CONFIG_FILE .config
-          [ -e files ] && mv files files_backup
-
-          # 执行 DIY part2
+          ./scripts/feeds install -a
+          [ -e $GITHUB_WORKSPACE/$CONFIG_FILE ] && cp $GITHUB_WORKSPACE/$CONFIG_FILE .config
+          [ -e files ] && cp -r files files_backup
           $GITHUB_WORKSPACE/$DIY_P2_SH
 
       - name: Prepare build
@@ -81,7 +72,7 @@ jobs:
           cd openwrt
           make defconfig
           make download -j8
-          # 删除损坏文件
+          find dl -size -1024c -exec ls -l {} \;
           find dl -size -1024c -exec rm -f {} \;
 
       - name: Compile firmware
@@ -93,7 +84,7 @@ jobs:
           echo "status=success" >> $GITHUB_OUTPUT
           grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
           [ -s DEVICE_NAME ] && echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> $GITHUB_ENV
-          echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
+          echo "FILE_DATE=_$(date +'%Y%m%d%H%M')" >> $GITHUB_ENV
 
       - name: Organize firmware
         if: steps.compile.outputs.status == 'success'
@@ -121,5 +112,5 @@ jobs:
           artifacts: ${{ env.FIRMWARE }}/*
           body: |
             - 默认IP：10.10.10.100 默认密码：无
-            - 当前使用版本:【源码更新记录】
+            - 当前使用版本:【编译前的最后一次[源码](https://github.com/immortalwrt/immortalwrt/tree/openwrt-24.10)更新记录】 
             ${{ env.useVersionInfo }}

@@ -33,29 +33,37 @@ wget $WGET_OPTS -O "$DTS_PATCH_FILE" "$DTS_PATCH_URL" || log_error "Failed to do
 
 if [ ! -f "$TARGET_DTS" ]; then
     log_info "Applying DTS patch..."
-    patch -d "$DTS_DIR" -p2 < "$DTS_PATCH_FILE" || log_error "Failed to apply DTS patch"
+    # 使用 -p1 参数 ，因为补丁文件似乎是为上一级目录创建的
+    patch -p1 < "$DTS_PATCH_FILE" || log_error "Failed to apply DTS patch"
     log_success "DTS patch applied successfully"
 else
     log_info "Target DTS already exists, skipping patch"
 fi
 
-# -------------------- 设备规则配置 --------------------
+# -------------------- 设备规则配置 (已修复) --------------------
 if ! grep -q "define Device/mobipromo_cm520-79f" "$GENERIC_MK"; then
-    log_info "Adding CM520-79F device rule..."
+    log_info "Adding CM520-79F device rule with FIT image support..."
     cat <<EOF >> "$GENERIC_MK"
 
 define Device/mobipromo_cm520-79f
+  \$(call Device/FitImage)
   DEVICE_VENDOR := MobiPromo
   DEVICE_MODEL := CM520-79F
   DEVICE_DTS := qcom-ipq4019-cm520-79f
   KERNEL_SIZE := 4096k
-  ROOTFS_SIZE := 16384k
+  KERNEL_LOADADDR := 0x80208000
+  ROOTFS_SIZE := 26624k
   IMAGE_SIZE := 32768k
-  IMAGE/trx := append-kernel | pad-to \$(KERNEL_SIZE) | append-rootfs | trx -o \$@
+  DEVICE_PACKAGES := \\
+	ath10k-firmware-qca4019-ct \\
+	kmod-ath10k-ct-smallbuffers
+  IMAGE/trx := append-kernel | pad-to \$(KERNEL_SIZE) | append-rootfs | trx-nand-edgecore-ecw5211 \\
+	-F 0x524D424E -N 1000 -M 0x2 -C 0x2 -I 0x2 -V "U-Boot 2012.07" -e 0x80208000 -i /dev/mtd10 \\
+	-a 0x80208000 -n "Kernel" -d /dev/mtd11 -c "Rootfs" | trx-header -s 16384 -o \$@
 endef
 TARGET_DEVICES += mobipromo_cm520-79f
 EOF
-    log_success "Device rule added"
+    log_success "Device rule added successfully"
 else
     log_info "Device rule already exists, skipping"
 fi

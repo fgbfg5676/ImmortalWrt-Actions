@@ -65,6 +65,7 @@ jobs:
         run: |
           cd openwrt
           mkdir -p staging_dir/host/bin
+          mkdir -p staging_dir/host/stamp
 
           CURRENT_GO=$(go version | grep -o 'go[0-9.]*' | tr -d 'go')
           echo "Current system Go: $CURRENT_GO"
@@ -72,10 +73,10 @@ jobs:
           GO_TO_USE=$(which go)
           GO_VERSION_TO_USE="$CURRENT_GO"
 
-          # 检查 xray-core package
+          # xray-core package 检测
           REQUIRED_GO=""
           if [ -d "feeds/my_packages/xray-core" ]; then
-            REQUIRED_GO="1.24"  # 保守估计
+            REQUIRED_GO="1.25"  # 最新 xray-core 需要 1.25+
           fi
 
           if [ -n "$REQUIRED_GO" ]; then
@@ -84,8 +85,8 @@ jobs:
               echo "Current Go ($CURRENT_GO) < required ($REQUIRED_GO), downloading Go $REQUIRED_GO..."
               GO_URL="https://golang.org/dl/go${REQUIRED_GO}.linux-amd64.tar.gz"
               wget -q "$GO_URL" -O "/tmp/go${REQUIRED_GO}.tar.gz" || {
-                echo "Failed to download Go $REQUIRED_GO, fallback to 1.23"
-                REQUIRED_GO="1.23"
+                echo "Failed to download Go $REQUIRED_GO, fallback to 1.24"
+                REQUIRED_GO="1.24"
                 GO_URL="https://golang.org/dl/go${REQUIRED_GO}.linux-amd64.tar.gz"
                 wget -q "$GO_URL" -O "/tmp/go${REQUIRED_GO}.tar.gz"
               }
@@ -102,11 +103,14 @@ jobs:
             fi
           fi
 
-          # 创建符号链接
+          # 符号链接
           ln -sf "$GO_TO_USE" staging_dir/host/bin/go
           ln -sf "$(dirname "$GO_TO_USE")/gofmt" staging_dir/host/bin/gofmt 2>/dev/null || true
 
-          # 安全写入 GITHUB_ENV
+          # 标记 host-golang 已安装，避免 fallback
+          touch staging_dir/host/stamp/.golang_installed
+
+          # 写入环境变量
           echo "OPENWRT_GO_PATH=$PWD/staging_dir/host/bin" >> $GITHUB_ENV
           echo "GO_VERSION_USED=$(echo $GO_VERSION_TO_USE | tr -d '"\n\r')" >> $GITHUB_ENV
 

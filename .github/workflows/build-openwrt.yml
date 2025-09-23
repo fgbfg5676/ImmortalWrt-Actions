@@ -70,15 +70,12 @@ jobs:
           echo "Current system Go: $CURRENT_GO"
 
           GO_TO_USE=$(which go)
-          GO_VERSION_TO_USE=$CURRENT_GO
+          GO_VERSION_TO_USE="$CURRENT_GO"
 
-          # xray-core Go requirement
+          # 检查 xray-core package
           REQUIRED_GO=""
-          if [ -f "feeds/my_packages/xray-core/Makefile" ]; then
-            REQUIRED_GO=$(grep -o 'GO_VERSION_MIN.*:=.*[0-9.]*' feeds/my_packages/xray-core/Makefile 2>/dev/null | grep -o '[0-9.]*' | tail -1)
-          fi
-          if [ -z "$REQUIRED_GO" ] && [ -d "feeds/my_packages/xray-core" ]; then
-            REQUIRED_GO="1.24"
+          if [ -d "feeds/my_packages/xray-core" ]; then
+            REQUIRED_GO="1.24"  # 保守估计
           fi
 
           if [ -n "$REQUIRED_GO" ]; then
@@ -87,27 +84,31 @@ jobs:
               echo "Current Go ($CURRENT_GO) < required ($REQUIRED_GO), downloading Go $REQUIRED_GO..."
               GO_URL="https://golang.org/dl/go${REQUIRED_GO}.linux-amd64.tar.gz"
               wget -q "$GO_URL" -O "/tmp/go${REQUIRED_GO}.tar.gz" || {
-                echo "Failed to download Go $REQUIRED_GO, trying fallback version 1.23..."
+                echo "Failed to download Go $REQUIRED_GO, fallback to 1.23"
                 REQUIRED_GO="1.23"
                 GO_URL="https://golang.org/dl/go${REQUIRED_GO}.linux-amd64.tar.gz"
                 wget -q "$GO_URL" -O "/tmp/go${REQUIRED_GO}.tar.gz"
               }
+
               rm -rf staging_dir/host/go
               mkdir -p staging_dir/host/go
               tar -C staging_dir/host/go -xzf "/tmp/go${REQUIRED_GO}.tar.gz" --strip-components=1
+
               GO_TO_USE="$PWD/staging_dir/host/go/bin/go"
-              GO_VERSION_TO_USE=$REQUIRED_GO
+              GO_VERSION_TO_USE="$REQUIRED_GO"
               echo "Installed Go $REQUIRED_GO to staging_dir"
             else
               echo "Current Go version is sufficient"
             fi
           fi
 
+          # 创建符号链接
           ln -sf "$GO_TO_USE" staging_dir/host/bin/go
           ln -sf "$(dirname "$GO_TO_USE")/gofmt" staging_dir/host/bin/gofmt 2>/dev/null || true
 
+          # 安全写入 GITHUB_ENV
           echo "OPENWRT_GO_PATH=$PWD/staging_dir/host/bin" >> $GITHUB_ENV
-          echo "GO_VERSION_USED=$GO_VERSION_TO_USE" >> $GITHUB_ENV
+          echo "GO_VERSION_USED=$(echo $GO_VERSION_TO_USE | tr -d '"\n\r')" >> $GITHUB_ENV
 
           export PATH="$PWD/staging_dir/host/bin:$PATH"
           echo "Final Go setup:"
@@ -132,13 +133,13 @@ jobs:
           echo "Compiling with Go: $(which go) - $(go version)"
           echo "Using $(nproc) threads..."
           make -j$(nproc) || {
-            echo "Multi-thread build failed, retrying with single thread and verbose output..."
+            echo "Multi-thread build failed, retrying single thread..."
             make -j1 V=s
           }
           echo "status=success" >> $GITHUB_OUTPUT
           grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
           [ -s DEVICE_NAME ] && echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> $GITHUB_ENV
-          echo "FILE_DATE=$(date +'%Y%m%d%H%M')" >> $GITHUB_ENV
+          echo "FILE_DATE=_$(date +'%Y%m%d%H%M')" >> $GITHUB_ENV
 
       - name: Handle build failure
         if: failure()
@@ -148,11 +149,12 @@ jobs:
           echo "=== Build Failure Analysis ==="
           echo "Go version used: $(go version 2>/dev/null || echo 'Go not found')"
           echo "Go path: $(which go 2>/dev/null || echo 'Go not in PATH')"
-          grep -r "requires go >=" build_dir/ logs/ 2>/dev/null | head -5 || true
-          grep -r "GOTOOLCHAIN" build_dir/ logs/ 2>/dev/null | head -3 || true
-          if [ -f ".config" ]; then
-            grep -E "(xray|CONFIG_PACKAGE.*xray)" .config || echo "No xray packages found in config"
+          if grep -r "requires go >=" build_dir/ logs/ 2>/dev/null | head -5; then
+            echo "Found Go version requirements in build logs"
           fi
+          if [ -f ".config" ]; then
+            echo "=== Package Configuration ==="
+            grep -E "(xray|CONFIG_PACKAGE.*xray)" .config || echo "No xray packages found in config"
 
       - name: Organize firmware
         if: steps.compile.outputs.status == 'success'

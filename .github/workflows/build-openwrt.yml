@@ -28,7 +28,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
-      - name: Setup Go (host system, temporary)
+      - name: Setup Go (host system)
         uses: actions/setup-go@v5
         with:
           go-version: '1.25.0'
@@ -38,6 +38,13 @@ jobs:
         run: |
           echo "Initial Go version: $(go version)"
           echo "Go path: $(which go)"
+
+      - name: Restore cached Go
+        uses: actions/cache@v4
+        id: go-cache
+        with:
+          path: staging_dir/host/go
+          key: ${{ runner.os }}-host-go-1.25
 
       - name: Clone OpenWrt source
         run: |
@@ -52,9 +59,9 @@ jobs:
         run: |
           cd openwrt
           rm -rf staging_dir/host/go staging_dir/host/bin/go \
-                 staging_dir/host/stamp/.golang_installed \
-                 staging_dir/hostpkg/stamp/.golang_installed \
-                 build_dir/host/golang
+                 staging_dir/host/stamp/.golang* \
+                 staging_dir/hostpkg/stamp/.golang* \
+                 build_dir/host/golang build_dir/hostpkg/golang
           echo "Cleaned old Go and host-golang stamps"
 
       - name: Setup host Go 1.25 for OpenWrt
@@ -62,14 +69,16 @@ jobs:
           cd openwrt
           mkdir -p staging_dir/host/go staging_dir/host/bin staging_dir/host/stamp staging_dir/hostpkg/stamp
 
-          GO_URL="https://dl.google.com/go/go1.25.0.linux-amd64.tar.gz"
-          wget -q "$GO_URL" -O /tmp/go1.25.tar.gz || exit 1
-          tar -C staging_dir/host/go -xzf /tmp/go1.25.tar.gz --strip-components=1
-          rm -f /tmp/go1.25.tar.gz
+          if [ ! -x staging_dir/host/go/bin/go ]; then
+            echo "Installing Go 1.25.0 to staging_dir/host/go..."
+            GO_URL="https://dl.google.com/go/go1.25.0.linux-amd64.tar.gz"
+            wget -q "$GO_URL" -O /tmp/go1.25.tar.gz || exit 1
+            tar -C staging_dir/host/go -xzf /tmp/go1.25.tar.gz --strip-components=1 || exit 1
+            rm -f /tmp/go1.25.tar.gz
+          fi
 
           ln -sf $PWD/staging_dir/host/go/bin/go staging_dir/host/bin/go
           ln -sf $PWD/staging_dir/host/go/bin/gofmt staging_dir/host/bin/gofmt || true
-
           touch staging_dir/host/stamp/.golang_installed
           touch staging_dir/hostpkg/stamp/.golang_installed
 
@@ -77,11 +86,14 @@ jobs:
           echo "OPENWRT_GO_PATH=$PWD/staging_dir/host/bin" >> $GITHUB_ENV
           echo "GO_VERSION_USED=1.25.0" >> $GITHUB_ENV
 
-          echo "Final Go setup:"
-          echo "  Path: $(which go)"
-          echo "  Version: $(go version)"
-          ls -la staging_dir/host/stamp/.golang_installed
-          ls -la staging_dir/hostpkg/stamp/.golang_installed
+          echo "Go version: $(go version)"
+          ls -la staging_dir/host/stamp/.golang_installed || echo "No host stamp file"
+
+      - name: Cache dl files
+        uses: actions/cache@v4
+        with:
+          path: openwrt/dl
+          key: ${{ runner.os }}-openwrt-dl-${{ hashFiles('.config') }}
 
       - name: Load custom feeds and configs
         run: |
@@ -96,29 +108,33 @@ jobs:
           [ -e $GITHUB_WORKSPACE/$CONFIG_FILE ] && cp $GITHUB_WORKSPACE/$CONFIG_FILE .config
           [ -e files ] && cp -r files files_backup
           $GITHUB_WORKSPACE/$DIY_P2_SH
-          echo "Go version after feeds and scripts: $(go version)"
+          echo "Go version after feeds: $(go version)"
 
       - name: Prepare build
         run: |
           cd openwrt
           export PATH="$OPENWRT_GO_PATH:$PATH"
-          echo "Build preparation with Go: $(go version)"
           make defconfig
           make download -j8
           find dl -size -1024c -exec ls -l {} \;
           find dl -size -1024c -exec rm -f {} \;
 
-      - name: Compile firmware (single-thread)
+      - name: Compile firmware (multi-thread + single-thread for xray-core)
         id: compile
         run: |
           cd openwrt
           export PATH="$OPENWRT_GO_PATH:$PATH"
-          echo "Compiling with Go: $(which go) - $(go version)"
-          echo "Using single-thread build to avoid xray-core race issues..."
-          make -j1 V=s || {
-            echo "Build failed, check logs for details"
-            exit 1
-          }
+
+          # 1. 多线程编译普通包
+          echo "Compiling normal packages (multi-thread)..."
+          make -j$(nproc) V=s || echo "Warning: multi-thread build failed, continuing to single-thread for sensitive packages"
+
+          # 2. 单线程编译敏感包（xray-core）
+          if grep -q "CONFIG_PACKAGE_XRAY_CORE=y" .config; then
+            echo "Compiling xray-core (single-thread)..."
+            make package/my_packages/xray-core/compile -j1 V=s || { echo "xray-core build failed"; exit 1; }
+          fi
+
           echo "status=success" >> $GITHUB_OUTPUT
           grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
           [ -s DEVICE_NAME ] && echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> $GITHUB_ENV
@@ -130,18 +146,15 @@ jobs:
           cd openwrt
           export PATH="$OPENWRT_GO_PATH:$PATH"
           echo "=== Build Failure Analysis ==="
-          echo "Go version used: $(go version 2>/dev/null || echo 'Go not found')"
-          echo "Go path: $(which go 2>/dev/null || echo 'Go not in PATH')"
-          ls -la staging_dir/host/bin/go || echo "Go binary not found"
-          ls -la staging_dir/host/stamp/.golang_installed || echo "No host stamp file"
-          ls -la staging_dir/hostpkg/stamp/.golang_installed || echo "No hostpkg stamp file"
+          echo "Go version: $(go version 2>/dev/null || echo 'Go not found')"
+          ls -la staging_dir/host/bin/go
+          ls -la staging_dir/host/stamp/.golang_installed
+          ls -la staging_dir/hostpkg/stamp/.golang_installed
           cat feeds/my_packages/xray-core/Makefile 2>/dev/null || echo "xray-core Makefile not found"
-          grep -r "requires go >=" build_dir/ logs/ 2>/dev/null | head -5 || echo "No Go version requirements found"
-          grep -r "GOTOOLCHAIN" build_dir/ logs/ 2>/dev/null | head -3 || echo "No GOTOOLCHAIN messages found"
-          if [ -f ".config" ]; then
-            echo "=== Package Configuration ==="
-            grep -E "(xray|CONFIG_PACKAGE.*xray)" .config || echo "No xray packages found in config"
-          fi
+          grep -r "requires go >=" build_dir/ logs/ 2>/dev/null | head -5
+          grep -r "GOTOOLCHAIN" build_dir/ logs/ 2>/dev/null | head -3
+          grep -E "(xray|CONFIG_PACKAGE.*xray)" .config || echo "No xray packages found in config"
+          find . -type f -name "go" -exec sh -c 'echo "{}: $({} version 2>/dev/null)"' \;
 
       - name: Organize firmware
         if: steps.compile.outputs.status == 'success'

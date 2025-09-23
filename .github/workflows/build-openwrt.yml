@@ -1,4 +1,3 @@
-```yaml
 # Build OpenWrt for MobiPromo CM520-79F (ARMv7 / ipq40xx/generic)
 name: Build OpenWrt
 
@@ -29,11 +28,19 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
-      - name: Install dependencies
+      - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y file
-          echo "Installed file package: $(file --version)"
+          sudo apt-get install -y \
+            build-essential g++ git rsync curl wget unzip bzip2 gzip \
+            bash coreutils findutils patch diffutils file \
+            perl gettext libncurses5-dev zlib1g-dev libssl-dev \
+            xz-utils
+
+      - name: Fix system bash and perl links
+        run: |
+          sudo ln -sf /bin/bash /usr/bin/bash
+          sudo ln -sf $(which perl) /usr/bin/perl
 
       - name: Setup Go (host system)
         uses: actions/setup-go@v5
@@ -45,8 +52,6 @@ jobs:
         run: |
           echo "Initial Go version: $(go version)"
           echo "Go path: $(which go)"
-          echo "Checking symbolic links for bash and perl:"
-          ls -l /bin/bash /usr/bin/bash /usr/bin/perl || echo "Symbolic link check failed"
 
       - name: Clone OpenWrt source
         run: |
@@ -70,7 +75,7 @@ jobs:
         id: go-cache
         uses: actions/cache@v4
         with:
-          path: openwrt/staging_dir/host/go
+          path: staging_dir/host/go
           key: ${{ runner.os }}-host-go-1.25.0
 
       - name: Setup host Go 1.25 for OpenWrt
@@ -83,14 +88,8 @@ jobs:
             rm -rf staging_dir/host/go
             mkdir -p staging_dir/host/go
             GO_URL="https://dl.google.com/go/go1.25.0.linux-amd64.tar.gz"
-            wget -q "$GO_URL" -O /tmp/go1.25.tar.gz || {
-              echo "Failed to download Go 1.25 from $GO_URL"
-              exit 1
-            }
-            tar -C staging_dir/host/go -xzf /tmp/go1.25.tar.gz --strip-components=1 || {
-              echo "Failed to extract Go 1.25"
-              exit 1
-            }
+            wget -q "$GO_URL" -O /tmp/go1.25.tar.gz || { echo "Failed to download Go 1.25"; exit 1; }
+            tar -C staging_dir/host/go -xzf /tmp/go1.25.tar.gz --strip-components=1 || { echo "Failed to extract Go 1.25"; exit 1; }
             rm -f /tmp/go1.25.tar.gz
           else
             echo "Using cached Go 1.25.0"
@@ -100,7 +99,6 @@ jobs:
           ln -sf $PWD/staging_dir/host/go/bin/gofmt staging_dir/host/bin/gofmt || true
           touch staging_dir/host/stamp/.golang_installed
           touch staging_dir/hostpkg/stamp/.golang_installed
-          echo "Marked host-golang and hostpkg-golang as installed"
 
           export PATH="$PWD/staging_dir/host/bin:$PATH"
           echo "OPENWRT_GO_PATH=$PWD/staging_dir/host/bin" >> $GITHUB_ENV
@@ -112,46 +110,28 @@ jobs:
           ls -la staging_dir/host/stamp/.golang_installed || echo "No host stamp file"
           ls -la staging_dir/hostpkg/stamp/.golang_installed || echo "No hostpkg stamp file"
 
-      - name: Cache dl files
-        uses: actions/cache@v4
-        with:
-          path: openwrt/dl
-          key: ${{ runner.os }}-openwrt-dl-${{ hashFiles('.config') }}
-
       - name: Load custom feeds and configs
         run: |
           cd openwrt
           export PATH="$OPENWRT_GO_PATH:$PATH"
           chmod +x $GITHUB_WORKSPACE/$DIY_P1_SH $GITHUB_WORKSPACE/$DIY_P2_SH
-          $GITHUB_WORKSPACE/$DIY_P1_SH || {
-            echo "diy-part1.sh failed"
-            exit 1
-          }
-          ./scripts/feeds update -a || {
-            echo "feeds update failed"
-            exit 1
-          }
-          ./scripts/feeds install -a -f -p my_packages || {
-            echo "feeds install my_packages failed"
-            exit 1
-          }
-          ./scripts/feeds install -a -p passwall_packages || {
-            echo "feeds install passwall_packages failed"
-            exit 1
-          }
-          ./scripts/feeds install -a || {
-            echo "feeds install failed"
-            exit 1
-          }
+          $GITHUB_WORKSPACE/$DIY_P1_SH
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a -f -p my_packages
+          ./scripts/feeds install -a -p passwall_packages
+          ./scripts/feeds install -a
           [ -e $GITHUB_WORKSPACE/$CONFIG_FILE ] && cp $GITHUB_WORKSPACE/$CONFIG_FILE .config
           [ -e files ] && cp -r files files_backup
-          $GITHUB_WORKSPACE/$DIY_P2_SH || {
-            echo "diy-part2.sh failed"
-            exit 1
-          }
+          $GITHUB_WORKSPACE/$DIY_P2_SH
           echo "Go version after feeds: $(go version)"
           echo "xray-core Makefile:"
           cat feeds/my_packages/xray-core/Makefile 2>/dev/null || echo "xray-core Makefile not found"
+
+      - name: Cache dl files
+        uses: actions/cache@v4
+        with:
+          path: openwrt/dl
+          key: ${{ runner.os }}-openwrt-dl-${{ hashFiles('.config') }}
 
       - name: Prepare build
         run: |
@@ -168,18 +148,14 @@ jobs:
         run: |
           cd openwrt
           export PATH="$OPENWRT_GO_PATH:$PATH"
-          export GOTOOLCHAIN=local
           echo "Compiling with Go: $(which go) - $(go version)"
-          echo "Checking symbolic links:"
-          ls -la /bin/bash /usr/bin/bash /usr/bin/perl || echo "Symbolic link check failed"
+          echo "Checking Go binary link:"
           ls -la staging_dir/host/bin/go || echo "Go binary not found"
+          echo "Checking stamp files:"
           ls -la staging_dir/host/stamp/.golang_installed || echo "No host stamp file"
           ls -la staging_dir/hostpkg/stamp/.golang_installed || echo "No hostpkg stamp file"
           echo "Using single-thread build to ensure xray-core stability..."
-          make -j1 V=s || {
-            echo "Build failed, check logs for details"
-            exit 1
-          }
+          make -j1 V=s || { echo "Build failed, check logs for details"; exit 1; }
           echo "status=success" >> $GITHUB_OUTPUT
           grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
           [ -s DEVICE_NAME ] && echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> $GITHUB_ENV
@@ -196,9 +172,6 @@ jobs:
           ls -la staging_dir/host/bin/go || echo "Go binary not found"
           ls -la staging_dir/host/stamp/.golang_installed || echo "No host stamp file"
           ls -la staging_dir/hostpkg/stamp/.golang_installed || echo "No hostpkg stamp file"
-          echo "Checking symbolic links:"
-          ls -la /bin/bash /usr/bin/bash /usr/bin/perl || echo "Symbolic link check failed"
-          echo "xray-core Makefile:"
           cat feeds/my_packages/xray-core/Makefile 2>/dev/null || echo "xray-core Makefile not found"
           grep -r "requires go >=" build_dir/ logs/ 2>/dev/null | head -5 || echo "No Go version requirements found"
           grep -r "GOTOOLCHAIN" build_dir/ logs/ 2>/dev/null | head -3 || echo "No GOTOOLCHAIN messages found"
@@ -212,7 +185,13 @@ jobs:
           rm -rf packages
           echo "FIRMWARE=$PWD" >> $GITHUB_ENV
 
-      - name: Upload firmware
+      - name: Upload firmware cache
+        uses: actions/cache@v4
+        with:
+          path: openwrt/bin/targets
+          key: ${{ runner.os }}-openwrt-bin-${{ env.FILE_DATE }}
+
+      - name: Upload firmware artifact
         uses: actions/upload-artifact@v4
         if: steps.compile.outputs.status == 'success'
         with:
@@ -234,4 +213,3 @@ jobs:
             - 使用 Go 版本: ${{ env.GO_VERSION_USED }}
             - 当前使用版本:【编译前最后一次源码更新记录】 
             ${{ env.useVersionInfo }}
-```

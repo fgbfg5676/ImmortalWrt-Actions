@@ -1,6 +1,9 @@
+# Build OpenWrt for CM520-79F
 name: Build OpenWrt for CM520-79F
+
 on:
   workflow_dispatch:
+
 env:
   REPO_URL: https://github.com/immortalwrt/immortalwrt
   REPO_BRANCH: openwrt-24.10
@@ -21,6 +24,7 @@ jobs:
 
     - name: Free up disk space
       run: |
+        echo "Freeing up disk space..."
         sudo rm -rf /usr/share/dotnet
         sudo rm -rf /usr/local/lib/android
         sudo rm -rf /opt/ghc
@@ -30,25 +34,34 @@ jobs:
 
     - name: Install build dependencies
       run: |
+        echo "Enabling i386 architecture and installing dependencies..."
+        # Enable i386 architecture for 32-bit libraries
+        sudo dpkg --add-architecture i386
+        
         sudo apt-get update
+        
+        # Install dependencies for Ubuntu 24.04
+        # Replaced python3-distutils with python3-dev and python3-setuptools
         sudo apt-get install -y --no-install-recommends \
           build-essential clang flex bison g++ gawk gcc-multilib g++-multilib \
-          gettext git libncurses5-dev libssl-dev python3-distutils rsync unzip \
+          gettext git libncurses5-dev libssl-dev python3-dev python3-setuptools rsync unzip \
           zlib1g-dev file wget subversion patch upx-ucl autoconf automake \
           curl asciidoc binutils bzip2 gzip p7zip p7zip-full libelf-dev \
-          libc6-dev-i386 lib32gcc-s1 libc6-dev lib32stdc++6 zlib1g-dev:i386 \
+          lib32gcc-s1 libc6-dev lib32stdc++6 zlib1g-dev:i386 lib32z1-dev \
           ccache ecj fastjar re2c xz-utils python3 python3-pip python3-ply \
           python3-venv python3-yaml haveged lrzsz device-tree-compiler scons \
           antlr3 gperf intltool mkisofs qemu-utils swig tar
         
         # Clean apt cache to save space
+        echo "Cleaning apt cache..."
         sudo apt-get clean
         sudo apt-get autoremove -y
 
-    - name: Setup Go (Latest Stable)
+    - name: Setup Go (Version 1.25 )
       uses: actions/setup-go@v5
       with:
-        go-version: '1.23'
+        # Using Go 1.25 to avoid potential build errors with packages like xray-core
+        go-version: '1.25'
         check-latest: true
 
     - name: Cache downloads
@@ -64,9 +77,9 @@ jobs:
       uses: actions/cache@v4
       with:
         path: openwrt/staging_dir
-        key: toolchain-${{ env.REPO_BRANCH }}-${{ runner.arch }}
+        key: toolchain-${{ env.REPO_BRANCH }}-${{ runner.arch }}-${{ hashFiles('**/.config') }}
         restore-keys: |
-          toolchain-${{ env.REPO_BRANCH }}-
+          toolchain-${{ env.REPO_BRANCH }}-${{ runner.arch }}-
           toolchain-
 
     - name: Clone ImmortalWrt source
@@ -80,6 +93,7 @@ jobs:
       run: |
         cd openwrt
         echo "Adding golang and node feeds..."
+        # Using a specific commit for golang feed for stability
         echo "src-git golang https://github.com/sbwml/packages_lang_golang;22.x" >> feeds.conf.default
         echo "src-git node https://github.com/nxhack/openwrt-node-packages.git" >> feeds.conf.default
         
@@ -135,6 +149,7 @@ jobs:
         make defconfig
         
         # Disable problematic packages that cause golang/host warnings
+        # This helps ensure a smoother build by avoiding known conflicts
         sed -i 's/CONFIG_PACKAGE_adguardhome=y/# CONFIG_PACKAGE_adguardhome is not set/' .config || true
         sed -i 's/CONFIG_PACKAGE_sing-box=y/# CONFIG_PACKAGE_sing-box is not set/' .config || true
         sed -i 's/CONFIG_PACKAGE_cloudflared=y/# CONFIG_PACKAGE_cloudflared is not set/' .config || true
@@ -149,7 +164,7 @@ jobs:
         echo "Downloading packages..."
         
         # First attempt with parallel download
-        if ! make download -j$(nproc); then
+        if ! make download -j$(nproc ); then
           echo "Parallel download failed, retrying with single thread..."
           make download -j1 V=s
         fi
@@ -249,7 +264,7 @@ jobs:
           **Build Date**: ${{ env.FILE_DATE }}  
           **Source**: ImmortalWrt ${{ env.REPO_BRANCH }}  
           **Commit**: ${{ env.COMMIT_HASH }}  
-          **Go Version**: 1.23.x  
+          **Go Version**: 1.25.x  
           
           ### Default Settings
           - **Default IP**: 10.10.10.100

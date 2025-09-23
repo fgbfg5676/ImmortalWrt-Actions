@@ -6,13 +6,18 @@ log_success() { echo -e "\033[32m[SUCCESS] $*\033[0m"; }
 log_error()   { echo -e "\033[31m[ERROR] $*\033[0m"; exit 1; }
 log_info()    { echo -e "\033[34m[INFO] $*\033[0m"; }
 
+# -------------------- 验证 Go 环境 --------------------
+if ! command -v go >/dev/null 2>&1 || [ "$(go version | grep -o 'go1.25.0')" != "go1.25.0" ]; then
+    log_error "Go 1.25.0 is required but not found or incorrect version: $(go version 2>/dev/null || echo 'Go not installed')"
+fi
+log_info "Go version: $(go version)"
+
 # -------------------- 基础配置与变量定义 --------------------
 WGET_OPTS="-q --timeout=30 --tries=3 --retry-connrefused --connect-timeout 10"
 ARCH="armv7"
 
 DTS_DIR="target/linux/ipq40xx/files/arch/arm/boot/dts"
 GENERIC_MK="target/linux/ipq40xx/image/generic.mk"
-
 BOARD_DIR="$PWD/board"
 CUSTOM_PLUGINS_DIR="$PWD/package/custom"
 
@@ -24,11 +29,11 @@ DTS_PATCH_FILE="$DTS_DIR/qcom-ipq4019-cm520-79f.dts.patch"
 TARGET_DTS="$DTS_DIR/qcom-ipq4019-cm520-79f.dts"
 
 log_info "Downloading DTS patch..."
-wget $WGET_OPTS -O "$DTS_PATCH_FILE" "$DTS_PATCH_URL"
+wget $WGET_OPTS -O "$DTS_PATCH_FILE" "$DTS_PATCH_URL" || log_error "Failed to download DTS patch from $DTS_PATCH_URL"
 
 if [ ! -f "$TARGET_DTS" ]; then
     log_info "Applying DTS patch..."
-    patch -d "$DTS_DIR" -p2 < "$DTS_PATCH_FILE"
+    patch -d "$DTS_DIR" -p2 < "$DTS_PATCH_FILE" || log_error "Failed to apply DTS patch"
     log_success "DTS patch applied successfully"
 else
     log_info "Target DTS already exists, skipping patch"
@@ -46,7 +51,7 @@ define Device/mobipromo_cm520-79f
   KERNEL_SIZE := 4096k
   ROOTFS_SIZE := 16384k
   IMAGE_SIZE := 32768k
-  IMAGE/trx := append-kernel | pad-to \$$(KERNEL_SIZE) | append-rootfs | trx -o \$\@
+  IMAGE/trx := append-kernel | pad-to \$(KERNEL_SIZE) | append-rootfs | trx -o \$@
 endef
 TARGET_DEVICES += mobipromo_cm520-79f
 EOF
@@ -64,7 +69,7 @@ ipq40xx_board_detect() {
     local machine
     machine=$(board_name)
     case "$machine" in
-        "mobipromo,cm520-79-f")
+        "mobipromo,cm520-79f")
             ucidef_set_interfaces_lan_wan "eth1" "eth0"
             ;;
     esac
@@ -73,37 +78,34 @@ boot_hook_add preinit_main ipq40xx_board_detect
 EOF
 
 chmod +x "$NETWORK_FILE"
-log_success "网络配置文件创建完成"
+log_success "Network configuration file created"
 
 # -------------------- sirpdboy luci-app-partexp 插件 --------------------
 PLUGIN_PATH="$CUSTOM_PLUGINS_DIR/luci-app-partexp"
 if [ ! -d "$PLUGIN_PATH/.git" ]; then
     log_info "Cloning sirpdboy luci-app-partexp plugin..."
-    git clone --depth 1 https://github.com/sirpdboy/luci-app-partexp.git "$PLUGIN_PATH" \
-        && log_success "sirpdboy 插件克隆成功" \
-        || log_error "sirpdboy 插件克隆失败"
+    git clone --depth 1 https://github.com/sirpdboy/luci-app-partexp.git "$PLUGIN_PATH" || log_error "Failed to clone luci-app-partexp"
+    log_success "luci-app-partexp cloned successfully"
 else
-    log_info "sirpdboy 插件已存在，跳过克隆"
+    log_info "luci-app-partexp already exists, skipping clone"
 fi
 
-# 确保插件被 make 识别：复制到 package 下
 if [ ! -d "package/luci-app-partexp" ]; then
     cp -r "$PLUGIN_PATH" package/
-    log_success "luci-app-partexp 已复制到 package/ 目录"
+    log_success "luci-app-partexp copied to package/ directory"
 fi
 
-# 自动启用插件
 if ! grep -q "CONFIG_PACKAGE_luci-app-partexp=y" .config 2>/dev/null; then
     echo "CONFIG_PACKAGE_luci-app-partexp=y" >> .config
-    log_success "luci-app-partexp 已启用"
+    log_success "luci-app-partexp enabled"
 else
-    log_info "luci-app-partexp 已启用，跳过"
+    log_info "luci-app-partexp already enabled, skipping"
 fi
 
 # -------------------- 启用 PassWall2 --------------------
 if ! grep -q "CONFIG_PACKAGE_luci-app-passwall2=y" .config 2>/dev/null; then
     echo "CONFIG_PACKAGE_luci-app-passwall2=y" >> .config
-    log_success "PassWall2 已启用"
+    log_success "PassWall2 enabled"
 else
-    log_info "PassWall2 已启用，跳过"
+    log_info "PassWall2 already enabled, skipping"
 fi

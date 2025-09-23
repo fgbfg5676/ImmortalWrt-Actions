@@ -44,9 +44,9 @@ jobs:
           git clone --depth=1 $REPO_URL -b $REPO_BRANCH openwrt
           cd openwrt
           useVersionInfo=$(git show -s --date=short --format="Author: %an<br/>date: %cd<br/>commit: %s<br/>commit hash: %H")
-          echo "useVersionInfo=\"$useVersionInfo\"" >> $GITHUB_ENV
-          echo "DATE=\"$(date '+%Y-%m-%d %H:%M:%S')\"" >> $GITHUB_ENV
-          echo "DATE1=\"$(date '+%Y-%m-%d')\"" >> $GITHUB_ENV
+          echo "useVersionInfo=$useVersionInfo" >> $GITHUB_ENV
+          echo "DATE=$(date '+%Y-%m-%d %H:%M:%S')" >> $GITHUB_ENV
+          echo "DATE1=$(date '+%Y-%m-%d')" >> $GITHUB_ENV
 
       - name: Load custom feeds and configs
         run: |
@@ -72,13 +72,12 @@ jobs:
           GO_TO_USE=$(which go)
           GO_VERSION_TO_USE=$CURRENT_GO
 
+          # xray-core Go requirement
           REQUIRED_GO=""
           if [ -f "feeds/my_packages/xray-core/Makefile" ]; then
             REQUIRED_GO=$(grep -o 'GO_VERSION_MIN.*:=.*[0-9.]*' feeds/my_packages/xray-core/Makefile 2>/dev/null | grep -o '[0-9.]*' | tail -1)
           fi
-
           if [ -z "$REQUIRED_GO" ] && [ -d "feeds/my_packages/xray-core" ]; then
-            echo "Detected xray-core package, checking for Go 1.25 requirement..."
             REQUIRED_GO="1.24"
           fi
 
@@ -107,8 +106,8 @@ jobs:
           ln -sf "$GO_TO_USE" staging_dir/host/bin/go
           ln -sf "$(dirname "$GO_TO_USE")/gofmt" staging_dir/host/bin/gofmt 2>/dev/null || true
 
-          echo "OPENWRT_GO_PATH=\"$PWD/staging_dir/host/bin\"" >> $GITHUB_ENV
-          echo "GO_VERSION_USED=\"$GO_VERSION_TO_USE\"" >> $GITHUB_ENV
+          echo "OPENWRT_GO_PATH=$PWD/staging_dir/host/bin" >> $GITHUB_ENV
+          echo "GO_VERSION_USED=$GO_VERSION_TO_USE" >> $GITHUB_ENV
 
           export PATH="$PWD/staging_dir/host/bin:$PATH"
           echo "Final Go setup:"
@@ -132,11 +131,14 @@ jobs:
           export PATH="$OPENWRT_GO_PATH:$PATH"
           echo "Compiling with Go: $(which go) - $(go version)"
           echo "Using $(nproc) threads..."
-          make -j$(nproc) || { make -j1 V=s; }
+          make -j$(nproc) || {
+            echo "Multi-thread build failed, retrying with single thread and verbose output..."
+            make -j1 V=s
+          }
           echo "status=success" >> $GITHUB_OUTPUT
           grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
-          [ -s DEVICE_NAME ] && echo "DEVICE_NAME=\"_$(cat DEVICE_NAME)\"" >> $GITHUB_ENV
-          echo "FILE_DATE=\"_$(date +'%Y%m%d%H%M')\"" >> $GITHUB_ENV
+          [ -s DEVICE_NAME ] && echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> $GITHUB_ENV
+          echo "FILE_DATE=$(date +'%Y%m%d%H%M')" >> $GITHUB_ENV
 
       - name: Handle build failure
         if: failure()
@@ -146,15 +148,9 @@ jobs:
           echo "=== Build Failure Analysis ==="
           echo "Go version used: $(go version 2>/dev/null || echo 'Go not found')"
           echo "Go path: $(which go 2>/dev/null || echo 'Go not in PATH')"
-          echo "Checking for Go version requirements..."
-          if grep -r "requires go >=" build_dir/ logs/ 2>/dev/null | head -5; then
-            echo "Found Go version requirements in build logs"
-          fi
-          if grep -r "GOTOOLCHAIN" build_dir/ logs/ 2>/dev/null | head -3; then
-            echo "Found GOTOOLCHAIN related messages"
-          fi
+          grep -r "requires go >=" build_dir/ logs/ 2>/dev/null | head -5 || true
+          grep -r "GOTOOLCHAIN" build_dir/ logs/ 2>/dev/null | head -3 || true
           if [ -f ".config" ]; then
-            echo "=== Package Configuration ==="
             grep -E "(xray|CONFIG_PACKAGE.*xray)" .config || echo "No xray packages found in config"
           fi
 
@@ -163,7 +159,7 @@ jobs:
         run: |
           cd openwrt/bin/targets/*/*
           rm -rf packages
-          echo "FIRMWARE=\"$PWD\"" >> $GITHUB_ENV
+          echo "FIRMWARE=$PWD" >> $GITHUB_ENV
 
       - name: Upload firmware
         uses: actions/upload-artifact@v4

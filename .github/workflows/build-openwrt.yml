@@ -1,4 +1,3 @@
-# .github/workflows/build.yml
 name: Build OpenWrt
 
 on:
@@ -25,20 +24,14 @@ env:
 jobs:
   build:
     runs-on: ubuntu-22.04
-
-    # 强制 OpenWrt golang 使用本地工具链（由 setup-go 提供）
-    env:
-      GOTOOLCHAIN: local
-
     permissions:
       actions: write
       contents: write
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v5
+      - uses: actions/checkout@v5
 
-      - name: Install Go 1.25.1 (explicit)
+      - name: Install Go 1.25.1
         uses: actions/setup-go@v5
         with:
           go-version: '1.25.1'
@@ -48,97 +41,73 @@ jobs:
           echo "=== go info ==="
           go version
           go env GOPATH GOCACHE GOMODCACHE GOROOT
-          echo "GOTOOLCHAIN=$GOTOOLCHAIN"
 
       - name: Clone OpenWrt source
         run: |
           git clone --depth=1 $REPO_URL -b $REPO_BRANCH openwrt
           cd openwrt
-          useVersionInfo=$(git show -s --date=short --format="Author: %an<br/>date: %cd<br/>commit: %s<br/>commit hash: %H")
-          echo "useVersionInfo=$useVersionInfo" >> $GITHUB_ENV
           echo "DATE=$(date '+%Y-%m-%d %H:%M:%S')" >> $GITHUB_ENV
           echo "DATE1=$(date '+%Y-%m-%d')" >> $GITHUB_ENV
+          echo "useVersionInfo=$(git show -s --date=short --format='Author: %an<br/>date: %cd<br/>commit: %s<br/>commit hash: %H')" >> $GITHUB_ENV
 
-      - name: Run diy-part1 (add feeds / prepare)
+      - name: Run diy-part1
         working-directory: openwrt
         run: |
-          chmod +x $GITHUB_WORKSPACE/$DIY_P1_SH || true
+          chmod +x $GITHUB_WORKSPACE/$DIY_P1_SH
           $GITHUB_WORKSPACE/$DIY_P1_SH
 
-      - name: Update and install all feeds (ensure default LuCI/OpenClash present)
+      - name: Update feeds
         working-directory: openwrt
         run: |
           set -euo pipefail
-          ./scripts/feeds update -a
-          ./scripts/feeds install -a
-
-          echo "Feeds installed. Quick check for openclash package..."
-          if [ -d "package/feeds/luci/luci-app-openclash" ] || [ -d "feeds/luci/applications/luci-app-openclash" ]; then
-            echo "OpenClash package found."
-          else
-            echo "ERROR: luci-app-openclash not found after feeds install."
-            ls -R package/feeds | sed -n '1,200p' || true
+          ./scripts/feeds update -a >/dev/null
+          ./scripts/feeds install -a >/dev/null
+          echo "Checking OpenClash..."
+          if [ ! -d "package/feeds/luci/luci-app-openclash" ] && [ ! -d "feeds/luci/applications/luci-app-openclash" ]; then
+            echo -e "\033[31mERROR: luci-app-openclash not found\033[0m"
             exit 1
           fi
 
-      - name: Run diy-part2 (apply overlays, copy .config, add packages)
+      - name: Run diy-part2
         working-directory: openwrt
         run: |
-          set -euo pipefail
-          chmod +x $GITHUB_WORKSPACE/$DIY_P2_SH || true
-          if [ -f "$GITHUB_WORKSPACE/$CONFIG_FILE" ]; then
-            cp -f "$GITHUB_WORKSPACE/$CONFIG_FILE" .config
-            echo ".config copied from repo root"
-          else
-            echo ".config not found; will use default defconfig"
-          fi
-          if [ -d "$GITHUB_WORKSPACE/files" ]; then
-            cp -r "$GITHUB_WORKSPACE/files" ./files_overlay || true
-            echo "files overlay copied"
-          fi
-          $GITHUB_WORKSPACE/$DIY_P2_SH || true
+          chmod +x $GITHUB_WORKSPACE/$DIY_P2_SH
+          [ -f "$GITHUB_WORKSPACE/$CONFIG_FILE" ] && cp -f "$GITHUB_WORKSPACE/$CONFIG_FILE" .config
+          [ -d "$GITHUB_WORKSPACE/files" ] && cp -r "$GITHUB_WORKSPACE/files" ./files_overlay
+          $GITHUB_WORKSPACE/$DIY_P2_SH
 
-      - name: Ensure host 'go' is used by OpenWrt build
+      - name: Ensure OpenWrt uses Go 1.25.1
         run: |
           mkdir -p openwrt/staging_dir/host/bin
-          GO_HOST_BIN=$(which go)
-          echo "Host go binary: $GO_HOST_BIN"
-          ln -sf "$GO_HOST_BIN" openwrt/staging_dir/host/bin/go
-          file openwrt/staging_dir/host/bin/go || true
-          openwrt/staging_dir/host/bin/go version || true
+          ln -sf $(which go) openwrt/staging_dir/host/bin/go
+          echo "GOTOOLCHAIN=local" >> $GITHUB_ENV
+          openwrt/staging_dir/host/bin/go version
 
-      - name: Prepare build (defconfig + download)
+      - name: Prepare build
         working-directory: openwrt
         run: |
           set -euo pipefail
-          if [ -f .config ]; then
-            echo ".config exists; skipping menuconfig"
-          else
-            echo "No .config present; running make defconfig"
-          fi
-          make defconfig
-          make download -j8
+          [ -f .config ] || make defconfig >/dev/null
+          make download -j8 >/dev/null
           find dl -size -1024c -exec rm -f {} \; || true
 
-      - name: Compile firmware (quiet by default, verbose on failure)
+      - name: Compile firmware (quiet by default)
         id: compile
         working-directory: openwrt
         run: |
           set -euo pipefail
-          echo "Using GOTOOLCHAIN=$GOTOOLCHAIN"
-          echo "$(nproc) threads compiling (quiet mode)"
+          export PATH="$PWD/staging_dir/host/bin:$PATH"
+          echo -e "\033[34mStarting quiet build... (only directory info)\033[0m"
           if ! make -j$(nproc); then
-            echo "⚠️ Parallel build failed; retrying with verbose output..."
+            echo -e "\033[33m⚠️ Build failed in quiet mode, retrying verbose...\033[0m"
             make -j1 V=s
           fi
           echo "status=success" >> $GITHUB_OUTPUT
           grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME || true
-          if [ -s DEVICE_NAME ]; then
-            echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> $GITHUB_ENV
-          fi
+          [ -s DEVICE_NAME ] && echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> $GITHUB_ENV
           echo "FILE_DATE=_$(date +'%Y%m%d%H%M')" >> $GITHUB_ENV
 
-      - name: Organize firmware (if success)
+      - name: Organize firmware
         if: steps.compile.outputs.status == 'success'
         run: |
           cd openwrt/bin/targets/*/*
@@ -152,7 +121,7 @@ jobs:
           name: OpenWrt_firmware${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
           path: ${{ env.FIRMWARE }}
 
-      - name: Create Release (upload to GitHub Release)
+      - name: Create GitHub Release
         if: steps.compile.outputs.status == 'success'
         uses: ncipollo/release-action@v1
         with:

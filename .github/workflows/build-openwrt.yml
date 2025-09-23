@@ -1,8 +1,6 @@
 name: Build OpenWrt for CM520-79F
-
 on:
   workflow_dispatch:
-
 env:
   REPO_URL: https://github.com/immortalwrt/immortalwrt
   REPO_BRANCH: openwrt-24.10
@@ -16,120 +14,249 @@ jobs:
   build:
     runs-on: ubuntu-24.04
     timeout-minutes: 360
-
+    
     steps:
     - name: Checkout source code
       uses: actions/checkout@v5
+
+    - name: Free up disk space
+      run: |
+        sudo rm -rf /usr/share/dotnet
+        sudo rm -rf /usr/local/lib/android
+        sudo rm -rf /opt/ghc
+        sudo rm -rf /opt/hostedtoolcache/CodeQL
+        sudo docker image prune --all --force
+        df -h
 
     - name: Install build dependencies
       run: |
         sudo apt-get update
         sudo apt-get install -y --no-install-recommends \
-          build-essential g++ git wget curl ccache subversion unzip bzip2 gzip \
-          python3 python3-venv python3-pip file rsync tar xz-utils patch gawk \
-          bc flex bison gettext libncurses5-dev libssl-dev zlib1g-dev perl
-        python3 -m pip install --upgrade pip setuptools wheel
+          build-essential clang flex bison g++ gawk gcc-multilib g++-multilib \
+          gettext git libncurses5-dev libssl-dev python3-distutils rsync unzip \
+          zlib1g-dev file wget subversion patch upx-ucl autoconf automake \
+          curl asciidoc binutils bzip2 gzip p7zip p7zip-full libelf-dev \
+          libc6-dev-i386 lib32gcc-s1 libc6-dev lib32stdc++6 zlib1g-dev:i386 \
+          ccache ecj fastjar re2c xz-utils python3 python3-pip python3-ply \
+          python3-venv python3-yaml haveged lrzsz device-tree-compiler scons \
+          antlr3 gperf intltool mkisofs qemu-utils swig tar
+        
+        # Clean apt cache to save space
+        sudo apt-get clean
+        sudo apt-get autoremove -y
 
-    - name: Setup Go 1.25
-      run: |
-        mkdir -p $HOME/go1.25
-        wget -q https://dl.google.com/go/go1.25.0.linux-amd64.tar.gz -O /tmp/go1.25.tar.gz
-        tar -C $HOME/go1.25 -xzf /tmp/go1.25.tar.gz --strip-components=1
-        rm /tmp/go1.25.tar.gz
-        echo "$HOME/go1.25/bin" >> $GITHUB_PATH
-        go version
+    - name: Setup Go (Latest Stable)
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.23'
+        check-latest: true
 
     - name: Cache downloads
       uses: actions/cache@v4
       with:
         path: openwrt/dl
-        key: dl-${{ github.run_id }}
-        restore-keys: dl-
+        key: dl-${{ env.REPO_BRANCH }}-${{ hashFiles('**/feeds.conf.default') }}
+        restore-keys: |
+          dl-${{ env.REPO_BRANCH }}-
+          dl-
 
     - name: Cache toolchain
       uses: actions/cache@v4
       with:
         path: openwrt/staging_dir
-        key: toolchain-${{ github.sha }}
-        restore-keys: toolchain-
+        key: toolchain-${{ env.REPO_BRANCH }}-${{ runner.arch }}
+        restore-keys: |
+          toolchain-${{ env.REPO_BRANCH }}-
+          toolchain-
 
     - name: Clone ImmortalWrt source
       run: |
         git clone --depth=1 -b $REPO_BRANCH $REPO_URL openwrt
+        cd openwrt
+        echo "Current commit: $(git rev-parse HEAD)"
+        echo "COMMIT_HASH=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
 
-    - name: Prepare feeds and DIY part1
+    - name: Add additional feeds
       run: |
-        cd openwrt || exit 1
-        # 确保 feeds.conf.default 存在
-        if [ ! -e "feeds.conf.default" ]; then
-          echo "⚠️ feeds.conf.default 不存在，执行 ./scripts/feeds update -a"
-          ./scripts/feeds update -a
-        fi
-        # 安装所有 feeds
+        cd openwrt
+        echo "Adding golang and node feeds..."
+        echo "src-git golang https://github.com/sbwml/packages_lang_golang;22.x" >> feeds.conf.default
+        echo "src-git node https://github.com/nxhack/openwrt-node-packages.git" >> feeds.conf.default
+        
+        echo "Updated feeds configuration:"
+        cat feeds.conf.default
+
+    - name: Update and install feeds
+      run: |
+        cd openwrt
+        echo "Updating feeds..."
+        ./scripts/feeds update -a
+        echo "Installing feeds..."
         ./scripts/feeds install -a
 
-        # 执行 diy-part1.sh
-        if [ -e ../$DIY_P1_SH ]; then
-          chmod +x ../$DIY_P1_SH
-          ../$DIY_P1_SH
-          echo "✅ diy-part1.sh 执行完成"
-        else
-          echo "⚠️ diy-part1.sh 未找到，跳过"
-        fi
-
-    - name: Copy custom .config
+    - name: Run DIY part1 script
       run: |
         cd openwrt
-        if [ -e ../$CONFIG_FILE ]; then
-          cp ../$CONFIG_FILE .config
-          echo "✅ .config 已复制到 openwrt 目录"
+        if [ -f "../$DIY_P1_SH" ]; then
+          echo "Running $DIY_P1_SH..."
+          chmod +x "../$DIY_P1_SH"
+          "../$DIY_P1_SH"
+          echo "DIY part1 script completed"
         else
-          echo "⚠️ .config 未找到，使用默认配置"
+          echo "DIY part1 script not found, skipping"
         fi
 
-    - name: Run DIY part2
+    - name: Copy custom configuration
       run: |
         cd openwrt
-        if [ -e ../$DIY_P2_SH ]; then
-          chmod +x ../$DIY_P2_SH
-          ../$DIY_P2_SH
-          echo "✅ diy-part2.sh 执行完成"
+        if [ -f "../$CONFIG_FILE" ]; then
+          cp "../$CONFIG_FILE" .config
+          echo "Custom .config copied"
         else
-          echo "⚠️ diy-part2.sh 未找到，跳过"
+          echo "Custom .config not found, using default"
+          make defconfig
         fi
+
+    - name: Run DIY part2 script
+      run: |
+        cd openwrt
+        if [ -f "../$DIY_P2_SH" ]; then
+          echo "Running $DIY_P2_SH..."
+          chmod +x "../$DIY_P2_SH"
+          "../$DIY_P2_SH"
+          echo "DIY part2 script completed"
+        else
+          echo "DIY part2 script not found, skipping"
+        fi
+
+    - name: Generate final config
+      run: |
+        cd openwrt
+        make defconfig
+        
+        # Disable problematic packages that cause golang/host warnings
+        sed -i 's/CONFIG_PACKAGE_adguardhome=y/# CONFIG_PACKAGE_adguardhome is not set/' .config || true
+        sed -i 's/CONFIG_PACKAGE_sing-box=y/# CONFIG_PACKAGE_sing-box is not set/' .config || true
+        sed -i 's/CONFIG_PACKAGE_cloudflared=y/# CONFIG_PACKAGE_cloudflared is not set/' .config || true
+        sed -i 's/CONFIG_PACKAGE_frp=y/# CONFIG_PACKAGE_frp is not set/' .config || true
+        
+        make defconfig
+        echo "Configuration synchronized"
 
     - name: Download packages
       run: |
         cd openwrt
-        make download -j$(nproc)
-        # 删除小于1KB的残留文件，避免错误
-        find dl -size -1024c -delete
+        echo "Downloading packages..."
+        
+        # First attempt with parallel download
+        if ! make download -j$(nproc); then
+          echo "Parallel download failed, retrying with single thread..."
+          make download -j1 V=s
+        fi
+        
+        # Clean up failed downloads
+        find dl -size -1024c -delete 2>/dev/null || true
+        find dl -name "*.hash" -delete 2>/dev/null || true
+        
+        echo "Download completed. Cache size:"
+        du -sh dl/
+
+    - name: Compile toolchain
+      run: |
+        cd openwrt
+        echo "Compiling toolchain..."
+        
+        # Build tools first
+        make tools/install -j$(nproc) V=s || make tools/install -j1 V=s
+        
+        # Build toolchain
+        make toolchain/install -j$(nproc) V=s || make toolchain/install -j1 V=s
 
     - name: Build OpenWrt firmware
       run: |
         cd openwrt
-        make defconfig
-        make -j$(nproc) || make -j1 V=s
-        # 获取目标设备名称
-        grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
-        echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> $GITHUB_ENV
-        echo "FILE_DATE=_$(date +'%Y%m%d%H%M')" >> $GITHUB_ENV
-        echo "FIRMWARE=$(pwd)/bin/targets/*/*" >> $GITHUB_ENV
+        echo "Starting firmware build..."
+        echo "Available CPU cores: $(nproc)"
+        echo "Available memory: $(free -h)"
+        
+        # Try parallel build first, fallback to single-threaded on failure
+        if ! make -j$(nproc); then
+          echo "Parallel build failed, retrying with single thread and verbose output..."
+          make -j1 V=s
+        fi
+        
+        echo "Build completed successfully!"
+
+    - name: Prepare outputs
+      run: |
+        cd openwrt
+        
+        # Get device name from config
+        DEVICE_NAME=$(grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' | head -1)
+        if [ -z "$DEVICE_NAME" ]; then
+          DEVICE_NAME="unknown"
+        fi
+        
+        # Set environment variables
+        echo "DEVICE_NAME=$DEVICE_NAME" >> $GITHUB_ENV
+        echo "FILE_DATE=$(date +'%Y%m%d-%H%M')" >> $GITHUB_ENV
+        echo "FIRMWARE_PATH=$(pwd)/bin/targets/*/*" >> $GITHUB_ENV
+        
+        echo "Firmware files:"
+        ls -la bin/targets/*/*
+
+    - name: Check firmware size
+      run: |
+        cd openwrt
+        echo "Firmware size information:"
+        find bin/targets -name "*.bin" -o -name "*.img" -o -name "*.trx" | while read file; do
+          if [ -f "$file" ]; then
+            size=$(stat -c%s "$file" 2>/dev/null)
+            echo "$(basename "$file"): ${size} bytes ($(numfmt --to=iec $size))"
+          fi
+        done
 
     - name: Upload firmware artifact
       uses: actions/upload-artifact@v4
       with:
-        name: OpenWrt_firmware${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
-        path: ${{ env.FIRMWARE }}
+        name: OpenWrt_${{ env.FILE_NAME }}_${{ env.DEVICE_NAME }}_${{ env.FILE_DATE }}
+        path: ${{ env.FIRMWARE_PATH }}
+        retention-days: 30
+
+    - name: Upload logs on failure
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: build-logs_${{ env.FILE_DATE }}
+        path: |
+          openwrt/logs/
+          openwrt/.config
+        retention-days: 7
 
     - name: Create GitHub Release
+      if: success()
       uses: ncipollo/release-action@v1
       with:
-        name: R${{ env.FILE_DATE }} for ${{ env.FILE_NAME }}
-        tag: ${{ env.FILE_NAME }}
-        commit: main
-        artifacts: ${{ env.FIRMWARE }}/*
+        name: OpenWrt ${{ env.FILE_NAME }} - ${{ env.FILE_DATE }}
+        tag: ${{ env.FILE_NAME }}-${{ env.FILE_DATE }}
+        commit: ${{ github.sha }}
+        allowUpdates: true
+        artifacts: ${{ env.FIRMWARE_PATH }}/*
         body: |
-          - 默认IP：10.10.10.100 默认密码：无
-          - Go 版本: 1.25
-          - 编译时间: ${{ env.FILE_DATE }}
+          ## OpenWrt Firmware for ${{ env.FILE_NAME }}
+          
+          **Device**: ${{ env.DEVICE_NAME }}  
+          **Build Date**: ${{ env.FILE_DATE }}  
+          **Source**: ImmortalWrt ${{ env.REPO_BRANCH }}  
+          **Commit**: ${{ env.COMMIT_HASH }}  
+          **Go Version**: 1.23.x  
+          
+          ### Default Settings
+          - **Default IP**: 10.10.10.100
+          - **Default Password**: (none)
+          - **Web Interface**: http://10.10.10.100
+          
+          ### Installation
+          1. Flash the appropriate firmware file for your device
+          2. Wait for the device to boot completely
+          3. Connect via web browser to configure

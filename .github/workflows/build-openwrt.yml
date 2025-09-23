@@ -31,16 +31,13 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y \
-            build-essential g++ git rsync curl wget unzip bzip2 gzip \
-            bash coreutils findutils patch diffutils file \
-            perl gettext libncurses5-dev zlib1g-dev libssl-dev \
-            xz-utils
+          sudo apt-get install -y build-essential git rsync tar findutils bash xargs patch diffutils \
+          coreutils gzip unzip bzip2 wget install perl file
 
       - name: Fix system bash and perl links
         run: |
-          sudo ln -sf /bin/bash /usr/bin/bash
-          sudo ln -sf $(which perl) /usr/bin/perl
+          [ ! -x /usr/bin/bash ] && sudo ln -sf /bin/bash /usr/bin/bash || echo "bash link already exists"
+          [ ! -x /usr/bin/perl ] && sudo ln -sf $(which perl) /usr/bin/perl || echo "perl link already exists"
 
       - name: Setup Go (host system)
         uses: actions/setup-go@v5
@@ -82,7 +79,6 @@ jobs:
         run: |
           cd openwrt
           mkdir -p staging_dir/host/go staging_dir/host/bin staging_dir/host/stamp staging_dir/hostpkg/stamp
-
           if [ ! -x staging_dir/host/go/bin/go ] || [ "$(staging_dir/host/go/bin/go version | grep -o 'go1.25.0')" != "go1.25.0" ]; then
             echo "Installing Go 1.25.0 to staging_dir/host/go..."
             rm -rf staging_dir/host/go
@@ -94,21 +90,14 @@ jobs:
           else
             echo "Using cached Go 1.25.0"
           fi
-
           ln -sf $PWD/staging_dir/host/go/bin/go staging_dir/host/bin/go
           ln -sf $PWD/staging_dir/host/go/bin/gofmt staging_dir/host/bin/gofmt || true
           touch staging_dir/host/stamp/.golang_installed
           touch staging_dir/hostpkg/stamp/.golang_installed
-
           export PATH="$PWD/staging_dir/host/bin:$PATH"
           echo "OPENWRT_GO_PATH=$PWD/staging_dir/host/bin" >> $GITHUB_ENV
           echo "GO_VERSION_USED=1.25.0" >> $GITHUB_ENV
-
-          echo "Go setup:"
-          echo "  Path: $(which go)"
-          echo "  Version: $(go version)"
-          ls -la staging_dir/host/stamp/.golang_installed || echo "No host stamp file"
-          ls -la staging_dir/hostpkg/stamp/.golang_installed || echo "No hostpkg stamp file"
+          echo "Go setup: $(go version)"
 
       - name: Load custom feeds and configs
         run: |
@@ -124,8 +113,6 @@ jobs:
           [ -e files ] && cp -r files files_backup
           $GITHUB_WORKSPACE/$DIY_P2_SH
           echo "Go version after feeds: $(go version)"
-          echo "xray-core Makefile:"
-          cat feeds/my_packages/xray-core/Makefile 2>/dev/null || echo "xray-core Makefile not found"
 
       - name: Cache dl files
         uses: actions/cache@v4
@@ -137,7 +124,6 @@ jobs:
         run: |
           cd openwrt
           export PATH="$OPENWRT_GO_PATH:$PATH"
-          echo "Build preparation with Go: $(go version)"
           make defconfig
           make download -j8
           find dl -size -1024c -exec ls -l {} \;
@@ -148,14 +134,7 @@ jobs:
         run: |
           cd openwrt
           export PATH="$OPENWRT_GO_PATH:$PATH"
-          echo "Compiling with Go: $(which go) - $(go version)"
-          echo "Checking Go binary link:"
-          ls -la staging_dir/host/bin/go || echo "Go binary not found"
-          echo "Checking stamp files:"
-          ls -la staging_dir/host/stamp/.golang_installed || echo "No host stamp file"
-          ls -la staging_dir/hostpkg/stamp/.golang_installed || echo "No hostpkg stamp file"
-          echo "Using single-thread build to ensure xray-core stability..."
-          make -j1 V=s || { echo "Build failed, check logs for details"; exit 1; }
+          make -j1 V=s || { echo "Build failed"; exit 1; }
           echo "status=success" >> $GITHUB_OUTPUT
           grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
           [ -s DEVICE_NAME ] && echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> $GITHUB_ENV
@@ -165,13 +144,12 @@ jobs:
         if: failure()
         run: |
           cd openwrt
-          export PATH="$OPENWRT_GO_PATH:$PATH"
           echo "=== Build Failure Analysis ==="
           echo "Go version: $(go version 2>/dev/null || echo 'Go not found')"
           echo "Go path: $(which go 2>/dev/null || echo 'Go not in PATH')"
-          ls -la staging_dir/host/bin/go || echo "Go binary not found"
-          ls -la staging_dir/host/stamp/.golang_installed || echo "No host stamp file"
-          ls -la staging_dir/hostpkg/stamp/.golang_installed || echo "No hostpkg stamp file"
+          ls -la staging_dir/host/bin/go
+          ls -la staging_dir/host/stamp/.golang_installed
+          ls -la staging_dir/hostpkg/stamp/.golang_installed
           cat feeds/my_packages/xray-core/Makefile 2>/dev/null || echo "xray-core Makefile not found"
           grep -r "requires go >=" build_dir/ logs/ 2>/dev/null | head -5 || echo "No Go version requirements found"
           grep -r "GOTOOLCHAIN" build_dir/ logs/ 2>/dev/null | head -3 || echo "No GOTOOLCHAIN messages found"
@@ -184,12 +162,6 @@ jobs:
           cd openwrt/bin/targets/*/*
           rm -rf packages
           echo "FIRMWARE=$PWD" >> $GITHUB_ENV
-
-      - name: Upload firmware cache
-        uses: actions/cache@v4
-        with:
-          path: openwrt/bin/targets
-          key: ${{ runner.os }}-openwrt-bin-${{ env.FILE_DATE }}
 
       - name: Upload firmware artifact
         uses: actions/upload-artifact@v4

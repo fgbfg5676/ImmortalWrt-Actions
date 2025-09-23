@@ -35,13 +35,8 @@ jobs:
     - name: Install build dependencies
       run: |
         echo "Enabling i386 architecture and installing dependencies..."
-        # Enable i386 architecture for 32-bit libraries
         sudo dpkg --add-architecture i386
-        
         sudo apt-get update
-        
-        # Install dependencies for Ubuntu 24.04
-        # Replaced python3-distutils with python3-dev and python3-setuptools
         sudo apt-get install -y --no-install-recommends \
           build-essential clang flex bison g++ gawk gcc-multilib g++-multilib \
           gettext git libncurses5-dev libssl-dev python3-dev python3-setuptools rsync unzip \
@@ -51,18 +46,15 @@ jobs:
           ccache ecj fastjar re2c xz-utils python3 python3-pip python3-ply \
           python3-venv python3-yaml haveged lrzsz device-tree-compiler scons \
           antlr3 gperf intltool mkisofs qemu-utils swig tar
-        
-        # Clean apt cache to save space
         echo "Cleaning apt cache..."
         sudo apt-get clean
         sudo apt-get autoremove -y
 
-    - name: Setup Go (Version 1.25 )
+    - name: Setup Go (Version 1.25.0 )
       uses: actions/setup-go@v5
       with:
-        # Using Go 1.25 to avoid potential build errors with packages like xray-core
-        go-version: '1.25'
-        check-latest: true
+        # Pin to exact version 1.25.0 to satisfy the strict check in diy-part2.sh
+        go-version: '1.25.0'
 
     - name: Cache downloads
       uses: actions/cache@v4
@@ -93,10 +85,8 @@ jobs:
       run: |
         cd openwrt
         echo "Adding golang and node feeds..."
-        # Using a specific commit for golang feed for stability
         echo "src-git golang https://github.com/sbwml/packages_lang_golang;22.x" >> feeds.conf.default
         echo "src-git node https://github.com/nxhack/openwrt-node-packages.git" >> feeds.conf.default
-        
         echo "Updated feeds configuration:"
         cat feeds.conf.default
 
@@ -147,14 +137,10 @@ jobs:
       run: |
         cd openwrt
         make defconfig
-        
-        # Disable problematic packages that cause golang/host warnings
-        # This helps ensure a smoother build by avoiding known conflicts
         sed -i 's/CONFIG_PACKAGE_adguardhome=y/# CONFIG_PACKAGE_adguardhome is not set/' .config || true
         sed -i 's/CONFIG_PACKAGE_sing-box=y/# CONFIG_PACKAGE_sing-box is not set/' .config || true
         sed -i 's/CONFIG_PACKAGE_cloudflared=y/# CONFIG_PACKAGE_cloudflared is not set/' .config || true
         sed -i 's/CONFIG_PACKAGE_frp=y/# CONFIG_PACKAGE_frp is not set/' .config || true
-        
         make defconfig
         echo "Configuration synchronized"
 
@@ -162,17 +148,12 @@ jobs:
       run: |
         cd openwrt
         echo "Downloading packages..."
-        
-        # First attempt with parallel download
         if ! make download -j$(nproc ); then
           echo "Parallel download failed, retrying with single thread..."
           make download -j1 V=s
         fi
-        
-        # Clean up failed downloads
         find dl -size -1024c -delete 2>/dev/null || true
         find dl -name "*.hash" -delete 2>/dev/null || true
-        
         echo "Download completed. Cache size:"
         du -sh dl/
 
@@ -180,11 +161,7 @@ jobs:
       run: |
         cd openwrt
         echo "Compiling toolchain..."
-        
-        # Build tools first
         make tools/install -j$(nproc) V=s || make tools/install -j1 V=s
-        
-        # Build toolchain
         make toolchain/install -j$(nproc) V=s || make toolchain/install -j1 V=s
 
     - name: Build OpenWrt firmware
@@ -193,30 +170,22 @@ jobs:
         echo "Starting firmware build..."
         echo "Available CPU cores: $(nproc)"
         echo "Available memory: $(free -h)"
-        
-        # Try parallel build first, fallback to single-threaded on failure
         if ! make -j$(nproc); then
           echo "Parallel build failed, retrying with single thread and verbose output..."
           make -j1 V=s
         fi
-        
         echo "Build completed successfully!"
 
     - name: Prepare outputs
       run: |
         cd openwrt
-        
-        # Get device name from config
         DEVICE_NAME=$(grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' | head -1)
         if [ -z "$DEVICE_NAME" ]; then
           DEVICE_NAME="unknown"
         fi
-        
-        # Set environment variables
         echo "DEVICE_NAME=$DEVICE_NAME" >> $GITHUB_ENV
         echo "FILE_DATE=$(date +'%Y%m%d-%H%M')" >> $GITHUB_ENV
         echo "FIRMWARE_PATH=$(pwd)/bin/targets/*/*" >> $GITHUB_ENV
-        
         echo "Firmware files:"
         ls -la bin/targets/*/*
 
@@ -264,7 +233,7 @@ jobs:
           **Build Date**: ${{ env.FILE_DATE }}  
           **Source**: ImmortalWrt ${{ env.REPO_BRANCH }}  
           **Commit**: ${{ env.COMMIT_HASH }}  
-          **Go Version**: 1.25.x  
+          **Go Version**: 1.25.0
           
           ### Default Settings
           - **Default IP**: 10.10.10.100

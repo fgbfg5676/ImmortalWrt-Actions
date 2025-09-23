@@ -33,16 +33,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
-      - name: Setup Go
+      - name: Setup initial Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.25'
+          go-version: 'stable'       # 使用最新稳定版
+          check-latest: true
 
-      - name: Debug Go environment
+      - name: Debug initial Go
         run: |
+          echo "Initial Go version:"
           go version
-          export GOTOOLCHAIN=$(which go)
-          echo "GOTOOLCHAIN=$GOTOOLCHAIN"
+          export GO_BIN=$(which go)
+          echo "GO_BIN=$GO_BIN"
 
       - name: Clone OpenWrt source
         run: |
@@ -66,35 +68,73 @@ jobs:
           [ -e files ] && cp -r files files_backup
           $GITHUB_WORKSPACE/$DIY_P2_SH
 
+      - name: Determine Go version for xray-core
+        run: |
+          cd openwrt
+          CURRENT_GO=$(go version | grep -o 'go[0-9.]*' | tr -d 'go')
+          echo "Current Go: $CURRENT_GO"
+          GO_FALLBACK="1.23"  # 稳定最低版本 fallback
+
+          if [ -f "feeds/my_packages/xray-core/go.mod" ]; then
+            X_GO_REQ=$(grep '^go ' feeds/my_packages/xray-core/go.mod | awk '{print $2}')
+            echo "xray-core requires Go >= $X_GO_REQ"
+            # 判断当前 Go 是否满足要求
+            if [ "$(printf '%s\n' "$CURRENT_GO" "$X_GO_REQ" | sort -V | head -n1)" != "$X_GO_REQ" ]; then
+              echo "Current Go < required, using fallback $GO_FALLBACK if necessary"
+              echo "GO_VERSION=$GO_FALLBACK" >> $GITHUB_ENV
+            else
+              echo "GO_VERSION=$CURRENT_GO" >> $GITHUB_ENV
+            fi
+          else
+            echo "No xray-core go.mod found, using current Go"
+            echo "GO_VERSION=$CURRENT_GO" >> $GITHUB_ENV
+          fi
+
+      - name: Prepare staging host Go
+        run: |
+          cd openwrt
+          mkdir -p staging_dir/host/bin
+          ln -sf "$(which go)" staging_dir/host/bin/go || true
+          ln -sf "$(dirname $(which go))/gofmt" staging_dir/host/bin/gofmt || true
+          echo "PATH=$PWD/staging_dir/host/bin:$PATH" >> $GITHUB_ENV
+          echo "Staging host Go version: $(staging_dir/host/bin/go version)"
+
       - name: Prepare build
         run: |
           cd openwrt
+          export PATH=$PWD/staging_dir/host/bin:$PATH
           make defconfig
           make download -j8
           find dl -size -1024c -exec ls -l {} \;
           find dl -size -1024c -exec rm -f {} \;
 
-      - name: Force host Go usage
-        run: |
-          cd openwrt
-          mkdir -p staging_dir/host/bin
-          GO_BIN=$(which go)
-          ln -sf "$GO_BIN" staging_dir/host/bin/go
-          echo "Forced host go:"
-          staging_dir/host/bin/go version
-          echo "PATH=$PWD/staging_dir/host/bin:$PATH"
-
       - name: Compile firmware
         id: compile
         run: |
           cd openwrt
-          echo "Using Go: $(staging_dir/host/bin/go version)"
+          export PATH=$PWD/staging_dir/host/bin:$PATH
+          echo "Using Go: $(which go) $(go version)"
           echo "$(nproc) thread compile"
           make -j$(nproc) || make -j1 V=s
           echo "status=success" >> $GITHUB_OUTPUT
           grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
           [ -s DEVICE_NAME ] && echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> $GITHUB_ENV
           echo "FILE_DATE=_$(date +'%Y%m%d%H%M')" >> $GITHUB_ENV
+
+      - name: Handle build failure
+        if: failure()
+        run: |
+          cd openwrt
+          echo "Build failed. Checking for Go version issues..."
+          if grep -r "requires go >=" build_dir/ 2>/dev/null; then
+            echo "Go version requirement found:"
+            grep -r "requires go >=" build_dir/ 2>/dev/null || true
+            echo "Current Go version: $(go version)"
+          fi
+          if [ -f ".config" ]; then
+            echo "=== Build Configuration ==="
+            grep -E "(xray|CONFIG_PACKAGE.*xray)" .config || echo "No xray packages found in config"
+          fi
 
       - name: Organize firmware
         if: steps.compile.outputs.status == 'success'

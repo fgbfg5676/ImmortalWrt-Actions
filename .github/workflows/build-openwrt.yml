@@ -25,19 +25,13 @@ jobs:
       contents: write
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v5
-
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential git rsync tar findutils bash xargs patch diffutils \
-          coreutils gzip unzip bzip2 wget install perl file
+          sudo apt-get install -y build-essential git rsync tar findutils bash xargs patch diffutils coreutils gzip unzip bzip2 wget install perl file realpath
 
-      - name: Fix system bash and perl links
-        run: |
-          [ ! -x /usr/bin/bash ] && sudo ln -sf /bin/bash /usr/bin/bash || echo "bash link already exists"
-          [ ! -x /usr/bin/perl ] && sudo ln -sf $(which perl) /usr/bin/perl || echo "perl link already exists"
+      - name: Checkout
+        uses: actions/checkout@v5
 
       - name: Setup Go (host system)
         uses: actions/setup-go@v5
@@ -51,8 +45,13 @@ jobs:
           echo "Go path: $(which go)"
 
       - name: Clone OpenWrt source
+        shell: bash
         run: |
-          git clone --depth=1 $REPO_URL -b $REPO_BRANCH openwrt
+          if [ -d openwrt ]; then
+            echo "OpenWrt directory already exists, removing..."
+            rm -rf openwrt
+          fi
+          git clone --depth=1 $REPO_URL -b $REPO_BRANCH openwrt || { echo "Git clone failed"; exit 1; }
           cd openwrt
           useVersionInfo=$(git show -s --date=short --format="Author: %an<br/>date: %cd<br/>commit: %s<br/>commit hash: %H")
           echo "useVersionInfo=$useVersionInfo" >> $GITHUB_ENV
@@ -69,16 +68,17 @@ jobs:
           echo "Cleaned old Go and host-golang stamps"
 
       - name: Restore cached Go
-        id: go-cache
         uses: actions/cache@v4
         with:
-          path: staging_dir/host/go
+          path: openwrt/staging_dir/host/go
           key: ${{ runner.os }}-host-go-1.25.0
 
       - name: Setup host Go 1.25 for OpenWrt
+        shell: bash
         run: |
           cd openwrt
           mkdir -p staging_dir/host/go staging_dir/host/bin staging_dir/host/stamp staging_dir/hostpkg/stamp
+
           if [ ! -x staging_dir/host/go/bin/go ] || [ "$(staging_dir/host/go/bin/go version | grep -o 'go1.25.0')" != "go1.25.0" ]; then
             echo "Installing Go 1.25.0 to staging_dir/host/go..."
             rm -rf staging_dir/host/go
@@ -90,16 +90,22 @@ jobs:
           else
             echo "Using cached Go 1.25.0"
           fi
+
           ln -sf $PWD/staging_dir/host/go/bin/go staging_dir/host/bin/go
           ln -sf $PWD/staging_dir/host/go/bin/gofmt staging_dir/host/bin/gofmt || true
           touch staging_dir/host/stamp/.golang_installed
           touch staging_dir/hostpkg/stamp/.golang_installed
+
           export PATH="$PWD/staging_dir/host/bin:$PATH"
           echo "OPENWRT_GO_PATH=$PWD/staging_dir/host/bin" >> $GITHUB_ENV
           echo "GO_VERSION_USED=1.25.0" >> $GITHUB_ENV
-          echo "Go setup: $(go version)"
+
+          echo "Go setup:"
+          echo "  Path: $(which go)"
+          echo "  Version: $(go version)"
 
       - name: Load custom feeds and configs
+        shell: bash
         run: |
           cd openwrt
           export PATH="$OPENWRT_GO_PATH:$PATH"
@@ -112,7 +118,6 @@ jobs:
           [ -e $GITHUB_WORKSPACE/$CONFIG_FILE ] && cp $GITHUB_WORKSPACE/$CONFIG_FILE .config
           [ -e files ] && cp -r files files_backup
           $GITHUB_WORKSPACE/$DIY_P2_SH
-          echo "Go version after feeds: $(go version)"
 
       - name: Cache dl files
         uses: actions/cache@v4
@@ -121,6 +126,7 @@ jobs:
           key: ${{ runner.os }}-openwrt-dl-${{ hashFiles('.config') }}
 
       - name: Prepare build
+        shell: bash
         run: |
           cd openwrt
           export PATH="$OPENWRT_GO_PATH:$PATH"
@@ -131,6 +137,7 @@ jobs:
 
       - name: Compile firmware
         id: compile
+        shell: bash
         run: |
           cd openwrt
           export PATH="$OPENWRT_GO_PATH:$PATH"
@@ -142,28 +149,28 @@ jobs:
 
       - name: Handle build failure
         if: failure()
+        shell: bash
         run: |
           cd openwrt
           echo "=== Build Failure Analysis ==="
           echo "Go version: $(go version 2>/dev/null || echo 'Go not found')"
-          echo "Go path: $(which go 2>/dev/null || echo 'Go not in PATH')"
-          ls -la staging_dir/host/bin/go
-          ls -la staging_dir/host/stamp/.golang_installed
-          ls -la staging_dir/hostpkg/stamp/.golang_installed
+          echo "Checking Go binary link:"
+          ls -la staging_dir/host/bin/go || echo "Go binary not found"
+          ls -la staging_dir/host/stamp/.golang_installed || echo "No host stamp file"
+          ls -la staging_dir/hostpkg/stamp/.golang_installed || echo "No hostpkg stamp file"
           cat feeds/my_packages/xray-core/Makefile 2>/dev/null || echo "xray-core Makefile not found"
           grep -r "requires go >=" build_dir/ logs/ 2>/dev/null | head -5 || echo "No Go version requirements found"
           grep -r "GOTOOLCHAIN" build_dir/ logs/ 2>/dev/null | head -3 || echo "No GOTOOLCHAIN messages found"
-          grep -E "(xray|CONFIG_PACKAGE.*xray)" .config || echo "No xray packages found in config"
-          find . -type f -name "go" -exec sh -c 'echo "{}: $({} version 2>/dev/null)"' \;
 
       - name: Organize firmware
         if: steps.compile.outputs.status == 'success'
+        shell: bash
         run: |
           cd openwrt/bin/targets/*/*
           rm -rf packages
           echo "FIRMWARE=$PWD" >> $GITHUB_ENV
 
-      - name: Upload firmware artifact
+      - name: Upload firmware
         uses: actions/upload-artifact@v4
         if: steps.compile.outputs.status == 'success'
         with:

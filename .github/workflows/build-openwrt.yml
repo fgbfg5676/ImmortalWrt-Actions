@@ -4,11 +4,6 @@ name: Build OpenWrt
 on:
   repository_dispatch:
   workflow_dispatch:
-    inputs:
-      ssh:
-        description: 'SSH connection to Actions'
-        required: false
-        default: 'false'
 
 env:
   REPO_URL: https://github.com/immortalwrt/immortalwrt
@@ -20,7 +15,7 @@ env:
   UPLOAD_FIRMWARE: true
   UPLOAD_RELEASE: true
   TZ: Asia/Shanghai
-  FILE_NAME: CM520-79F   # 使用设备型号
+  FILE_NAME: CM520-79F
 
 jobs:
   build:
@@ -33,27 +28,35 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
-      - name: Setup initial Go
+      - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: 'stable'       
+          go-version: stable
           check-latest: true
 
-      - name: Debug initial Go
+      - name: Debug Go
         run: |
           echo "Initial Go version:"
           go version
           export GO_BIN=$(which go)
-          printf "GO_BIN=%s\n" "$GO_BIN" >> $GITHUB_ENV
+          echo "GO_BIN=$GO_BIN"
+
+      - name: Prepare staging host Go
+        run: |
+          mkdir -p openwrt/staging_dir/host/bin
+          ln -sf "$(which go)" openwrt/staging_dir/host/bin/go || true
+          ln -sf "$(dirname $(which go))/gofmt" openwrt/staging_dir/host/bin/gofmt || true
+          export PATH=$PWD/openwrt/staging_dir/host/bin:$PATH
+          echo "PATH=$PWD/openwrt/staging_dir/host/bin:$PATH" >> $GITHUB_ENV
 
       - name: Clone OpenWrt source
         run: |
           git clone --depth=1 $REPO_URL -b $REPO_BRANCH openwrt
           cd openwrt
           useVersionInfo=$(git show -s --date=short --format="Author: %an<br/>date: %cd<br/>commit: %s<br/>commit hash: %H")
-          printf "useVersionInfo=%s\n" "$useVersionInfo" >> $GITHUB_ENV
-          printf "DATE=%s\n" "$(date '+%Y-%m-%d %H:%M:%S')" >> $GITHUB_ENV
-          printf "DATE1=%s\n" "$(date '+%Y-%m-%d')" >> $GITHUB_ENV
+          echo "useVersionInfo=$useVersionInfo" >> $GITHUB_ENV
+          echo "DATE=$(date '+%Y-%m-%d %H:%M:%S')" >> $GITHUB_ENV
+          echo "DATE1=$(date '+%Y-%m-%d')" >> $GITHUB_ENV
 
       - name: Load custom feeds and configs
         run: |
@@ -71,32 +74,43 @@ jobs:
       - name: Determine Go version for xray-core
         run: |
           cd openwrt
-          CURRENT_GO=$(go version | grep -o 'go[0-9.]*' | tr -d 'go\r\n')
-          echo "Current Go: $CURRENT_GO"
+          CURRENT_GO=$(go version | grep -o 'go[0-9.]*' | tr -d 'go')
           GO_FALLBACK="1.23"
+          X_GO_REQ=""
 
           if [ -f "feeds/my_packages/xray-core/go.mod" ]; then
-            X_GO_REQ=$(grep '^go ' feeds/my_packages/xray-core/go.mod | awk '{print $2}' | tr -d '\r\n')
-            echo "xray-core requires Go >= $X_GO_REQ"
-            if [ "$(printf '%s\n' "$CURRENT_GO" "$X_GO_REQ" | sort -V | head -n1)" != "$X_GO_REQ" ]; then
-              echo "Using fallback Go $GO_FALLBACK"
-              printf "GO_VERSION=%s\n" "$GO_FALLBACK" >> $GITHUB_ENV
-            else
-              printf "GO_VERSION=%s\n" "$CURRENT_GO" >> $GITHUB_ENV
-            fi
+              X_GO_REQ=$(grep '^go ' feeds/my_packages/xray-core/go.mod | awk '{print $2}')
           else
-            echo "No xray-core go.mod found, using current Go"
-            printf "GO_VERSION=%s\n" "$CURRENT_GO" >> $GITHUB_ENV
+              for d in dl/*; do
+                  if [ -f "$d/go.mod" ] && [[ "$d" == *xray* ]]; then
+                      X_GO_REQ=$(grep '^go ' "$d/go.mod" | awk '{print $2}')
+                      break
+                  fi
+              done
           fi
 
-      - name: Prepare staging host Go
-        run: |
-          cd openwrt
-          mkdir -p staging_dir/host/bin
-          ln -sf "$(which go)" staging_dir/host/bin/go || true
-          ln -sf "$(dirname $(which go))/gofmt" staging_dir/host/bin/gofmt || true
-          printf "PATH=%s\n" "$PWD/staging_dir/host/bin:$PATH" >> $GITHUB_ENV
-          echo "Staging host Go version: $(staging_dir/host/bin/go version)"
+          if [ -n "$X_GO_REQ" ]; then
+              echo "xray-core requires Go >= $X_GO_REQ"
+              if [ "$(printf '%s\n' "$CURRENT_GO" "$X_GO_REQ" | sort -V | head -n1)" != "$X_GO_REQ" ]; then
+                  echo "Current Go < required, downloading fallback Go $GO_FALLBACK..."
+                  GO_URL="https://golang.org/dl/go${GO_FALLBACK}.linux-amd64.tar.gz"
+                  wget -q $GO_URL -O /tmp/go${GO_FALLBACK}.tar.gz
+                  rm -rf staging_dir/host/go
+                  mkdir -p staging_dir/host/go
+                  tar -C staging_dir/host/go -xzf /tmp/go${GO_FALLBACK}.tar.gz --strip-components=1
+                  ln -sf "$PWD/staging_dir/host/go/bin/go" staging_dir/host/bin/go
+                  ln -sf "$PWD/staging_dir/host/go/bin/gofmt" staging_dir/host/bin/gofmt
+                  export PATH=$PWD/staging_dir/host/bin:$PATH
+                  GO_VERSION=$GO_FALLBACK
+              else
+                  GO_VERSION=$CURRENT_GO
+              fi
+          else
+              GO_VERSION=$CURRENT_GO
+          fi
+
+          echo "GO_VERSION=$GO_VERSION" >> $GITHUB_ENV
+          echo "Final Go version used: $(which go) $(go version)"
 
       - name: Prepare build
         run: |
@@ -113,18 +127,18 @@ jobs:
           cd openwrt
           export PATH=$PWD/staging_dir/host/bin:$PATH
           echo "Using Go: $(which go) $(go version)"
-          echo "$(nproc) thread compile"
+          echo "$(nproc) threads compiling..."
           make -j$(nproc) || make -j1 V=s
-          printf "status=success\n" >> $GITHUB_OUTPUT
+          echo "status=success" >> $GITHUB_OUTPUT
           grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
-          [ -s DEVICE_NAME ] && printf "DEVICE_NAME=_%s\n" "$(cat DEVICE_NAME)" >> $GITHUB_ENV
-          printf "FILE_DATE=_%s\n" "$(date +'%Y%m%d%H%M')" >> $GITHUB_ENV
+          [ -s DEVICE_NAME ] && echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> $GITHUB_ENV
+          echo "FILE_DATE=_$(date +'%Y%m%d%H%M')" >> $GITHUB_ENV
 
       - name: Handle build failure
         if: failure()
         run: |
           cd openwrt
-          echo "Build failed. Checking Go issues..."
+          echo "Build failed. Checking Go version issues..."
           if grep -r "requires go >=" build_dir/ 2>/dev/null; then
             echo "Go version requirement found:"
             grep -r "requires go >=" build_dir/ 2>/dev/null || true
@@ -140,7 +154,7 @@ jobs:
         run: |
           cd openwrt/bin/targets/*/*
           rm -rf packages
-          printf "FIRMWARE=%s\n" "$PWD" >> $GITHUB_ENV
+          echo "FIRMWARE=$PWD" >> $GITHUB_ENV
 
       - name: Upload firmware
         uses: actions/upload-artifact@v4
@@ -161,5 +175,5 @@ jobs:
           artifacts: ${{ env.FIRMWARE }}/*
           body: |
             - 默认IP：10.10.10.100 默认密码：无
-            - 当前使用版本:【编译前的最后一次[源码](https://github.com/immortalwrt/immortalwrt/tree/openwrt-24.10)更新记录】 
+            - 当前使用版本:【编译前最后一次源码更新记录】 
             ${{ env.useVersionInfo }}

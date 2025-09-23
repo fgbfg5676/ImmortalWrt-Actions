@@ -62,9 +62,7 @@ jobs:
       - name: Run diy-part1 (add feeds / prepare)
         working-directory: openwrt
         run: |
-          # ensure scripts are executable (script located at repo root)
           chmod +x $GITHUB_WORKSPACE/$DIY_P1_SH || true
-          # run diy-part1.sh from repo root while cwd=openwrt
           $GITHUB_WORKSPACE/$DIY_P1_SH
 
       - name: Update and install all feeds (ensure default LuCI/OpenClash present)
@@ -75,12 +73,10 @@ jobs:
           ./scripts/feeds install -a
 
           echo "Feeds installed. Quick check for openclash package..."
-          # After scripts/feeds install -a, packages are available under package/feeds/*
           if [ -d "package/feeds/luci/luci-app-openclash" ] || [ -d "feeds/luci/applications/luci-app-openclash" ]; then
             echo "OpenClash package found."
           else
             echo "ERROR: luci-app-openclash not found after feeds install."
-            echo "--- Listing package/feeds directory (first 200 lines) ---"
             ls -R package/feeds | sed -n '1,200p' || true
             exit 1
           fi
@@ -90,30 +86,24 @@ jobs:
         run: |
           set -euo pipefail
           chmod +x $GITHUB_WORKSPACE/$DIY_P2_SH || true
-          # copy provided .config if present in repo root
           if [ -f "$GITHUB_WORKSPACE/$CONFIG_FILE" ]; then
             cp -f "$GITHUB_WORKSPACE/$CONFIG_FILE" .config
             echo ".config copied from repo root"
           else
-            echo ".config not found in repo root; will use default defconfig when running make defconfig"
+            echo ".config not found; will use default defconfig"
           fi
-          # copy files overlay if present
           if [ -d "$GITHUB_WORKSPACE/files" ]; then
             cp -r "$GITHUB_WORKSPACE/files" ./files_overlay || true
             echo "files overlay copied"
           fi
-          # run diy-part2 to clone custom packages and enable features
           $GITHUB_WORKSPACE/$DIY_P2_SH || true
 
-      - name: Ensure host 'go' is used by OpenWrt build (symlink into staging_dir/host/bin)
+      - name: Ensure host 'go' is used by OpenWrt build
         run: |
-          # Link the go used by actions/setup-go into OpenWrt staging_dir host bin,
-          # so OpenWrt's golang build (which prefers staging_dir/host/bin) will pick it.
           mkdir -p openwrt/staging_dir/host/bin
           GO_HOST_BIN=$(which go)
           echo "Host go binary: $GO_HOST_BIN"
           ln -sf "$GO_HOST_BIN" openwrt/staging_dir/host/bin/go
-          # verify symlink
           file openwrt/staging_dir/host/bin/go || true
           openwrt/staging_dir/host/bin/go version || true
 
@@ -121,27 +111,24 @@ jobs:
         working-directory: openwrt
         run: |
           set -euo pipefail
-          # If .config exists we trust it; otherwise run defconfig to create default config
           if [ -f .config ]; then
             echo ".config exists; skipping menuconfig"
           else
-            echo "No .config present; running make defconfig to generate default config"
+            echo "No .config present; running make defconfig"
           fi
           make defconfig
           make download -j8
-          # remove tiny files (possibly corrupted)
           find dl -size -1024c -exec rm -f {} \; || true
 
-      - name: Compile firmware (verbose on failure)
+      - name: Compile firmware (quiet by default, verbose on failure)
         id: compile
         working-directory: openwrt
         run: |
           set -euo pipefail
           echo "Using GOTOOLCHAIN=$GOTOOLCHAIN"
-          echo "$(nproc) threads compiling (verbose output)"
-          # run parallel build; if it fails try single-threaded verbose to get full error
-          if ! make -j$(nproc) V=s ; then
-            echo "Parallel build failed; running single-threaded verbose build to show full error"
+          echo "$(nproc) threads compiling (quiet mode)"
+          if ! make -j$(nproc); then
+            echo "⚠️ Parallel build failed; retrying with verbose output..."
             make -j1 V=s
           fi
           echo "status=success" >> $GITHUB_OUTPUT

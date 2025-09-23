@@ -44,9 +44,9 @@ jobs:
           git clone --depth=1 $REPO_URL -b $REPO_BRANCH openwrt
           cd openwrt
           useVersionInfo=$(git show -s --date=short --format="Author: %an<br/>date: %cd<br/>commit: %s<br/>commit hash: %H")
-          echo "useVersionInfo=$useVersionInfo" >> $GITHUB_ENV
-          echo "DATE=$(date '+%Y-%m-%d %H:%M:%S')" >> $GITHUB_ENV
-          echo "DATE1=$(date '+%Y-%m-%d')" >> $GITHUB_ENV
+          echo "useVersionInfo=\"$useVersionInfo\"" >> $GITHUB_ENV
+          echo "DATE=\"$(date '+%Y-%m-%d %H:%M:%S')\"" >> $GITHUB_ENV
+          echo "DATE1=\"$(date '+%Y-%m-%d')\"" >> $GITHUB_ENV
 
       - name: Load custom feeds and configs
         run: |
@@ -64,41 +64,28 @@ jobs:
       - name: Setup OpenWrt Go environment
         run: |
           cd openwrt
-          
-          # 创建 staging_dir 结构
           mkdir -p staging_dir/host/bin
-          
-          # 检查 xray-core 的 Go 版本要求
+
           CURRENT_GO=$(go version | grep -o 'go[0-9.]*' | tr -d 'go')
           echo "Current system Go: $CURRENT_GO"
-          
-          # 默认使用系统 Go
+
           GO_TO_USE=$(which go)
           GO_VERSION_TO_USE=$CURRENT_GO
-          
-          # 检查是否需要特定的 Go 版本
+
           REQUIRED_GO=""
-          
-          # 方法1: 检查 feeds 中的 Makefile
           if [ -f "feeds/my_packages/xray-core/Makefile" ]; then
             REQUIRED_GO=$(grep -o 'GO_VERSION_MIN.*:=.*[0-9.]*' feeds/my_packages/xray-core/Makefile 2>/dev/null | grep -o '[0-9.]*' | tail -1)
           fi
-          
-          # 方法2: 根据已知问题，xray-core 新版本需要 Go 1.25
+
           if [ -z "$REQUIRED_GO" ] && [ -d "feeds/my_packages/xray-core" ]; then
             echo "Detected xray-core package, checking for Go 1.25 requirement..."
-            # 保守估计需要 Go 1.24+
             REQUIRED_GO="1.24"
           fi
-          
+
           if [ -n "$REQUIRED_GO" ]; then
             echo "xray-core requires Go >= $REQUIRED_GO"
-            
-            # 版本比较：如果当前版本小于所需版本
             if [ "$(printf '%s\n' "$CURRENT_GO" "$REQUIRED_GO" | sort -V | head -n1)" = "$CURRENT_GO" ] && [ "$CURRENT_GO" != "$REQUIRED_GO" ]; then
               echo "Current Go ($CURRENT_GO) < required ($REQUIRED_GO), downloading Go $REQUIRED_GO..."
-              
-              # 下载指定版本的 Go
               GO_URL="https://golang.org/dl/go${REQUIRED_GO}.linux-amd64.tar.gz"
               wget -q "$GO_URL" -O "/tmp/go${REQUIRED_GO}.tar.gz" || {
                 echo "Failed to download Go $REQUIRED_GO, trying fallback version 1.23..."
@@ -106,30 +93,23 @@ jobs:
                 GO_URL="https://golang.org/dl/go${REQUIRED_GO}.linux-amd64.tar.gz"
                 wget -q "$GO_URL" -O "/tmp/go${REQUIRED_GO}.tar.gz"
               }
-              
-              # 安装到 staging_dir
               rm -rf staging_dir/host/go
               mkdir -p staging_dir/host/go
               tar -C staging_dir/host/go -xzf "/tmp/go${REQUIRED_GO}.tar.gz" --strip-components=1
-              
               GO_TO_USE="$PWD/staging_dir/host/go/bin/go"
               GO_VERSION_TO_USE=$REQUIRED_GO
-              
               echo "Installed Go $REQUIRED_GO to staging_dir"
             else
               echo "Current Go version is sufficient"
             fi
           fi
-          
-          # 创建符号链接
+
           ln -sf "$GO_TO_USE" staging_dir/host/bin/go
           ln -sf "$(dirname "$GO_TO_USE")/gofmt" staging_dir/host/bin/gofmt 2>/dev/null || true
-          
-          # 设置环境变量
-          echo "OPENWRT_GO_PATH=$PWD/staging_dir/host/bin" >> $GITHUB_ENV
-          echo "GO_VERSION_USED=$GO_VERSION_TO_USE" >> $GITHUB_ENV
-          
-          # 验证最终设置
+
+          echo "OPENWRT_GO_PATH=\"$PWD/staging_dir/host/bin\"" >> $GITHUB_ENV
+          echo "GO_VERSION_USED=\"$GO_VERSION_TO_USE\"" >> $GITHUB_ENV
+
           export PATH="$PWD/staging_dir/host/bin:$PATH"
           echo "Final Go setup:"
           echo "  Path: $(which go)"
@@ -152,17 +132,11 @@ jobs:
           export PATH="$OPENWRT_GO_PATH:$PATH"
           echo "Compiling with Go: $(which go) - $(go version)"
           echo "Using $(nproc) threads..."
-          
-          # 编译固件
-          make -j$(nproc) || {
-            echo "Multi-thread build failed, retrying with single thread and verbose output..."
-            make -j1 V=s
-          }
-          
+          make -j$(nproc) || { make -j1 V=s; }
           echo "status=success" >> $GITHUB_OUTPUT
           grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
-          [ -s DEVICE_NAME ] && echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> $GITHUB_ENV
-          echo "FILE_DATE=_$(date +'%Y%m%d%H%M')" >> $GITHUB_ENV
+          [ -s DEVICE_NAME ] && echo "DEVICE_NAME=\"_$(cat DEVICE_NAME)\"" >> $GITHUB_ENV
+          echo "FILE_DATE=\"_$(date +'%Y%m%d%H%M')\"" >> $GITHUB_ENV
 
       - name: Handle build failure
         if: failure()
@@ -172,16 +146,13 @@ jobs:
           echo "=== Build Failure Analysis ==="
           echo "Go version used: $(go version 2>/dev/null || echo 'Go not found')"
           echo "Go path: $(which go 2>/dev/null || echo 'Go not in PATH')"
-          
           echo "Checking for Go version requirements..."
           if grep -r "requires go >=" build_dir/ logs/ 2>/dev/null | head -5; then
             echo "Found Go version requirements in build logs"
           fi
-          
           if grep -r "GOTOOLCHAIN" build_dir/ logs/ 2>/dev/null | head -3; then
             echo "Found GOTOOLCHAIN related messages"
           fi
-          
           if [ -f ".config" ]; then
             echo "=== Package Configuration ==="
             grep -E "(xray|CONFIG_PACKAGE.*xray)" .config || echo "No xray packages found in config"
@@ -192,7 +163,7 @@ jobs:
         run: |
           cd openwrt/bin/targets/*/*
           rm -rf packages
-          echo "FIRMWARE=$PWD" >> $GITHUB_ENV
+          echo "FIRMWARE=\"$PWD\"" >> $GITHUB_ENV
 
       - name: Upload firmware
         uses: actions/upload-artifact@v4

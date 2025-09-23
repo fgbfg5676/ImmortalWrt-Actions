@@ -1,174 +1,121 @@
-# Build OpenWrt for MobiPromo CM520-79F (ARMv7 / ipq40xx/generic)
 name: Build OpenWrt
 
 on:
-  repository_dispatch:
   workflow_dispatch:
 
 env:
   REPO_URL: https://github.com/immortalwrt/immortalwrt
   REPO_BRANCH: openwrt-24.10
+  FEEDS_CONF: feeds.conf.default
   CONFIG_FILE: .config
   DIY_P1_SH: diy-part1.sh
   DIY_P2_SH: diy-part2.sh
-  UPLOAD_BIN_DIR: false
-  UPLOAD_FIRMWARE: true
-  UPLOAD_RELEASE: true
-  TZ: Asia/Shanghai
-  FILE_NAME: CM520-79F
 
 jobs:
   build:
     runs-on: ubuntu-24.04
-    permissions:
-      actions: write
-      contents: write
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v5
+    - name: Checkout
+      uses: actions/checkout@v4
 
-      - name: Install build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential git rsync tar findutils bash patch diffutils coreutils gzip unzip bzip2 wget perl file
-          sudo ln -sf /bin/bash /usr/bin/bash || true
+    - name: Free disk space
+      run: |
+        echo -e "\033[34m[INFO] 清理磁盘空间...\033[0m"
+        sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc || true
+        df -h
 
-      - name: Setup Go (host system)
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.25.0'
-          check-latest: true
+    - name: Install build dependencies
+      run: |
+        echo -e "\033[34m[INFO] 安装编译依赖...\033[0m"
+        sudo apt-get update
+        sudo apt-get install -y \
+          # 基础构建工具
+          build-essential flex bison g++ gawk gcc-multilib gettext \
+          # OpenWrt 常用依赖
+          git libncurses5-dev libssl-dev python3-distutils rsync unzip zlib1g-dev \
+          # 压缩工具
+          gzip bzip2 tar xz-utils unzip \
+          # 系统工具
+          file wget curl ca-certificates coreutils findutils grep sed diffutils \
+          # 编译加速
+          ccache libzstd-dev \
+          # 语言环境
+          bash perl
+        echo -e "\033[32m[OK] 依赖安装完成\033[0m"
 
-      - name: Debug initial Go
-        run: |
-          echo "Initial Go version: $(go version)"
-          echo "Go path: $(which go)"
+        echo -e "\033[34m[INFO] 修复 bash/perl 循环链接...\033[0m"
+        sudo rm -f /usr/bin/bash
+        sudo ln -s /bin/bash /usr/bin/bash
+        sudo rm -f /usr/bin/perl
+        sudo ln -s /usr/bin/perl /usr/bin/perl
 
-      - name: Clone OpenWrt source
-        run: |
-          git clone --depth=1 $REPO_URL -b $REPO_BRANCH openwrt
-          cd openwrt
-          useVersionInfo=$(git show -s --date=short --format="Author: %an<br/>date: %cd<br/>commit: %s<br/>commit hash: %H")
-          echo "useVersionInfo=$useVersionInfo" >> $GITHUB_ENV
-          echo "DATE=$(date '+%Y-%m-%d %H:%M:%S')" >> $GITHUB_ENV
-          echo "DATE1=$(date '+%Y-%m-%d')" >> $GITHUB_ENV
-
-      - name: Clean old Go and staging
-        run: |
-          cd openwrt
-          rm -rf staging_dir/host/go staging_dir/host/bin/go \
-                 staging_dir/host/stamp/.golang* \
-                 staging_dir/hostpkg/stamp/.golang* \
-                 build_dir/host/golang build_dir/hostpkg/golang
-          echo "Cleaned old Go and host-golang stamps"
-
-      - name: Restore cached Go
-        id: go-cache
-        uses: actions/cache@v4
-        with:
-          path: openwrt/staging_dir/host/go
-          key: ${{ runner.os }}-host-go-1.25.0
-
-      - name: Setup host Go 1.25 for OpenWrt
-        run: |
-          cd openwrt
-          mkdir -p staging_dir/host/go staging_dir/host/bin staging_dir/host/stamp staging_dir/hostpkg/stamp
-
-          if [ ! -x staging_dir/host/go/bin/go ] || [ "$(staging_dir/host/go/bin/go version | grep -o 'go1.25.0')" != "go1.25.0" ]; then
-            echo "Installing Go 1.25.0 to staging_dir/host/go..."
-            rm -rf staging_dir/host/go
-            mkdir -p staging_dir/host/go
-            GO_URL="https://dl.google.com/go/go1.25.0.linux-amd64.tar.gz"
-            wget -q "$GO_URL" -O /tmp/go1.25.tar.gz
-            tar -C staging_dir/host/go -xzf /tmp/go1.25.tar.gz --strip-components=1
-            rm -f /tmp/go1.25.tar.gz
+        echo -e "\033[34m[INFO] 检查关键工具...\033[0m"
+        for tool in stat install xargs realpath; do
+          if ! command -v $tool >/dev/null 2>&1; then
+            echo -e "\033[33m[WARN] 缺少工具: $tool (部分在 coreutils/findutils 内)\033[0m"
           else
-            echo "Using cached Go 1.25.0"
+            echo -e "\033[32m[OK] 已找到: $tool -> $(command -v $tool)\033[0m"
           fi
+        done
 
-          ln -sf $PWD/staging_dir/host/go/bin/go staging_dir/host/bin/go
-          ln -sf $PWD/staging_dir/host/go/bin/gofmt staging_dir/host/bin/gofmt || true
-          touch staging_dir/host/stamp/.golang_installed
-          touch staging_dir/hostpkg/stamp/.golang_installed
+    - name: Cache Go
+      uses: actions/cache@v4
+      with:
+        path: openwrt/staging_dir/host/bin/go
+        key: go-${{ runner.os }}-${{ env.REPO_BRANCH }}
 
-          export PATH="$PWD/staging_dir/host/bin:$PATH"
-          echo "OPENWRT_GO_PATH=$PWD/staging_dir/host/bin" >> $GITHUB_ENV
-          echo "GO_VERSION_USED=1.25.0" >> $GITHUB_ENV
+    - name: Cache dl
+      uses: actions/cache@v4
+      with:
+        path: openwrt/dl
+        key: dl-${{ runner.os }}-${{ env.REPO_BRANCH }}
+        restore-keys: |
+          dl-${{ runner.os }}-
 
-          echo "Go setup:"
-          echo "  Path: $(which go)"
-          echo "  Version: $(go version)"
-          ls -la staging_dir/host/stamp/.golang_installed
-          ls -la staging_dir/hostpkg/stamp/.golang_installed
+    - name: Cache ccache
+      uses: actions/cache@v4
+      with:
+        path: ~/.ccache
+        key: ccache-${{ runner.os }}-${{ env.REPO_BRANCH }}
+        restore-keys: |
+          ccache-${{ runner.os }}-
 
-      - name: Load custom feeds and configs
-        run: |
-          cd openwrt
-          export PATH="$OPENWRT_GO_PATH:$PATH"
-          chmod +x $GITHUB_WORKSPACE/$DIY_P1_SH $GITHUB_WORKSPACE/$DIY_P2_SH
-          $GITHUB_WORKSPACE/$DIY_P1_SH
-          ./scripts/feeds update -a
-          ./scripts/feeds install -a -f -p my_packages
-          ./scripts/feeds install -a -p passwall_packages
-          ./scripts/feeds install -a
-          [ -e $GITHUB_WORKSPACE/$CONFIG_FILE ] && cp $GITHUB_WORKSPACE/$CONFIG_FILE .config
-          [ -e files ] && cp -r files files_backup
-          $GITHUB_WORKSPACE/$DIY_P2_SH
-          echo "Go version after feeds: $(go version)"
-          cat feeds/my_packages/xray-core/Makefile 2>/dev/null || echo "xray-core Makefile not found"
+    - name: Clone source
+      run: |
+        echo -e "\033[34m[INFO] 克隆源码 $REPO_URL -b $REPO_BRANCH...\033[0m"
+        git clone $REPO_URL -b $REPO_BRANCH openwrt
 
-      - name: Cache dl files
-        uses: actions/cache@v4
-        with:
-          path: openwrt/dl
-          key: ${{ runner.os }}-openwrt-dl-${{ hashFiles('.config') }}
+    - name: Load custom feeds
+      run: |
+        echo -e "\033[34m[INFO] 加载 feeds 配置...\033[0m"
+        [ -e $FEEDS_CONF ] && mv $FEEDS_CONF openwrt/feeds.conf.default
+        cd openwrt
+        ./scripts/feeds update -a
+        ./scripts/feeds install -a
 
-      - name: Prepare build
-        run: |
-          cd openwrt
-          export PATH="$OPENWRT_GO_PATH:$PATH"
-          make defconfig
-          make download -j8
-          find dl -size -1024c -exec rm -f {} \;
+    - name: Load custom configuration
+      run: |
+        echo -e "\033[34m[INFO] 应用自定义配置...\033[0m"
+        [ -e $CONFIG_FILE ] && mv $CONFIG_FILE openwrt/.config
+        [ -x $DIY_P1_SH ] && (cd openwrt && bash ../$DIY_P1_SH)
 
-      - name: Compile firmware (single-thread)
-        id: compile
-        run: |
-          cd openwrt
-          export PATH="$OPENWRT_GO_PATH:$PATH"
-          make -j1 V=s || exit 1
-          grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
-          [ -s DEVICE_NAME ] && echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> $GITHUB_ENV
-          echo "FILE_DATE=_$(date +'%Y%m%d%H%M')" >> $GITHUB_ENV
-          echo "status=success" >> $GITHUB_OUTPUT
+    - name: Build
+      run: |
+        cd openwrt
+        echo -e "\033[34m[INFO] 准备配置...\033[0m"
+        make defconfig
+        [ -x ../$DIY_P2_SH ] && bash ../$DIY_P2_SH
 
-      - name: Organize firmware
-        if: steps.compile.outputs.status == 'success'
-        run: |
-          cd openwrt/bin/targets/*/*
-          rm -rf packages
-          echo "FIRMWARE=$PWD" >> $GITHUB_ENV
+        echo -e "\033[34m[INFO] 下载依赖包...\033[0m"
+        make download -j$(nproc) || true
 
-      - name: Upload firmware
-        uses: actions/upload-artifact@v4
-        if: steps.compile.outputs.status == 'success'
-        with:
-          name: OpenWrt_firmware${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
-          path: ${{ env.FIRMWARE }}
+        echo -e "\033[34m[INFO] 开始并行编译...\033[0m"
+        make -j$(nproc) V=s || (echo -e "\033[33m[WARN] 并行失败，回退到单线程...\033[0m" && make -j1 V=s)
 
-      - name: Release firmware
-        uses: ncipollo/release-action@v1
-        if: steps.compile.outputs.status == 'success'
-        with:
-          name: R${{ env.DATE }} for ${{ env.FILE_NAME }}
-          allowUpdates: true
-          removeArtifacts: true
-          tag: ${{ env.FILE_NAME }}
-          commit: main
-          artifacts: ${{ env.FIRMWARE }}/*
-          body: |
-            - 默认IP：10.10.10.100 默认密码：无
-            - 使用 Go 版本: ${{ env.GO_VERSION_USED }}
-            - 当前使用版本:【编译前最后一次源码更新记录】 
-            ${{ env.useVersionInfo }}
+    - name: Upload artifacts
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: OpenWrt
+        path: openwrt/bin/targets

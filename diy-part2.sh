@@ -29,7 +29,7 @@ DTS_PATCH_FILE="$DTS_DIR/qcom-ipq4019-cm520-79f.dts.patch"
 TARGET_DTS="$DTS_DIR/qcom-ipq4019-cm520-79f.dts"
 
 log_info "Downloading DTS patch..."
-wget $WGET_OPTS -O "$DTS_PATCH_FILE" "$DTS_PATCH_URL" || log_error "Failed to download DTS patch from $DTS_PATCH_URL"
+wget $WGET_OPTS -O "$DTS_PATCH_FILE" "$DTS_PATCH_URL" || log_error "Failed to download DTS patch"
 
 if [ ! -f "$TARGET_DTS" ]; then
     log_info "Applying DTS patch..."
@@ -39,7 +39,7 @@ else
     log_info "Target DTS already exists, skipping patch"
 fi
 
-# -------------------- 设备规则配置 --------------------
+# -------------------- 设备规则 --------------------
 if ! grep -q "define Device/mobipromo_cm520-79f" "$GENERIC_MK"; then
     log_info "Adding CM520-79F device rule with FIT image support..."
     cat <<EOF >> "$GENERIC_MK"
@@ -86,11 +86,11 @@ EOF
 chmod +x "$NETWORK_FILE"
 log_success "Network configuration file created"
 
-# -------------------- luci-app-partexp 插件 --------------------
+# -------------------- luci-app-partexp --------------------
 PLUGIN_PATH="$CUSTOM_PLUGINS_DIR/luci-app-partexp"
 if [ ! -d "$PLUGIN_PATH/.git" ]; then
-    log_info "Cloning sirpdboy luci-app-partexp plugin..."
-    git clone --depth 1 https://github.com/sirpdboy/luci-app-partexp.git "$PLUGIN_PATH" || log_error "Failed to clone luci-app-partexp"
+    log_info "Cloning luci-app-partexp plugin..."
+    git clone --depth 1 https://github.com/sirpdboy/luci-app-partexp.git "$PLUGIN_PATH" || log_error "Failed to clone"
     log_success "luci-app-partexp cloned successfully"
 else
     log_info "luci-app-partexp already exists, skipping clone"
@@ -98,7 +98,7 @@ fi
 
 if [ ! -d "package/luci-app-partexp" ]; then
     cp -r "$PLUGIN_PATH" package/
-    log_success "luci-app-partexp copied to package/ directory"
+    log_success "luci-app-partexp copied to package/"
 fi
 
 if ! grep -q "CONFIG_PACKAGE_luci-app-partexp=y" .config 2>/dev/null; then
@@ -108,7 +108,7 @@ else
     log_info "luci-app-partexp already enabled, skipping"
 fi
 
-# -------------------- 启用 PassWall2 --------------------
+# -------------------- PassWall2 --------------------
 if ! grep -q "CONFIG_PACKAGE_luci-app-passwall2=y" .config 2>/dev/null; then
     echo "CONFIG_PACKAGE_luci-app-passwall2=y" >> .config
     log_success "PassWall2 enabled"
@@ -116,29 +116,34 @@ else
     log_info "PassWall2 already enabled, skipping"
 fi
 
-# -------------------- 中文包转换 + LuCI ACL --------------------
-log_info "Converting zh-cn to zh_Hans language packages..."
-# 外部脚本容错执行
-if ! bash <(curl -sSL https://build-scripts.immortalwrt.eu.org/convert_translation.sh); then
-    log_info "External translation conversion failed or no files found, skipping..."
-fi
-
-if ! bash <(curl -sSL https://build-scripts.immortalwrt.eu.org/create_acl_for_luci.sh) -a; then
-    log_info "LuCI ACL setup failed, skipping..."
-fi
-
-rm -rf ./tmp 2>/dev/null || true
-
-# 本地 zh-cn.po 检查并转换
-zh_cn_files=$(find feeds/luci package/custom -type f -name 'zh-cn.po' 2>/dev/null)
-if [ -z "$zh_cn_files" ]; then
-    log_info "No zh-cn.po files found locally, skipping local conversion."
+# -------------------- 中文包转换 --------------------
+log_info "Converting zh-cn to zh_Hans..."
+ZH_CN_FILES=$(find feeds/luci package/custom -type f -name 'zh-cn.po' 2>/dev/null)
+if [ -z "$ZH_CN_FILES" ]; then
+    log_info "No zh-cn.po files found, skipping conversion"
 else
-    for po in $zh_cn_files; do
+    for po in $ZH_CN_FILES; do
         cp -f "$po" "$(dirname $po)/zh_Hans.po"
-        log_info "Converted locally: $po"
+        log_info "Converted: $po"
     done
-    log_success "All local zh-cn -> zh_Hans conversion completed"
+    log_success "All zh-cn -> zh_Hans conversion completed"
 fi
 
-log_success "Language conversion and LuCI ACL setup finished"
+# -------------------- 自动修正 Makefile 依赖 --------------------
+log_info "Fixing default-settings Makefile zh_Hans dependencies..."
+for mk in $(find package -type f -path "*/default-settings/Makefile"); do
+    if grep -q "luci-i18n-.*-zh_Hans" "$mk"; then
+        sed -i 's/zh_Hans/zh-cn/g' "$mk"
+        log_success "Fixed dependency in $mk"
+    else
+        log_info "No zh_Hans dependency in $mk, skipping"
+    fi
+done
+log_success "All default-settings Makefile dependencies checked and fixed"
+
+# -------------------- LuCI ACL 预留处理 --------------------
+# 可按需使用，暂不强制执行
+# bash <( curl -sSL https://build-scripts.immortalwrt.eu.org/create_acl_for_luci.sh ) -a
+# log_info "LuCI ACL setup completed"
+
+log_success "DIY part2 script finished"

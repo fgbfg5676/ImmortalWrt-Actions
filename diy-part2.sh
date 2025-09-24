@@ -33,16 +33,15 @@ wget $WGET_OPTS -O "$DTS_PATCH_FILE" "$DTS_PATCH_URL" || log_error "Failed to do
 
 if [ ! -f "$TARGET_DTS" ]; then
     log_info "Applying DTS patch..."
-    # 使用 -p1 参数 ，因为补丁文件似乎是为上一级目录创建的
     patch -p1 < "$DTS_PATCH_FILE" || log_error "Failed to apply DTS patch"
     log_success "DTS patch applied successfully"
 else
     log_info "Target DTS already exists, skipping patch"
 fi
 
-# -------------------- 设备规则配置 (已修复) --------------------
+# -------------------- 设备规则配置 --------------------
 if ! grep -q "define Device/mobipromo_cm520-79f" "$GENERIC_MK"; then
-    log_info "Adding CM520-79F device rule with FIT image support..."
+    log_info "Adding CM520-79F device rule..."
     cat <<EOF >> "$GENERIC_MK"
 
 define Device/mobipromo_cm520-79f
@@ -55,11 +54,11 @@ define Device/mobipromo_cm520-79f
   ROOTFS_SIZE := 26624k
   IMAGE_SIZE := 32768k
   DEVICE_PACKAGES := \\
-	ath10k-firmware-qca4019-ct \\
-	kmod-ath10k-ct-smallbuffers
+    ath10k-firmware-qca4019-ct \\
+    kmod-ath10k-ct-smallbuffers
   IMAGE/trx := append-kernel | pad-to \$(KERNEL_SIZE) | append-rootfs | trx-nand-edgecore-ecw5211 \\
-	-F 0x524D424E -N 1000 -M 0x2 -C 0x2 -I 0x2 -V "U-Boot 2012.07" -e 0x80208000 -i /dev/mtd10 \\
-	-a 0x80208000 -n "Kernel" -d /dev/mtd11 -c "Rootfs" | trx-header -s 16384 -o \$@
+    -F 0x524D424E -N 1000 -M 0x2 -C 0x2 -I 0x2 -V "U-Boot 2012.07" -e 0x80208000 -i /dev/mtd10 \\
+    -a 0x80208000 -n "Kernel" -d /dev/mtd11 -c "Rootfs" | trx-header -s 16384 -o \$@
 endef
 TARGET_DEVICES += mobipromo_cm520-79f
 EOF
@@ -84,18 +83,15 @@ ipq40xx_board_detect() {
 }
 boot_hook_add preinit_main ipq40xx_board_detect
 EOF
-
 chmod +x "$NETWORK_FILE"
 log_success "Network configuration file created"
 
-# -------------------- sirpdboy luci-app-partexp 插件 --------------------
+# -------------------- 自定义插件 luci-app-partexp --------------------
 PLUGIN_PATH="$CUSTOM_PLUGINS_DIR/luci-app-partexp"
 if [ ! -d "$PLUGIN_PATH/.git" ]; then
-    log_info "Cloning sirpdboy luci-app-partexp plugin..."
+    log_info "Cloning luci-app-partexp plugin..."
     git clone --depth 1 https://github.com/sirpdboy/luci-app-partexp.git "$PLUGIN_PATH" || log_error "Failed to clone luci-app-partexp"
     log_success "luci-app-partexp cloned successfully"
-else
-    log_info "luci-app-partexp already exists, skipping clone"
 fi
 
 if [ ! -d "package/luci-app-partexp" ]; then
@@ -106,14 +102,46 @@ fi
 if ! grep -q "CONFIG_PACKAGE_luci-app-partexp=y" .config 2>/dev/null; then
     echo "CONFIG_PACKAGE_luci-app-partexp=y" >> .config
     log_success "luci-app-partexp enabled"
-else
-    log_info "luci-app-partexp already enabled, skipping"
 fi
 
-# -------------------- 启用 PassWall2 --------------------
-if ! grep -q "CONFIG_PACKAGE_luci-app-passwall2=y" .config 2>/dev/null; then
-    echo "CONFIG_PACKAGE_luci-app-passwall2=y" >> .config
-    log_success "PassWall2 enabled"
-else
-    log_info "PassWall2 already enabled, skipping"
-fi
+# -------------------- 全局 zh-cn -> zh_Hans 中文包转换 --------------------
+log_info "Converting zh-cn to zh_Hans language packages..."
+for po in $(find feeds/luci -type f -name 'zh-cn.po'); do
+    cp -f "$po" "$(dirname $po)/zh_Hans.po"
+    log_info "Converted: $po"
+done
+
+for po in $(find package/custom -type f -name 'zh-cn.po' 2>/dev/null); do
+    cp -f "$po" "$(dirname $po)/zh_Hans.po"
+    log_info "Converted custom: $po"
+done
+log_success "All zh-cn -> zh_Hans conversion completed"
+
+# -------------------- 生成版本文件 (PassWall2 + OpenClash) --------------------
+VERSION_FILE="files/etc/firmware-release"
+mkdir -p "$(dirname $VERSION_FILE)"
+log_info "Generating version file..."
+
+{
+    echo "Firmware Release: $(date '+%Y-%m-%d %H:%M:%S')"
+
+    # PassWall2 版本
+    PW2_DIR=$(find feeds packages -type d -name "luci-app-passwall2" 2>/dev/null | head -1)
+    if [ -n "$PW2_DIR" ]; then
+        PW2_VER=$(grep -m1 'PKG_VERSION' "$PW2_DIR/Makefile" 2>/dev/null | awk -F'=' '{print $2}' | tr -d ' ')
+        echo "PassWall2 Version: ${PW2_VER:-unknown}"
+    else
+        echo "PassWall2 Version: not found"
+    fi
+
+    # OpenClash 版本
+    OC_DIR=$(find feeds packages -type d -name "luci-app-openclash" 2>/dev/null | head -1)
+    if [ -n "$OC_DIR" ]; then
+        OC_VER=$(grep -m1 'PKG_VERSION' "$OC_DIR/Makefile" 2>/dev/null | awk -F'=' '{print $2}' | tr -d ' ')
+        echo "OpenClash Version: ${OC_VER:-unknown}"
+    else
+        echo "OpenClash Version: not found"
+    fi
+} > "$VERSION_FILE"
+
+log_success "Version file generated at $VERSION_FILE"

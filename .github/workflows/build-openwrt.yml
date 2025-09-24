@@ -16,7 +16,7 @@ env:
 jobs:
   build:
     runs-on: ubuntu-24.04
-    timeout-minutes: 360
+    timeout-minutes: 150
     
     steps:
     - name: Checkout source code
@@ -30,6 +30,10 @@ jobs:
         sudo rm -rf /opt/ghc
         sudo rm -rf /opt/hostedtoolcache/CodeQL
         sudo docker image prune --all --force
+        # Additional cleanup for more space
+        sudo rm -rf /usr/local/.ghcup
+        sudo rm -rf /usr/local/graalvm
+        sudo rm -rf /opt/microsoft
         df -h
 
     - name: Install build dependencies
@@ -56,23 +60,40 @@ jobs:
         # Pin to exact version 1.25.0 to satisfy the strict check in diy-part2.sh
         go-version: '1.25.0'
 
-    - name: Cache downloads
-      uses: actions/cache@v4
-      with:
-        path: openwrt/dl
-        key: dl-${{ env.REPO_BRANCH }}-${{ hashFiles('**/feeds.conf.default') }}
-        restore-keys: |
-          dl-${{ env.REPO_BRANCH }}-
-          dl-
+    - name: Setup ccache
+      run: |
+        echo "Setting up ccache for faster compilation..."
+        sudo mkdir -p /usr/lib/ccache
+        sudo ln -sf /usr/bin/ccache /usr/lib/ccache/gcc
+        sudo ln -sf /usr/bin/ccache /usr/lib/ccache/g++
+        sudo ln -sf /usr/bin/ccache /usr/lib/ccache/cc
+        sudo ln -sf /usr/bin/ccache /usr/lib/ccache/c++
+        export PATH="/usr/lib/ccache:$PATH"
+        ccache --max-size=2G
+        ccache --set-config=compression=true
 
-    - name: Cache toolchain
+    - name: Enhanced cache downloads
       uses: actions/cache@v4
       with:
-        path: openwrt/staging_dir
-        key: toolchain-${{ env.REPO_BRANCH }}-${{ runner.arch }}-${{ hashFiles('**/.config') }}
+        path: |
+          openwrt/dl
+          ~/.ccache
+        key: dl-ccache-${{ env.REPO_BRANCH }}-${{ hashFiles('**/feeds.conf.default') }}-${{ github.run_number }}
+        restore-keys: |
+          dl-ccache-${{ env.REPO_BRANCH }}-${{ hashFiles('**/feeds.conf.default') }}-
+          dl-ccache-${{ env.REPO_BRANCH }}-
+          dl-ccache-
+
+    - name: Enhanced cache toolchain
+      uses: actions/cache@v4
+      with:
+        path: |
+          openwrt/staging_dir
+          openwrt/build_dir/toolchain-*
+        key: toolchain-${{ env.REPO_BRANCH }}-${{ runner.arch }}-${{ hashFiles('**/.config') }}-v2
         restore-keys: |
           toolchain-${{ env.REPO_BRANCH }}-${{ runner.arch }}-
-          toolchain-
+          toolchain-${{ env.REPO_BRANCH }}-
 
     - name: Clone ImmortalWrt source
       run: |
@@ -137,44 +158,121 @@ jobs:
       run: |
         cd openwrt
         make defconfig
-        sed -i 's/CONFIG_PACKAGE_adguardhome=y/# CONFIG_PACKAGE_adguardhome is not set/' .config || true
-        sed -i 's/CONFIG_PACKAGE_sing-box=y/# CONFIG_PACKAGE_sing-box is not set/' .config || true
-        sed -i 's/CONFIG_PACKAGE_cloudflared=y/# CONFIG_PACKAGE_cloudflared is not set/' .config || true
-        sed -i 's/CONFIG_PACKAGE_frp=y/# CONFIG_PACKAGE_frp is not set/' .config || true
-        make defconfig
         echo "Configuration synchronized"
 
-    - name: Download packages
+    - name: Download packages with retry
       run: |
         cd openwrt
         echo "Downloading packages..."
-        if ! make download -j$(nproc ); then
-          echo "Parallel download failed, retrying with single thread..."
-          make download -j1 V=s
+        # First attempt with parallel download
+        if ! timeout 1800 make download -j$(nproc) V=s; then
+          echo "Parallel download failed or timed out, cleaning and retrying..."
+          find dl -size -1024c -delete 2>/dev/null || true
+          if ! timeout 1800 make download -j1 V=s; then
+            echo "Single thread download failed, trying one more time..."
+            find dl -size -1024c -delete 2>/dev/null || true
+            timeout 1800 make download -j1 V=s || {
+              echo "Download completely failed, but continuing with available packages..."
+            }
+          fi
         fi
         find dl -size -1024c -delete 2>/dev/null || true
         find dl -name "*.hash" -delete 2>/dev/null || true
         echo "Download completed. Cache size:"
-        du -sh dl/
+        du -sh dl/ || true
 
-    - name: Compile toolchain
+    - name: Monitor system resources
+      run: |
+        echo "=== System Resources Before Build ==="
+        echo "CPU cores: $(nproc)"
+        echo "Memory info:"
+        free -h
+        echo "Disk space:"
+        df -h
+        echo "Load average: $(cat /proc/loadavg)"
+
+    - name: Compile toolchain with monitoring
       run: |
         cd openwrt
+        export PATH="/usr/lib/ccache:$PATH"
         echo "Compiling toolchain..."
-        make tools/install -j$(nproc) V=s || make tools/install -j1 V=s
-        make toolchain/install -j$(nproc) V=s || make toolchain/install -j1 V=s
+        echo "Using ccache: $(which gcc)"
+        
+        if ! timeout 3600 make tools/install -j$(($(nproc)+1)) V=s; then
+          echo "Tools compilation failed or timed out, retrying with single thread..."
+          if ! timeout 3600 make tools/install -j1 V=s; then
+            echo "Tools compilation failed completely"
+            exit 1
+          fi
+        fi
+        
+        if ! timeout 3600 make toolchain/install -j$(($(nproc)+1)) V=s; then
+          echo "Toolchain compilation failed or timed out, retrying with single thread..."
+          if ! timeout 3600 make toolchain/install -j1 V=s; then
+            echo "Toolchain compilation failed completely"
+            exit 1
+          fi
+        fi
+        
+        echo "Ccache statistics:"
+        ccache -s || true
 
-    - name: Build OpenWrt firmware
+    - name: Build OpenWrt firmware with enhanced monitoring
       run: |
         cd openwrt
+        export PATH="/usr/lib/ccache:$PATH"
         echo "Starting firmware build..."
         echo "Available CPU cores: $(nproc)"
-        echo "Available memory: $(free -h)"
-        if ! make -j$(nproc); then
-          echo "Parallel build failed, retrying with single thread and verbose output..."
-          make -j1 V=s
+        echo "Available memory:"
+        free -h
+        
+        # Monitor resources during build
+        (
+          while true; do
+            sleep 300  # Check every 5 minutes
+            echo "=== Build Progress Check $(date) ==="
+            echo "Memory usage:"
+            free -h
+            echo "Disk usage:"
+            df -h . || true
+            echo "Load average: $(cat /proc/loadavg)"
+            echo "Ccache stats:"
+            ccache -s || true
+            echo "================================"
+          done
+        ) &
+        MONITOR_PID=$!
+        
+        # Main build with timeout
+        BUILD_SUCCESS=false
+        if timeout 7200 make -j$(($(nproc)+1)) V=s; then
+          BUILD_SUCCESS=true
+        else
+          echo "Parallel build failed or timed out, retrying with fewer threads..."
+          if timeout 3600 make -j2 V=s; then
+            BUILD_SUCCESS=true
+          else
+            echo "Reduced parallel build failed, trying single thread..."
+            if timeout 3600 make -j1 V=s; then
+              BUILD_SUCCESS=true
+            fi
+          fi
         fi
-        echo "Build completed successfully!"
+        
+        # Stop monitoring
+        kill $MONITOR_PID 2>/dev/null || true
+        
+        if [ "$BUILD_SUCCESS" = "true" ]; then
+          echo "Build completed successfully!"
+          echo "Final ccache statistics:"
+          ccache -s || true
+        else
+          echo "Build failed after all retry attempts"
+          echo "Final system state:"
+          free -h
+          df -h
+          exit 1
+        fi
 
     - name: Prepare outputs
       run: |
@@ -187,18 +285,18 @@ jobs:
         echo "FILE_DATE=$(date +'%Y%m%d-%H%M')" >> $GITHUB_ENV
         echo "FIRMWARE_PATH=$(pwd)/bin/targets/*/*" >> $GITHUB_ENV
         echo "Firmware files:"
-        ls -la bin/targets/*/*
+        ls -la bin/targets/*/* || true
 
     - name: Check firmware size
       run: |
         cd openwrt
         echo "Firmware size information:"
-        find bin/targets -name "*.bin" -o -name "*.img" -o -name "*.trx" | while read file; do
+        find bin/targets -name "*.bin" -o -name "*.img" -o -name "*.trx" 2>/dev/null | while read file; do
           if [ -f "$file" ]; then
-            size=$(stat -c%s "$file" 2>/dev/null)
-            echo "$(basename "$file"): ${size} bytes ($(numfmt --to=iec $size))"
+            size=$(stat -c%s "$file" 2>/dev/null || echo "0")
+            echo "$(basename "$file"): ${size} bytes ($(numfmt --to=iec $size 2>/dev/null || echo "unknown"))"
           fi
-        done
+        done || echo "No firmware files found"
 
     - name: Upload firmware artifact
       uses: actions/upload-artifact@v4
@@ -207,14 +305,15 @@ jobs:
         path: ${{ env.FIRMWARE_PATH }}
         retention-days: 30
 
-    - name: Upload logs on failure
-      if: failure()
+    - name: Upload build logs and config
+      if: always()
       uses: actions/upload-artifact@v4
       with:
-        name: build-logs_${{ env.FILE_DATE }}
+        name: build-info_${{ env.FILE_DATE }}
         path: |
           openwrt/logs/
           openwrt/.config
+          openwrt/bin/packages/
         retention-days: 7
 
     - name: Create GitHub Release

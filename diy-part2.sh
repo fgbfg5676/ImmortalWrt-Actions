@@ -54,11 +54,11 @@ define Device/mobipromo_cm520-79f
   ROOTFS_SIZE := 26624k
   IMAGE_SIZE := 32768k
   DEVICE_PACKAGES := \\
-	ath10k-firmware-qca4019-ct \\
-	kmod-ath10k-ct-smallbuffers
+    ath10k-firmware-qca4019-ct \\
+    kmod-ath10k-ct-smallbuffers
   IMAGE/trx := append-kernel | pad-to \$(KERNEL_SIZE) | append-rootfs | trx-nand-edgecore-ecw5211 \\
-	-F 0x524D424E -N 1000 -M 0x2 -C 0x2 -I 0x2 -V "U-Boot 2012.07" -e 0x80208000 -i /dev/mtd10 \\
-	-a 0x80208000 -n "Kernel" -d /dev/mtd11 -c "Rootfs" | trx-header -s 16384 -o \$@
+    -F 0x524D424E -N 1000 -M 0x2 -C 0x2 -I 0x2 -V "U-Boot 2012.07" -e 0x80208000 -i /dev/mtd10 \\
+    -a 0x80208000 -n "Kernel" -d /dev/mtd11 -c "Rootfs" | trx-header -s 16384 -o \$@
 endef
 TARGET_DEVICES += mobipromo_cm520-79f
 EOF
@@ -83,11 +83,10 @@ ipq40xx_board_detect() {
 }
 boot_hook_add preinit_main ipq40xx_board_detect
 EOF
-
 chmod +x "$NETWORK_FILE"
 log_success "Network configuration file created"
 
-# -------------------- sirpdboy luci-app-partexp 插件 --------------------
+# -------------------- luci-app-partexp 插件 --------------------
 PLUGIN_PATH="$CUSTOM_PLUGINS_DIR/luci-app-partexp"
 if [ ! -d "$PLUGIN_PATH/.git" ]; then
     log_info "Cloning sirpdboy luci-app-partexp plugin..."
@@ -117,9 +116,29 @@ else
     log_info "PassWall2 already enabled, skipping"
 fi
 
-# -------------------- 中文包转换 & LuCI ACL --------------------
-log_info "Converting zh-cn to zh_Hans language packages and setting up LuCI ACL..."
-bash <(curl -sSL https://build-scripts.immortalwrt.eu.org/convert_translation.sh) || log_error "Translation conversion failed"
-bash <(curl -sSL https://build-scripts.immortalwrt.eu.org/create_acl_for_luci.sh) -a || log_error "LuCI ACL setup failed"
+# -------------------- 中文包转换 + LuCI ACL --------------------
+log_info "Converting zh-cn to zh_Hans language packages..."
+# 外部脚本容错执行
+if ! bash <(curl -sSL https://build-scripts.immortalwrt.eu.org/convert_translation.sh); then
+    log_info "External translation conversion failed or no files found, skipping..."
+fi
+
+if ! bash <(curl -sSL https://build-scripts.immortalwrt.eu.org/create_acl_for_luci.sh) -a; then
+    log_info "LuCI ACL setup failed, skipping..."
+fi
+
 rm -rf ./tmp 2>/dev/null || true
-log_success "Language conversion and LuCI ACL setup completed"
+
+# 本地 zh-cn.po 检查并转换
+zh_cn_files=$(find feeds/luci package/custom -type f -name 'zh-cn.po' 2>/dev/null)
+if [ -z "$zh_cn_files" ]; then
+    log_info "No zh-cn.po files found locally, skipping local conversion."
+else
+    for po in $zh_cn_files; do
+        cp -f "$po" "$(dirname $po)/zh_Hans.po"
+        log_info "Converted locally: $po"
+    done
+    log_success "All local zh-cn -> zh_Hans conversion completed"
+fi
+
+log_success "Language conversion and LuCI ACL setup finished"

@@ -12,10 +12,9 @@ if ! command -v go >/dev/null 2>&1 || [ "$(go version | grep -o 'go1.25.0')" != 
 fi
 log_info "Go version: $(go version)"
 
-# -------------------- 基础配置与变量定义 --------------------
+# -------------------- 基础变量 --------------------
 WGET_OPTS="-q --timeout=30 --tries=3 --retry-connrefused --connect-timeout 10"
 ARCH="armv7"
-
 DTS_DIR="target/linux/ipq40xx/files/arch/arm/boot/dts"
 GENERIC_MK="target/linux/ipq40xx/image/generic.mk"
 BOARD_DIR="$PWD/board"
@@ -23,7 +22,7 @@ CUSTOM_PLUGINS_DIR="$PWD/package/custom"
 
 mkdir -p "$DTS_DIR" "$BOARD_DIR" "$CUSTOM_PLUGINS_DIR"
 
-# -------------------- DTS补丁处理 --------------------
+# -------------------- DTS补丁 --------------------
 DTS_PATCH_URL="https://git.ix.gs/mptcp/openmptcprouter/commit/a66353a01576c5146ae0d72ee1f8b24ba33cb88e.patch"
 DTS_PATCH_FILE="$DTS_DIR/qcom-ipq4019-cm520-79f.dts.patch"
 TARGET_DTS="$DTS_DIR/qcom-ipq4019-cm520-79f.dts"
@@ -41,7 +40,7 @@ fi
 
 # -------------------- 设备规则 --------------------
 if ! grep -q "define Device/mobipromo_cm520-79f" "$GENERIC_MK"; then
-    log_info "Adding CM520-79F device rule with FIT image support..."
+    log_info "Adding CM520-79F device rule..."
     cat <<EOF >> "$GENERIC_MK"
 
 define Device/mobipromo_cm520-79f
@@ -54,11 +53,11 @@ define Device/mobipromo_cm520-79f
   ROOTFS_SIZE := 26624k
   IMAGE_SIZE := 32768k
   DEVICE_PACKAGES := \\
-    ath10k-firmware-qca4019-ct \\
-    kmod-ath10k-ct-smallbuffers
+	ath10k-firmware-qca4019-ct \\
+	kmod-ath10k-ct-smallbuffers
   IMAGE/trx := append-kernel | pad-to \$(KERNEL_SIZE) | append-rootfs | trx-nand-edgecore-ecw5211 \\
-    -F 0x524D424E -N 1000 -M 0x2 -C 0x2 -I 0x2 -V "U-Boot 2012.07" -e 0x80208000 -i /dev/mtd10 \\
-    -a 0x80208000 -n "Kernel" -d /dev/mtd11 -c "Rootfs" | trx-header -s 16384 -o \$@
+	-F 0x524D424E -N 1000 -M 0x2 -C 0x2 -I 0x2 -V "U-Boot 2012.07" -e 0x80208000 -i /dev/mtd10 \\
+	-a 0x80208000 -n "Kernel" -d /dev/mtd11 -c "Rootfs" | trx-header -s 16384 -o \$@
 endef
 TARGET_DEVICES += mobipromo_cm520-79f
 EOF
@@ -83,22 +82,23 @@ ipq40xx_board_detect() {
 }
 boot_hook_add preinit_main ipq40xx_board_detect
 EOF
+
 chmod +x "$NETWORK_FILE"
 log_success "Network configuration file created"
 
 # -------------------- luci-app-partexp --------------------
 PLUGIN_PATH="$CUSTOM_PLUGINS_DIR/luci-app-partexp"
 if [ ! -d "$PLUGIN_PATH/.git" ]; then
-    log_info "Cloning luci-app-partexp plugin..."
-    git clone --depth 1 https://github.com/sirpdboy/luci-app-partexp.git "$PLUGIN_PATH" || log_error "Failed to clone"
-    log_success "luci-app-partexp cloned successfully"
+    log_info "Cloning luci-app-partexp..."
+    git clone --depth 1 https://github.com/sirpdboy/luci-app-partexp.git "$PLUGIN_PATH" || log_error "Failed to clone plugin"
+    log_success "Plugin cloned successfully"
 else
-    log_info "luci-app-partexp already exists, skipping clone"
+    log_info "Plugin already exists, skipping clone"
 fi
 
 if [ ! -d "package/luci-app-partexp" ]; then
     cp -r "$PLUGIN_PATH" package/
-    log_success "luci-app-partexp copied to package/"
+    log_success "Plugin copied to package/"
 fi
 
 if ! grep -q "CONFIG_PACKAGE_luci-app-partexp=y" .config 2>/dev/null; then
@@ -118,32 +118,47 @@ fi
 
 # -------------------- 中文包转换 --------------------
 log_info "Converting zh-cn to zh_Hans..."
-ZH_CN_FILES=$(find feeds/luci package/custom -type f -name 'zh-cn.po' 2>/dev/null)
-if [ -z "$ZH_CN_FILES" ]; then
+zh_cn_files=$(find feeds/luci package/custom -type f -name 'zh-cn.po' 2>/dev/null)
+if [ -z "$zh_cn_files" ]; then
     log_info "No zh-cn.po files found, skipping conversion"
 else
-    for po in $ZH_CN_FILES; do
+    for po in $zh_cn_files; do
         cp -f "$po" "$(dirname $po)/zh_Hans.po"
         log_info "Converted: $po"
     done
     log_success "All zh-cn -> zh_Hans conversion completed"
 fi
 
-# -------------------- 自动修正 Makefile 依赖 --------------------
-log_info "Fixing default-settings Makefile zh_Hans dependencies..."
-for mk in $(find package -type f -path "*/default-settings/Makefile"); do
-    if grep -q "luci-i18n-.*-zh_Hans" "$mk"; then
-        sed -i 's/zh_Hans/zh-cn/g' "$mk"
-        log_success "Fixed dependency in $mk"
+# -------------------- 自动修正 zh_Hans 依赖为 zh-cn --------------------
+log_info "Checking default-settings Makefile for zh_Hans dependencies..."
+DEFAULT_MK="package/emortal/default-settings/Makefile"
+if [ -f "$DEFAULT_MK" ]; then
+    if grep -q "luci-i18n-.*-zh_Hans" "$DEFAULT_MK"; then
+        log_info "Found zh_Hans dependency, replacing with zh-cn..."
+        sed -i 's/\(luci-i18n-.*\)-zh_Hans/\1-zh-cn/g' "$DEFAULT_MK"
+        log_success "Makefile zh_Hans dependencies replaced with zh-cn"
     else
-        log_info "No zh_Hans dependency in $mk, skipping"
+        log_info "No zh_Hans dependency found, skipping"
     fi
-done
-log_success "All default-settings Makefile dependencies checked and fixed"
+else
+    log_info "Default-settings Makefile not found, skipping"
+fi
 
-# -------------------- LuCI ACL 预留处理 --------------------
-# 可按需使用，暂不强制执行
-# bash <( curl -sSL https://build-scripts.immortalwrt.eu.org/create_acl_for_luci.sh ) -a
-# log_info "LuCI ACL setup completed"
+# -------------------- 版本文件生成 --------------------
+VERSION_FILE="files/etc/firmware-release"
+mkdir -p "$(dirname "$VERSION_FILE")"
+echo -e "Firmware Release: $(date +'%Y-%m-%d %H:%M:%S')\n" > "$VERSION_FILE"
+
+# PassWall2 版本
+PW2_DIR="package/custom/luci-app-passwall2"
+PW2_VER=$(awk -F'=' '/PKG_VERSION/ {print $2}' "$PW2_DIR/Makefile" 2>/dev/null | tr -d ' ' || echo "not found")
+echo "PassWall2 version: $PW2_VER" >> "$VERSION_FILE"
+
+# OpenClash 版本
+OC_DIR="package/custom/luci-app-openclash"
+OC_VER=$(awk -F'=' '/PKG_VERSION/ {print $2}' "$OC_DIR/Makefile" 2>/dev/null | tr -d ' ' || echo "not found")
+echo "OpenClash version: $OC_VER" >> "$VERSION_FILE"
+
+log_success "Version file generated at $VERSION_FILE"
 
 log_success "DIY part2 script finished"

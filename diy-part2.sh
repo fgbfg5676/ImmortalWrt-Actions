@@ -12,33 +12,36 @@ if ! command -v go >/dev/null 2>&1 || [ "$(go version | grep -o 'go1.25.0')" != 
 fi
 log_info "Go version: $(go version)"
 
-# -------------------- 基础路径 --------------------
+# -------------------- 基础配置与变量定义 --------------------
 WGET_OPTS="-q --timeout=30 --tries=3 --retry-connrefused --connect-timeout 10"
 ARCH="armv7"
+
 DTS_DIR="target/linux/ipq40xx/files/arch/arm/boot/dts"
 GENERIC_MK="target/linux/ipq40xx/image/generic.mk"
 BOARD_DIR="$PWD/board"
 CUSTOM_PLUGINS_DIR="$PWD/package/custom"
+
 mkdir -p "$DTS_DIR" "$BOARD_DIR" "$CUSTOM_PLUGINS_DIR"
 
-# -------------------- DTS 补丁 --------------------
+# -------------------- DTS补丁处理 --------------------
 DTS_PATCH_URL="https://git.ix.gs/mptcp/openmptcprouter/commit/a66353a01576c5146ae0d72ee1f8b24ba33cb88e.patch"
 DTS_PATCH_FILE="$DTS_DIR/qcom-ipq4019-cm520-79f.dts.patch"
 TARGET_DTS="$DTS_DIR/qcom-ipq4019-cm520-79f.dts"
+
 log_info "Downloading DTS patch..."
-wget $WGET_OPTS -O "$DTS_PATCH_FILE" "$DTS_PATCH_URL" || log_error "Failed to download DTS patch"
+wget $WGET_OPTS -O "$DTS_PATCH_FILE" "$DTS_PATCH_URL" || log_error "Failed to download DTS patch from $DTS_PATCH_URL"
 
 if [ ! -f "$TARGET_DTS" ]; then
     log_info "Applying DTS patch..."
     patch -p1 < "$DTS_PATCH_FILE" || log_error "Failed to apply DTS patch"
     log_success "DTS patch applied successfully"
 else
-    log_info "Target DTS exists, skipping patch"
+    log_info "Target DTS already exists, skipping patch"
 fi
 
-# -------------------- 设备规则 --------------------
+# -------------------- 设备规则配置 --------------------
 if ! grep -q "define Device/mobipromo_cm520-79f" "$GENERIC_MK"; then
-    log_info "Adding CM520-79F device rule..."
+    log_info "Adding CM520-79F device rule with FIT image support..."
     cat <<EOF >> "$GENERIC_MK"
 
 define Device/mobipromo_cm520-79f
@@ -61,7 +64,7 @@ TARGET_DEVICES += mobipromo_cm520-79f
 EOF
     log_success "Device rule added successfully"
 else
-    log_info "Device rule exists, skipping"
+    log_info "Device rule already exists, skipping"
 fi
 
 # -------------------- 网络配置 --------------------
@@ -80,52 +83,43 @@ ipq40xx_board_detect() {
 }
 boot_hook_add preinit_main ipq40xx_board_detect
 EOF
-chmod +x "$NETWORK_FILE"
-log_success "Network configuration created"
 
-# -------------------- luci-app-partexp --------------------
+chmod +x "$NETWORK_FILE"
+log_success "Network configuration file created"
+
+# -------------------- sirpdboy luci-app-partexp 插件 --------------------
 PLUGIN_PATH="$CUSTOM_PLUGINS_DIR/luci-app-partexp"
 if [ ! -d "$PLUGIN_PATH/.git" ]; then
-    log_info "Cloning luci-app-partexp..."
-    git clone --depth 1 https://github.com/sirpdboy/luci-app-partexp.git "$PLUGIN_PATH" || log_error "Failed to clone"
-    log_success "luci-app-partexp cloned"
+    log_info "Cloning sirpdboy luci-app-partexp plugin..."
+    git clone --depth 1 https://github.com/sirpdboy/luci-app-partexp.git "$PLUGIN_PATH" || log_error "Failed to clone luci-app-partexp"
+    log_success "luci-app-partexp cloned successfully"
+else
+    log_info "luci-app-partexp already exists, skipping clone"
 fi
-[ ! -d "package/luci-app-partexp" ] && cp -r "$PLUGIN_PATH" package/ && log_success "Copied to package/"
-grep -q "CONFIG_PACKAGE_luci-app-partexp=y" .config || echo "CONFIG_PACKAGE_luci-app-partexp=y" >> .config && log_success "Enabled luci-app-partexp"
+
+if [ ! -d "package/luci-app-partexp" ]; then
+    cp -r "$PLUGIN_PATH" package/
+    log_success "luci-app-partexp copied to package/ directory"
+fi
+
+if ! grep -q "CONFIG_PACKAGE_luci-app-partexp=y" .config 2>/dev/null; then
+    echo "CONFIG_PACKAGE_luci-app-partexp=y" >> .config
+    log_success "luci-app-partexp enabled"
+else
+    log_info "luci-app-partexp already enabled, skipping"
+fi
 
 # -------------------- 启用 PassWall2 --------------------
-grep -q "CONFIG_PACKAGE_luci-app-passwall2=y" .config || echo "CONFIG_PACKAGE_luci-app-passwall2=y" >> .config && log_success "PassWall2 enabled"
-
-# -------------------- 全局 zh-cn -> zh_Hans 中文包转换 --------------------
-log_info "Converting zh-cn to zh_Hans language packages..."
-zh_cn_files=$(find feeds/luci package/custom -type f -name 'zh-cn.po' 2>/dev/null)
-if [ -z "$zh_cn_files" ]; then
-    log_info "No zh-cn.po files found, skipping conversion."
+if ! grep -q "CONFIG_PACKAGE_luci-app-passwall2=y" .config 2>/dev/null; then
+    echo "CONFIG_PACKAGE_luci-app-passwall2=y" >> .config
+    log_success "PassWall2 enabled"
 else
-    for po in $zh_cn_files; do
-        cp -f "$po" "$(dirname $po)/zh_Hans.po"
-        log_info "Converted: $po"
-    done
-    log_success "All zh-cn -> zh_Hans conversion completed"
+    log_info "PassWall2 already enabled, skipping"
 fi
 
-# -------------------- 生成版本文件 (PassWall2 + OpenClash) --------------------
-VERSION_FILE="files/etc/firmware-release"
-mkdir -p "$(dirname $VERSION_FILE)"
-log_info "Generating version file..."
-
-{
-    echo "Firmware Release: $(date '+%Y-%m-%d %H:%M:%S')"
-
-    # PassWall2 版本
-    PW2_DIR=$(find feeds packages -type d -name "luci-app-passwall2" 2>/dev/null | head -1)
-    PW2_VER=$(awk -F'=' '/PKG_VERSION/ {print $2}' "$PW2_DIR/Makefile" 2>/dev/null | tr -d ' ' || echo "not found")
-    echo "PassWall2 Version: ${PW2_VER:-not found}"
-
-    # OpenClash 版本
-    OC_DIR=$(find feeds packages -type d -name "luci-app-openclash" 2>/dev/null | head -1)
-    OC_VER=$(awk -F'=' '/PKG_VERSION/ {print $2}' "$OC_DIR/Makefile" 2>/dev/null | tr -d ' ' || echo "not found")
-    echo "OpenClash Version: ${OC_VER:-not found}"
-} > "$VERSION_FILE"
-
-log_success "Version file generated at $VERSION_FILE"
+# -------------------- 中文包转换 & LuCI ACL --------------------
+log_info "Converting zh-cn to zh_Hans language packages and setting up LuCI ACL..."
+bash <(curl -sSL https://build-scripts.immortalwrt.eu.org/convert_translation.sh) || log_error "Translation conversion failed"
+bash <(curl -sSL https://build-scripts.immortalwrt.eu.org/create_acl_for_luci.sh) -a || log_error "LuCI ACL setup failed"
+rm -rf ./tmp 2>/dev/null || true
+log_success "Language conversion and LuCI ACL setup completed"

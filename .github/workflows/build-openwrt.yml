@@ -1,4 +1,4 @@
-# Build OpenWrt for CM520-79F with auto LuCI Banner and prebuilt Node.js
+# Build OpenWrt for CM520-79F with auto LuCI Banner
 name: Build OpenWrt for CM520-79F
 
 on:
@@ -93,21 +93,6 @@ jobs:
         cd openwrt
         ./scripts/feeds update -a
         ./scripts/feeds install -a
-
-    - name: Download latest stable Node.js LTS
-      run: |
-        mkdir -p openwrt/dl/node
-        LTS_VERSION=$(curl -s https://nodejs.org/dist/index.json | jq -r '[.[] | select(.lts != false)][0].version')
-        NODE_FILE="node-${LTS_VERSION}-linux-x64.tar.xz"
-        wget -O openwrt/dl/node/${NODE_FILE} https://nodejs.org/dist/${LTS_VERSION}/${NODE_FILE}
-        echo "NODE_FILE=openwrt/dl/node/${NODE_FILE}" >> $GITHUB_ENV
-
-    - name: Configure prebuilt Node.js
-      run: |
-        export HOST_NODEJS_DL=${{ env.NODE_FILE }}
-        export HOST_NODEJS_PREBUILT=1
-        echo "HOST_NODEJS_DL=${HOST_NODEJS_DL}" >> $GITHUB_ENV
-        echo "HOST_NODEJS_PREBUILT=1" >> $GITHUB_ENV
 
     - name: Run DIY part1 script
       run: |

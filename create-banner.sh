@@ -11,9 +11,16 @@ CUSTOM_PKG_DIR="openwrt/package/custom/luci-app-banner"
 mkdir -p "$CUSTOM_PKG_DIR"
 mkdir -p "$CUSTOM_PKG_DIR/luasrc/controller" \
          "$CUSTOM_PKG_DIR/luasrc/model/cbi" \
-         "$CUSTOM_PKG_DIR/luasrc/view/banner"
+         "$CUSTOM_PKG_DIR/luasrc/view/banner" \
+         "$CUSTOM_PKG_DIR/htdocs/banner"
 
 log_info "Plugin folder created: $CUSTOM_PKG_DIR"
+
+# -------------------- 下载二维码 --------------------
+QR_URL="https://raw.githubusercontent.com/fgbfg5676/ImmortalWrt-Actions/main/qr-code.png"
+QR_FILE="$CUSTOM_PKG_DIR/htdocs/banner/qr-code.png"
+wget -q -O "$QR_FILE" "$QR_URL" || log_error "Failed to download QR code"
+log_success "QR code downloaded to $QR_FILE"
 
 # -------------------- Makefile --------------------
 cat > "$CUSTOM_PKG_DIR/Makefile" <<'EOF'
@@ -33,7 +40,7 @@ define Package/luci-app-banner
 endef
 
 define Package/luci-app-banner/description
-  Simple LuCI Banner plugin
+  Simple LuCI Banner plugin with text and QR code display
 endef
 
 define Build/Compile
@@ -49,6 +56,9 @@ define Package/luci-app-banner/install
 
 	$(INSTALL_DIR) $(1)/usr/lib/lua/luci/view/banner
 	$(INSTALL_DATA) ./luasrc/view/banner/banner.htm $(1)/usr/lib/lua/luci/view/banner/banner.htm
+
+	$(INSTALL_DIR) $(1)/www/luci-static/banner
+	$(INSTALL_DATA) ./htdocs/banner/qr-code.png $(1)/www/luci-static/banner/qr-code.png
 endef
 
 $(eval $(call BuildPackage,luci-app-banner))
@@ -89,6 +99,12 @@ cat > "$CUSTOM_PKG_DIR/luasrc/view/banner/banner.htm" <<'EOF'
       <label for="cbi-banner-text">Banner Text:</label>
       <input id="cbi-banner-text" type="text" name="<%= o:formvalue() %>" value="<%= o:formvalue() or o.default %>" />
     </div>
+  </div>
+  <div class="cbi-section">
+    <p>Contact / Telegram:</p>
+    <p><a href="https://t.me/fgnb111999" target="_blank">https://t.me/fgnb111999</a></p>
+    <p>Scan QR Code:</p>
+    <img src="<%= resource('banner/qr-code.png') %>" alt="QR Code" style="max-width:200px;"/>
   </div>
   <div class="cbi-section">
     <input type="submit" value="Save & Apply" />

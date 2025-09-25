@@ -1,4 +1,4 @@
-# Build OpenWrt for CM520-79F
+# Build OpenWrt for CM520-79F with auto LuCI Banner
 name: Build OpenWrt for CM520-79F
 
 on:
@@ -76,14 +76,9 @@ jobs:
 
     - name: Clone ImmortalWrt source
       run: |
-        if [ -d openwrt ]; then
-          echo "Removing existing openwrt directory..."
-          rm -rf openwrt
-        fi
-        echo "Cloning ImmortalWrt source..."
+        if [ -d openwrt ]; then rm -rf openwrt; fi
         git clone --depth=1 -b $REPO_BRANCH $REPO_URL openwrt
         cd openwrt
-        echo "Current commit: $(git rev-parse HEAD)"
         echo "COMMIT_HASH=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
 
     - name: Add additional feeds
@@ -104,6 +99,15 @@ jobs:
         if [ -f "../$DIY_P1_SH" ]; then
           chmod +x "../$DIY_P1_SH"
           "../$DIY_P1_SH"
+        fi
+
+    # -------------------- 执行 create-banner.sh --------------------
+    - name: Run create-banner.sh
+      run: |
+        cd openwrt
+        if [ -f "../create-banner.sh" ]; then
+          chmod +x "../create-banner.sh"
+          "../create-banner.sh"
         fi
 
     - name: Copy custom configuration
@@ -155,9 +159,7 @@ jobs:
         else
           timeout 3600 make -j2 V=s && BUILD_SUCCESS=true || timeout 3600 make -j1 V=s && BUILD_SUCCESS=true
         fi
-        if [ "$BUILD_SUCCESS" != "true" ]; then
-          exit 1
-        fi
+        if [ "$BUILD_SUCCESS" != "true" ]; then exit 1; fi
 
     - name: Prepare outputs
       run: |

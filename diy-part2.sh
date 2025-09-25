@@ -116,19 +116,6 @@ else
     log_info "PassWall2 already enabled, skipping"
 fi
 
-# -------------------- 中文包转换 --------------------
-log_info "Converting zh-cn to zh_Hans..."
-zh_cn_files=$(find feeds/luci package/custom -type f -name 'zh-cn.po' 2>/dev/null)
-if [ -z "$zh_cn_files" ]; then
-    log_info "No zh-cn.po files found, skipping conversion"
-else
-    for po in $zh_cn_files; do
-        cp -f "$po" "$(dirname $po)/zh_Hans.po"
-        log_info "Converted: $po"
-    done
-    log_success "All zh-cn -> zh_Hans conversion completed"
-fi
-
 # -------------------- 自动修正 zh_Hans 依赖为 zh-cn --------------------
 log_info "Checking default-settings Makefile for zh_Hans dependencies..."
 DEFAULT_MK="package/emortal/default-settings/Makefile"
@@ -143,6 +130,22 @@ if [ -f "$DEFAULT_MK" ]; then
 else
     log_info "Default-settings Makefile not found, skipping"
 fi
+
+# -------------------- 修改默认 IP --------------------
+OLD_IP="192.168.1.1"
+NEW_IP="192.168.3.1"
+CONFIG_FILE="package/base-files/files/bin/config_generate"
+if [ ! -f "$CONFIG_FILE" ]; then
+    log_error "配置文件不存在：$CONFIG_FILE"
+fi
+sed -i "s/${OLD_IP}/${NEW_IP}/g" "$CONFIG_FILE"
+grep -q "${NEW_IP}" "$CONFIG_FILE" && log_success "默认 IP 修改成功：${NEW_IP}" || log_error "默认 IP 修改失败"
+
+# -------------------- 修改默认主机名 --------------------
+OLD_HOSTNAME="OpenWrt"
+NEW_HOSTNAME="CM520-79F"
+sed -i "s/${OLD_HOSTNAME}/${NEW_HOSTNAME}/g" "$CONFIG_FILE"
+grep -q "${NEW_HOSTNAME}" "$CONFIG_FILE" && log_success "默认主机名修改成功：${NEW_HOSTNAME}" || log_error "默认主机名修改失败"
 
 # -------------------- 版本文件生成 --------------------
 VERSION_FILE="files/etc/firmware-release"

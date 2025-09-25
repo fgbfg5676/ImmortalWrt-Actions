@@ -1,4 +1,4 @@
-# Build OpenWrt for CM520-79F with auto LuCI Banner
+# Build OpenWrt for CM520-79F with auto LuCI Banner and prebuilt Node.js
 name: Build OpenWrt for CM520-79F
 
 on:
@@ -16,7 +16,7 @@ env:
 jobs:
   build:
     runs-on: ubuntu-24.04
-    timeout-minutes: 150
+    timeout-minutes: 180
 
     steps:
     - name: Checkout repository
@@ -42,7 +42,7 @@ jobs:
           lib32gcc-s1 libc6-dev lib32stdc++6 zlib1g-dev:i386 lib32z1-dev \
           ccache ecj fastjar re2c xz-utils python3 python3-pip python3-ply \
           python3-venv python3-yaml haveged lrzsz device-tree-compiler scons \
-          antlr3 gperf intltool mkisofs qemu-utils swig tar
+          antlr3 gperf intltool mkisofs qemu-utils swig tar jq
         sudo apt-get clean
         sudo apt-get autoremove -y
 
@@ -93,6 +93,21 @@ jobs:
         cd openwrt
         ./scripts/feeds update -a
         ./scripts/feeds install -a
+
+    - name: Download latest stable Node.js LTS
+      run: |
+        mkdir -p openwrt/dl/node
+        LTS_VERSION=$(curl -s https://nodejs.org/dist/index.json | jq -r '[.[] | select(.lts != false)][0].version')
+        NODE_FILE="node-${LTS_VERSION}-linux-x64.tar.xz"
+        wget -O openwrt/dl/node/${NODE_FILE} https://nodejs.org/dist/${LTS_VERSION}/${NODE_FILE}
+        echo "NODE_FILE=openwrt/dl/node/${NODE_FILE}" >> $GITHUB_ENV
+
+    - name: Configure prebuilt Node.js
+      run: |
+        export HOST_NODEJS_DL=${{ env.NODE_FILE }}
+        export HOST_NODEJS_PREBUILT=1
+        echo "HOST_NODEJS_DL=${HOST_NODEJS_DL}" >> $GITHUB_ENV
+        echo "HOST_NODEJS_PREBUILT=1" >> $GITHUB_ENV
 
     - name: Run DIY part1 script
       run: |

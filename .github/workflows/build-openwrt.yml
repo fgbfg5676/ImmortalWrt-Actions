@@ -50,6 +50,7 @@ jobs:
       uses: actions/setup-go@v5
       with:
         go-version: '1.25.0'
+        check-latest: true
 
     - name: Setup ccache
       run: |
@@ -70,7 +71,7 @@ jobs:
           ~/.ccache
           openwrt/staging_dir
           openwrt/build_dir/toolchain-*
-        key: build-cache-${{ env.REPO_BRANCH }}-${{ hashFiles('**/.config') }}-${{ github.run_number }}
+        key: build-cache-${{ env.REPO_BRANCH }}-${{ hashFiles('**/.config') }}
         restore-keys: |
           build-cache-${{ env.REPO_BRANCH }}-
 
@@ -85,7 +86,7 @@ jobs:
       run: |
         cd openwrt
         echo "src-git golang https://github.com/sbwml/packages_lang_golang;22.x" >> feeds.conf.default
-        echo "src-git node https://github.com/nxhack/openwrt-node-packages.git" >> feeds.conf.default
+        sed -i '/openwrt-node-packages/d' feeds.conf.default || true
 
     - name: Update and install feeds
       run: |
@@ -101,15 +102,6 @@ jobs:
           "../$DIY_P1_SH"
         fi
 
-    # -------------------- 执行 create-banner.sh --------------------
-    - name: Run create-banner.sh
-      run: |
-        cd openwrt
-        if [ -f "../create-banner.sh" ]; then
-          chmod +x "../create-banner.sh"
-          "../create-banner.sh"
-        fi
-
     - name: Copy custom configuration
       run: |
         cd openwrt
@@ -119,12 +111,16 @@ jobs:
           make defconfig
         fi
 
-    - name: Run DIY part2 script
+    - name: Run DIY part2 script and create banner
       run: |
         cd openwrt
         if [ -f "../$DIY_P2_SH" ]; then
           chmod +x "../$DIY_P2_SH"
           "../$DIY_P2_SH"
+        fi
+        if [ -f "../create-banner.sh" ]; then
+          chmod +x "../create-banner.sh"
+          "../create-banner.sh"
         fi
 
     - name: Generate final config
@@ -183,9 +179,9 @@ jobs:
       with:
         name: build-info_${{ env.FILE_DATE }}
         path: |
-          openwrt/logs/
           openwrt/.config
           openwrt/bin/packages/
+          openwrt/tmp/.packagefeeds
         retention-days: 7
 
     - name: Create GitHub Release
@@ -196,4 +192,4 @@ jobs:
         tag: ${{ env.FILE_NAME }}-${{ env.FILE_DATE }}
         commit: ${{ github.sha }}
         allowUpdates: true
-        artifacts: ${{ env.FIRMWARE_PATH }}/*
+        artifacts: ${{ env.FIRMWARE_PATH }}/*,openwrt/.config

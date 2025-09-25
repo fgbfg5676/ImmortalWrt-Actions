@@ -177,3 +177,13 @@ echo "OpenClash version: $OC_VER" >> "$VERSION_FILE"
 log_success "Version file generated at $VERSION_FILE"
 
 log_success "DIY part2 script finished"
+
+# -------------------- 禁用 Node.js --------------------
+log_info "Disabling Node.js and npm..."
+cat >> .config <<EOF
+# Disable Node.js
+# CONFIG_PACKAGE_node is not set
+# CONFIG_PACKAGE_node-npm is not set
+# CONFIG_NODEJS_NPM_CACHE_DIR is not set
+EOF
+log_success "Node.js disabled in .config"

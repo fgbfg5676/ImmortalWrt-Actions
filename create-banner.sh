@@ -40,7 +40,7 @@ define Package/luci-app-banner
 endef
 
 define Package/luci-app-banner/description
-  Simple LuCI Banner plugin with text and QR code display
+  Simple LuCI Banner plugin with text and QR code display, supports dynamic display on System Overview
 endef
 
 define Build/Compile
@@ -63,17 +63,27 @@ endef
 
 $(eval $(call BuildPackage,luci-app-banner))
 EOF
-
 log_success "Makefile generated"
 
 # -------------------- Controller --------------------
 cat > "$CUSTOM_PKG_DIR/luasrc/controller/banner.lua" <<'EOF'
 module("luci.controller.banner", package.seeall)
+local uci = require "luci.model.uci".cursor()
+local tpl = require "luci.template"
 
 function index()
+    -- 设置页面入口
     entry({"admin", "system", "banner"}, cbi("banner/banner"), "Banner", 50).dependent = true
+    -- 系统概览页显示
+    entry({"admin", "overview", "banner"}, call("show_banner"), nil, 10)
+end
+
+function show_banner()
+    local text = uci:get("banner", "banner", "text") or "Welcome to OpenWrt"
+    tpl.render("banner/banner", { banner_text = text })
 end
 EOF
+log_success "Controller generated"
 
 # -------------------- Model (CBI) --------------------
 cat > "$CUSTOM_PKG_DIR/luasrc/model/cbi/banner.lua" <<'EOF'
@@ -89,6 +99,7 @@ o.rmempty = false
 
 return m
 EOF
+log_success "Model (CBI) generated"
 
 # -------------------- View --------------------
 cat > "$CUSTOM_PKG_DIR/luasrc/view/banner/banner.htm" <<'EOF'
@@ -101,6 +112,8 @@ cat > "$CUSTOM_PKG_DIR/luasrc/view/banner/banner.htm" <<'EOF'
     </div>
   </div>
   <div class="cbi-section">
+    <p>Banner Preview:</p>
+    <p style="font-weight:bold; font-size:1.2em;"><%= banner_text or o.default %></p>
     <p>Contact / Telegram:</p>
     <p><a href="https://t.me/fgnb111999" target="_blank">https://t.me/fgnb111999</a></p>
     <p>Scan QR Code:</p>
@@ -111,14 +124,11 @@ cat > "$CUSTOM_PKG_DIR/luasrc/view/banner/banner.htm" <<'EOF'
   </div>
 </form>
 EOF
-
-log_success "Controller, Model, View files generated"
+log_success "View generated"
 
 # -------------------- 写入 .config --------------------
 CONFIG_FILE="openwrt/.config"
-if [ ! -f "$CONFIG_FILE" ]; then
-    touch "$CONFIG_FILE"
-fi
+[ ! -f "$CONFIG_FILE" ] && touch "$CONFIG_FILE"
 
 if ! grep -q "CONFIG_PACKAGE_luci-app-banner=y" "$CONFIG_FILE"; then
     echo "CONFIG_PACKAGE_luci-app-banner=y" >> "$CONFIG_FILE"

@@ -52,11 +52,11 @@ define Device/mobipromo_cm520-79f
   KERNEL_LOADADDR := 0x80208000
   ROOTFS_SIZE := 26624k
   IMAGE_SIZE := 32768k
-  DEVICE_PACKAGES := \\
-	ath10k-firmware-qca4019-ct \\
+  DEVICE_PACKAGES := \\ 
+	ath10k-firmware-qca4019-ct \\ 
 	kmod-ath10k-ct-smallbuffers
-  IMAGE/trx := append-kernel | pad-to \$(KERNEL_SIZE) | append-rootfs | trx-nand-edgecore-ecw5211 \\
-	-F 0x524D424E -N 1000 -M 0x2 -C 0x2 -I 0x2 -V "U-Boot 2012.07" -e 0x80208000 -i /dev/mtd10 \\
+  IMAGE/trx := append-kernel | pad-to \$(KERNEL_SIZE) | append-rootfs | trx-nand-edgecore-ecw5211 \\ 
+	-F 0x524D424E -N 1000 -M 0x2 -C 0x2 -I 0x2 -V "U-Boot 2012.07" -e 0x80208000 -i /dev/mtd10 \\ 
 	-a 0x80208000 -n "Kernel" -d /dev/mtd11 -c "Rootfs" | trx-header -s 16384 -o \$@
 endef
 TARGET_DEVICES += mobipromo_cm520-79f
@@ -82,7 +82,6 @@ ipq40xx_board_detect() {
 }
 boot_hook_add preinit_main ipq40xx_board_detect
 EOF
-
 chmod +x "$NETWORK_FILE"
 log_success "Network configuration file created"
 
@@ -135,17 +134,30 @@ fi
 OLD_IP="192.168.1.1"
 NEW_IP="192.168.3.1"
 CONFIG_FILE="package/base-files/files/bin/config_generate"
-if [ ! -f "$CONFIG_FILE" ]; then
-    log_error "配置文件不存在：$CONFIG_FILE"
+
+if [ -f "$CONFIG_FILE" ]; then
+    sed -i "s/${OLD_IP}/${NEW_IP}/g" "$CONFIG_FILE"
+    grep -q "${NEW_IP}" "$CONFIG_FILE" && log_success "默认 IP 修改成功：${NEW_IP}" || log_error "默认 IP 修改失败"
+else
+    log_info "$CONFIG_FILE 不存在，跳过默认 IP 修改"
 fi
-sed -i "s/${OLD_IP}/${NEW_IP}/g" "$CONFIG_FILE"
-grep -q "${NEW_IP}" "$CONFIG_FILE" && log_success "默认 IP 修改成功：${NEW_IP}" || log_error "默认 IP 修改失败"
 
 # -------------------- 修改默认主机名 --------------------
-OLD_HOSTNAME="OpenWrt"
 NEW_HOSTNAME="CM520-79F"
-sed -i "s/${OLD_HOSTNAME}/${NEW_HOSTNAME}/g" "$CONFIG_FILE"
-grep -q "${NEW_HOSTNAME}" "$CONFIG_FILE" && log_success "默认主机名修改成功：${NEW_HOSTNAME}" || log_error "默认主机名修改失败"
+
+# 双保险：先尝试替换 config_generate，再生成 system 文件
+if [ -f "$CONFIG_FILE" ]; then
+    sed -i "s/^.*option hostname.*\$/$NEW_HOSTNAME/" "$CONFIG_FILE" 2>/dev/null || true
+fi
+
+SYSTEM_CONFIG="package/base-files/files/etc/config/system"
+mkdir -p "$(dirname "$SYSTEM_CONFIG")"
+cat > "$SYSTEM_CONFIG" <<EOF
+config system
+    option hostname '${NEW_HOSTNAME}'
+    option timezone 'CST-8'
+EOF
+grep -q "${NEW_HOSTNAME}" "$SYSTEM_CONFIG" && log_success "默认主机名修改成功：${NEW_HOSTNAME}" || log_error "默认主机名修改失败"
 
 # -------------------- 版本文件生成 --------------------
 VERSION_FILE="files/etc/firmware-release"

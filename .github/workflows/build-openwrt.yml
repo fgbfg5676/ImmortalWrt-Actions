@@ -16,7 +16,7 @@ env:
 jobs:
   build:
     runs-on: ubuntu-24.04
-    timeout-minutes: 240
+    timeout-minutes: 150
 
     steps:
     - name: Checkout repository
@@ -76,7 +76,11 @@ jobs:
 
     - name: Clone ImmortalWrt source
       run: |
-        rm -rf openwrt || true
+        if [ -d openwrt ]; then
+          echo "Removing existing openwrt directory..."
+          rm -rf openwrt
+        fi
+        echo "Cloning ImmortalWrt source..."
         git clone --depth=1 -b $REPO_BRANCH $REPO_URL openwrt
         cd openwrt
         echo "Current commit: $(git rev-parse HEAD)"
@@ -86,14 +90,13 @@ jobs:
       run: |
         cd openwrt
         echo "src-git golang https://github.com/sbwml/packages_lang_golang;22.x" >> feeds.conf.default
-        echo "src-git my_packages https://github.com/Gzxhwq/openwrt-packages" >> feeds.conf.default
-        # Node feed removed
+        echo "src-git node https://github.com/nxhack/openwrt-node-packages.git" >> feeds.conf.default
 
-    - name: Update and install feeds (minimal output)
+    - name: Update and install feeds
       run: |
         cd openwrt
-        ./scripts/feeds update -a -s | grep -E "Updating|Feeds"
-        ./scripts/feeds install -a -s | grep -E "Installing"
+        ./scripts/feeds update -a
+        ./scripts/feeds install -a
 
     - name: Run DIY part1 script
       run: |
@@ -125,48 +128,34 @@ jobs:
         cd openwrt
         make defconfig
 
-    - name: Download packages with minimal output
+    - name: Download packages with retry
       run: |
         cd openwrt
-        echo "Downloading packages..."
-        set +x
-        if ! timeout 1800 make download -j$(nproc) -s; then
-          echo "[ERROR] Download failed, retrying verbose output..."
-          timeout 1800 make download -j1 V=s || exit 1
+        if ! timeout 1800 make download -j$(nproc) V=s; then
+          find dl -size -1024c -delete 2>/dev/null || true
+          timeout 1800 make download -j1 V=s || true
         fi
+        find dl -size -1024c -delete 2>/dev/null || true
+        find dl -name "*.hash" -delete 2>/dev/null || true
 
-    - name: Compile toolchain with minimal output
+    - name: Compile toolchain
       run: |
         cd openwrt
         export PATH="/usr/lib/ccache:$PATH"
-        echo "Compiling toolchain..."
-        set +x
-        if ! timeout 3600 make tools/install -j$(nproc) -s; then
-          echo "[ERROR] Toolchain install failed, retrying verbose..."
-          timeout 3600 make tools/install -j1 V=s || exit 1
-        fi
-        if ! timeout 3600 make toolchain/install -j$(nproc) -s; then
-          echo "[ERROR] Toolchain build failed, retrying verbose..."
-          timeout 3600 make toolchain/install -j1 V=s || exit 1
-        fi
+        timeout 3600 make tools/install -j$(($(nproc)+1)) V=s || timeout 3600 make tools/install -j1 V=s
+        timeout 3600 make toolchain/install -j$(($(nproc)+1)) V=s || timeout 3600 make toolchain/install -j1 V=s
 
-    - name: Build OpenWrt firmware with minimal output
+    - name: Build OpenWrt firmware
       run: |
         cd openwrt
         export PATH="/usr/lib/ccache:$PATH"
-        echo "Building OpenWrt firmware..."
-        set +x
         BUILD_SUCCESS=false
-        if timeout 7200 make -j$(($(nproc)+1)) -s; then
+        if timeout 7200 make -j$(($(nproc)+1)) V=s; then
           BUILD_SUCCESS=true
         else
-          echo "[ERROR] Build failed, retrying verbose..."
-          if timeout 3600 make -j2 V=s || timeout 3600 make -j1 V=s; then
-            BUILD_SUCCESS=true
-          fi
+          timeout 3600 make -j2 V=s && BUILD_SUCCESS=true || timeout 3600 make -j1 V=s && BUILD_SUCCESS=true
         fi
         if [ "$BUILD_SUCCESS" != "true" ]; then
-          echo "[ERROR] Firmware build failed!"
           exit 1
         fi
 

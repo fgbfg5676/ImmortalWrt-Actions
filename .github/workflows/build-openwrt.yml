@@ -1,4 +1,4 @@
-# Build OpenWrt for CM520-79F - Optimized
+# Build OpenWrt for CM520-79F - Safe Go Check
 name: Build OpenWrt for CM520-79F
 
 on:
@@ -22,66 +22,32 @@ jobs:
       contents: write
 
     steps:
-    - name: Before freeing up disk space
-      run: |
-        echo "Before freeing up disk space"
-        echo "=============================================================================="
-        df -hT
-        echo "=============================================================================="
-
-    - name: "Optimize Disk Space"
-      uses: "hugoalh/disk-space-optimizer-ghaction@v0.8.1"
-      with:
-        operate_sudo: "True"
-        general_include: ".+"
-        general_exclude: |-
-          ^GCC$
-          ^G\+\+$
-          Clang
-          LLVM
-        docker_include: ".+"
-        docker_prune: "True"
-        docker_clean: "True"
-        apt_prune: "True"
-        apt_clean: "True"
-        homebrew_prune: "True"
-        homebrew_clean: "True"
-        npm_prune: "True"
-        npm_clean: "True"
-        os_swap: "True"
-
-    - name: Freeing up disk space
-      uses: easimon/maximize-build-space@master
-      with: 
-        root-reserve-mb: 2048
-        swap-size-mb: 1
-        remove-dotnet: 'true'
-        remove-android: 'true'
-        remove-haskell: 'true'
-        remove-codeql: 'true'
-        remove-docker-images: 'true'
-
-    - name: Free up disk space complete
-      run: |
-        echo "Free up disk space complete"
-        echo "=============================================================================="
-        df -hT
-        echo "=============================================================================="
-
     - name: Checkout repository
       uses: actions/checkout@v5
 
-    - name: Install build dependencies
-      env:
-        DEBIAN_FRONTEND: noninteractive
+    - name: Free up disk space
       run: |
-        sudo -E apt-get -qq update
-        sudo -E apt-get -qq install $(curl -fsSL bit.ly/3AS48v1)
-        sudo -E apt-get -qq autoremove --purge
-        sudo -E apt-get -qq clean
-        sudo rm -rf /etc/apt/sources.list.d/* /usr/local/lib/android /opt/ghc /usr/share/dotnet /usr/local/graalvm /usr/local/.ghcup \
-        /usr/local/share/powershell /usr/local/share/chromium /usr/local/lib/node_modules
-        sudo timedatectl set-timezone "$TZ"
+        echo "Freeing up disk space..."
+        sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+        sudo docker image prune --all --force
+        sudo rm -rf /usr/local/.ghcup /usr/local/graalvm /opt/microsoft
+        df -h
+
+    - name: Install build dependencies
+      run: |
+        sudo dpkg --add-architecture i386
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends \
+          build-essential clang flex bison g++ gawk gcc-multilib g++-multilib \
+          gettext git libncurses5-dev libssl-dev python3-dev python3-setuptools rsync unzip \
+          zlib1g-dev file wget subversion patch upx-ucl autoconf automake \
+          curl asciidoc binutils bzip2 gzip p7zip p7zip-full libelf-dev \
+          lib32gcc-s1 libc6-dev lib32stdc++6 zlib1g-dev:i386 lib32z1-dev \
+          ccache ecj fastjar re2c xz-utils python3 python3-pip python3-ply \
+          python3-venv python3-yaml haveged lrzsz device-tree-compiler scons \
+          antlr3 gperf intltool mkisofs qemu-utils swig tar
+        sudo apt-get clean
+        sudo apt-get autoremove -y
 
     - name: Setup Go (1.25.0)
       uses: actions/setup-go@v5
@@ -90,45 +56,57 @@ jobs:
 
     - name: Verify Go version
       run: |
-        if ! command -v go >/dev/null 2>&1; then
-          echo "[ERROR] Go not found, exiting..."
-          exit 1
-        fi
         GO_VER=$(go version | awk '{print $3}')
         REQUIRED_GO_VER="go1.25.0"
         if [ "$GO_VER" != "$REQUIRED_GO_VER" ]; then
-          echo "[ERROR] Go version mismatch. Required: $REQUIRED_GO_VER, Found: $GO_VER, exiting..."
+          echo "Go version mismatch. Required: $REQUIRED_GO_VER, Found: $GO_VER"
           exit 1
         fi
-        echo "[INFO] Go version verified: $GO_VER"
+        echo "Go version verified: $GO_VER"
+
+    - name: Setup ccache
+      run: |
+        sudo mkdir -p /usr/lib/ccache
+        sudo ln -sf /usr/bin/ccache /usr/lib/ccache/gcc
+        sudo ln -sf /usr/bin/ccache /usr/lib/ccache/g++
+        sudo ln -sf /usr/bin/ccache /usr/lib/ccache/cc
+        sudo ln -sf /usr/bin/ccache /usr/lib/ccache/c++
+        export PATH="/usr/lib/ccache:$PATH"
+        ccache --max-size=2G
+        ccache --set-config=compression=true
+
+    - name: Cache downloads and toolchain
+      uses: actions/cache@v4
+      with:
+        path: |
+          openwrt/dl
+          ~/.ccache
+          openwrt/staging_dir
+          openwrt/build_dir/toolchain-*
+        key: build-cache-${{ env.REPO_BRANCH }}-${{ hashFiles('**/.config') }}-${{ github.run_number }}
+        restore-keys: |
+          build-cache-${{ env.REPO_BRANCH }}-
 
     - name: Clone ImmortalWrt source
       run: |
         if [ -d openwrt ]; then
-          echo "Removing existing openwrt directory..."
           rm -rf openwrt
         fi
-        echo "Cloning ImmortalWrt source..."
         git clone --depth=1 -b $REPO_BRANCH $REPO_URL openwrt
         cd openwrt
-        echo "Current commit: $(git rev-parse HEAD)"
         echo "COMMIT_HASH=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
-        useVersionInfo=$(git show -s --date=short --format="Author: %an<br/>date: %cd<br/>commit: %s<br/>commit hash: %H")
-        echo "useVersionInfo=$useVersionInfo" >> $GITHUB_ENV
-        echo "DATE=$(date "+%Y-%m-%d %H:%M:%S")" >> $GITHUB_ENV
-        echo "DATE1=$(date "+%Y-%m-%d")" >> $GITHUB_ENV
-
-    - name: Cache (OpenWrt专用缓存)
-      uses: stupidloud/cachewrtbuild@main
-      with:
-        ccache: 'true'
-        prefix: ${{ github.workspace }}/openwrt
-        mixkey: 'cm520-79f'
 
     - name: Add additional feeds
       run: |
         cd openwrt
         echo "src-git golang https://github.com/sbwml/packages_lang_golang;22.x" >> feeds.conf.default
+        echo "src-git node https://github.com/nxhack/openwrt-node-packages.git" >> feeds.conf.default
+
+    - name: Update and install feeds
+      run: |
+        cd openwrt
+        ./scripts/feeds update -a
+        ./scripts/feeds install -a
 
     - name: Run DIY part1 script
       run: |
@@ -137,12 +115,6 @@ jobs:
           chmod +x "../$DIY_P1_SH"
           "../$DIY_P1_SH"
         fi
-
-    - name: Update feeds
-      run: cd openwrt && ./scripts/feeds update -a
-
-    - name: Install feeds
-      run: cd openwrt && ./scripts/feeds install -a
 
     - name: Copy custom configuration
       run: |
@@ -169,19 +141,39 @@ jobs:
     - name: Download packages with retry
       run: |
         cd openwrt
-        make download -j8
-        find dl -size -1024c -exec ls -l {} \;
-        find dl -size -1024c -exec rm -f {} \;
+        if ! timeout 1800 make download -j$(nproc) V=; then
+          timeout 1800 make download -j1 V=s || exit 1
+        fi
+        find dl -size -1024c -delete 2>/dev/null || true
+        find dl -name "*.hash" -delete 2>/dev/null || true
 
-    - name: Build OpenWrt firmware (优化编译策略)
+    - name: Compile toolchain
       run: |
         cd openwrt
-        echo -e "$(nproc) thread compile"
-        make -j$(nproc) || make -j1 || make -j1 V=s
-        echo "status=success" >> $GITHUB_OUTPUT
-        grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
-        [ -s DEVICE_NAME ] && echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> $GITHUB_ENV
-        echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
+        export PATH="/usr/lib/ccache:$PATH"
+        if ! timeout 3600 make tools/install -j$(($(nproc)+1)) V=; then
+          timeout 3600 make tools/install -j1 V=s || exit 1
+        fi
+        if ! timeout 3600 make toolchain/install -j$(($(nproc)+1)) V=; then
+          timeout 3600 make toolchain/install -j1 V=s || exit 1
+        fi
+
+    - name: Build OpenWrt firmware
+      run: |
+        cd openwrt
+        export PATH="/usr/lib/ccache:$PATH"
+        BUILD_SUCCESS=false
+        if timeout 7200 make -j$(($(nproc)+1)) V=; then
+          BUILD_SUCCESS=true
+        else
+          if timeout 3600 make -j2 V=s || timeout 3600 make -j1 V=s; then
+            BUILD_SUCCESS=true
+          fi
+        fi
+        if [ "$BUILD_SUCCESS" != "true" ]; then
+          echo "Firmware build failed!"
+          exit 1
+        fi
 
     - name: Prepare outputs
       run: |
@@ -191,10 +183,6 @@ jobs:
         echo "DEVICE_NAME=$DEVICE_NAME" >> $GITHUB_ENV
         echo "FILE_DATE=$(date +'%Y%m%d-%H%M')" >> $GITHUB_ENV
         echo "FIRMWARE_PATH=$(pwd)/bin/targets/*/*" >> $GITHUB_ENV
-
-    - name: Check space usage
-      if: (!cancelled())
-      run: df -hT
 
     - name: Upload firmware artifact
       uses: actions/upload-artifact@v4
@@ -218,28 +206,8 @@ jobs:
       if: success()
       uses: ncipollo/release-action@v1
       with:
-        name: R${{ env.DATE }} for ${{ env.FILE_NAME }}
+        name: OpenWrt ${{ env.FILE_NAME }} - ${{ env.FILE_DATE }}
         tag: ${{ env.FILE_NAME }}-${{ env.FILE_DATE }}
         commit: ${{ github.sha }}
         allowUpdates: true
-        removeArtifacts: true
         artifacts: ${{ env.FIRMWARE_PATH }}/*
-        body: |
-          - 设备型号：CM520-79F
-          - 当前使用版本:【编译前的最后一次更新记录】
-          ${{ env.useVersionInfo }}
-
-    - name: Delete workflow runs
-      uses: Mattraks/delete-workflow-runs@v2
-      with:
-        retain_days: 7
-        keep_minimum_runs: 10
-
-    - name: Remove old Releases
-      if: success()
-      uses: dev-drprasad/delete-older-releases@v0.3.4
-      with:
-        keep_latest: 3
-        delete_tags: true
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

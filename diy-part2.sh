@@ -26,19 +26,28 @@ mkdir -p "$DTS_DIR" "$BOARD_DIR" "$CUSTOM_PLUGINS_DIR"
 PARTEEXP_DIR="files/var/partexp"
 mkdir -p "$PARTEEXP_DIR"
 
-# 输出目录权限和状态
+# 设置权限，保证构建用户可写
+chmod 755 "$PARTEEXP_DIR"
+chown $(id -u):$(id -g) "$PARTEEXP_DIR"
+
 log_info "Checking $PARTEEXP_DIR permissions..."
 ls -ld "$PARTEEXP_DIR" || log_error "Failed to access $PARTEEXP_DIR"
 log_info "Directory $PARTEEXP_DIR ready with permissions:"
 stat "$PARTEEXP_DIR"
-log_success "$PARTEEXP_DIR is ready for use"
+log_success "$PARTEEXP_DIR is ready for use and writable"
 
-# -------------------- 检查 uci.sh 文件 --------------------
-UCI_FILE="/usr/share/openclash/uci.sh"
+# -------------------- uci.sh 文件检查与复制 --------------------
+UCI_FILE="files/usr/share/openclash/uci.sh"
 if [ ! -f "$UCI_FILE" ]; then
-    log_info "Warning: $UCI_FILE not found. If OpenClash requires it, make sure it's copied or installed."
+    mkdir -p "$(dirname "$UCI_FILE")"
+    if [ -f "package/custom/luci-app-openclash/root/usr/share/openclash/uci.sh" ]; then
+        cp "package/custom/luci-app-openclash/root/usr/share/openclash/uci.sh" "$UCI_FILE"
+        log_success "uci.sh 已复制到 $UCI_FILE"
+    else
+        log_info "Warning: uci.sh 源文件未找到，请手动补充"
+    fi
 else
-    log_success "$UCI_FILE exists"
+    log_info "uci.sh 已存在，跳过复制"
 fi
 
 # -------------------- DTS补丁 --------------------
@@ -72,11 +81,11 @@ define Device/mobipromo_cm520-79f
   ROOTFS_SIZE := 26624k
   IMAGE_SIZE := 32768k
   DEVICE_PACKAGES := \\
-	ath10k-firmware-qca4019-ct \\
-	kmod-ath10k-ct-smallbuffers
+    ath10k-firmware-qca4019-ct \\
+    kmod-ath10k-ct-smallbuffers
   IMAGE/trx := append-kernel | pad-to \$(KERNEL_SIZE) | append-rootfs | trx-nand-edgecore-ecw5211 \\
-	-F 0x524D424E -N 1000 -M 0x2 -C 0x2 -I 0x2 -V "U-Boot 2012.07" -e 0x80208000 -i /dev/mtd10 \\
-	-a 0x80208000 -n "Kernel" -d /dev/mtd11 -c "Rootfs" | trx-header -s 16384 -o \$@
+    -F 0x524D424E -N 1000 -M 0x2 -C 0x2 -I 0x2 -V "U-Boot 2012.07" -e 0x80208000 -i /dev/mtd10 \\
+    -a 0x80208000 -n "Kernel" -d /dev/mtd11 -c "Rootfs" | trx-header -s 16384 -o \$@
 endef
 TARGET_DEVICES += mobipromo_cm520-79f
 EOF
@@ -179,5 +188,4 @@ OC_VER=$(awk -F'=' '/PKG_VERSION/ {print $2}' "$OC_DIR/Makefile" 2>/dev/null | t
 echo "OpenClash version: $OC_VER" >> "$VERSION_FILE"
 
 log_success "Version file generated at $VERSION_FILE"
-
 log_success "DIY part2 script finished"

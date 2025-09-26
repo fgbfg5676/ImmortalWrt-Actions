@@ -123,6 +123,19 @@ jobs:
           "../$DIY_P2_SH"
         fi
 
+    - name: Disable and remove Node.js
+      run: |
+        cd openwrt
+        echo "Disabling Node.js in .config..."
+        cat >> .config <<'EOF'
+# Disable Node.js
+# CONFIG_PACKAGE_node is not set
+# CONFIG_PACKAGE_node-npm is not set
+# CONFIG_NODEJS_NPM_CACHE_DIR is not set
+EOF
+        ./scripts/feeds uninstall node || true
+        rm -rf package/feeds/node node || true
+
     - name: Generate final config
       run: |
         cd openwrt

@@ -76,11 +76,7 @@ jobs:
 
     - name: Clone ImmortalWrt source
       run: |
-        if [ -d openwrt ]; then
-          echo "Removing existing openwrt directory..."
-          rm -rf openwrt
-        fi
-        echo "Cloning ImmortalWrt source..."
+        rm -rf openwrt || true
         git clone --depth=1 -b $REPO_BRANCH $REPO_URL openwrt
         cd openwrt
         echo "Current commit: $(git rev-parse HEAD)"
@@ -95,8 +91,8 @@ jobs:
     - name: Update and install feeds
       run: |
         cd openwrt
-        ./scripts/feeds update -a
-        ./scripts/feeds install -a
+        ./scripts/feeds update -a -s | grep -E "Updating|Installing|Feeds"
+        ./scripts/feeds install -a -s | grep -E "Installing"
 
     - name: Run DIY part1 script
       run: |
@@ -128,38 +124,39 @@ jobs:
         cd openwrt
         make defconfig
 
-    - name: Download packages with retry
+    - name: Download packages with minimal output
       run: |
         cd openwrt
         echo "Downloading packages..."
-        if ! timeout 1800 make download -j$(nproc) V=s -s; then
+        set +x
+        if ! timeout 1800 make download -j$(nproc) -s; then
           echo "[ERROR] Download failed, retrying verbose output..."
           timeout 1800 make download -j1 V=s || exit 1
         fi
-        find dl -size -1024c -delete 2>/dev/null || true
-        find dl -name "*.hash" -delete 2>/dev/null || true
 
-    - name: Compile toolchain
+    - name: Compile toolchain with minimal output
       run: |
         cd openwrt
         export PATH="/usr/lib/ccache:$PATH"
         echo "Compiling toolchain..."
-        if ! timeout 3600 make tools/install -j$(($(nproc)+1)) V=s -s; then
+        set +x
+        if ! timeout 3600 make tools/install -j$(nproc) -s; then
           echo "[ERROR] Toolchain install failed, retrying verbose..."
           timeout 3600 make tools/install -j1 V=s || exit 1
         fi
-        if ! timeout 3600 make toolchain/install -j$(($(nproc)+1)) V=s -s; then
+        if ! timeout 3600 make toolchain/install -j$(nproc) -s; then
           echo "[ERROR] Toolchain build failed, retrying verbose..."
           timeout 3600 make toolchain/install -j1 V=s || exit 1
         fi
 
-    - name: Build OpenWrt firmware
+    - name: Build OpenWrt firmware with minimal output
       run: |
         cd openwrt
         export PATH="/usr/lib/ccache:$PATH"
         echo "Building OpenWrt firmware..."
+        set +x
         BUILD_SUCCESS=false
-        if timeout 7200 make -j$(($(nproc)+1)) V=s -s; then
+        if timeout 7200 make -j$(($(nproc)+1)) -s; then
           BUILD_SUCCESS=true
         else
           echo "[ERROR] Build failed, retrying verbose..."

@@ -144,48 +144,4 @@ else
     log_info "PassWall2 already enabled, skipping"
 fi
 
-# -------------------- 中文包转换 --------------------
-log_info "Converting zh-cn to zh_Hans..."
-zh_cn_files=$(find feeds/luci package/custom -type f -name 'zh-cn.po' 2>/dev/null)
-if [ -z "$zh_cn_files" ]; then
-    log_info "No zh-cn.po files found, skipping conversion"
-else
-    for po in $zh_cn_files; do
-        cp -f "$po" "$(dirname $po)/zh_Hans.po"
-        log_info "Converted: $po"
-    done
-    log_success "All zh-cn -> zh_Hans conversion completed"
-fi
 
-# -------------------- 自动修正 zh_Hans 依赖为 zh-cn --------------------
-log_info "Checking default-settings Makefile for zh_Hans dependencies..."
-DEFAULT_MK="package/emortal/default-settings/Makefile"
-if [ -f "$DEFAULT_MK" ]; then
-    if grep -q "luci-i18n-.*-zh_Hans" "$DEFAULT_MK"; then
-        log_info "Found zh_Hans dependency, replacing with zh-cn..."
-        sed -i 's/\(luci-i18n-.*\)-zh_Hans/\1-zh-cn/g' "$DEFAULT_MK"
-        log_success "Makefile zh_Hans dependencies replaced with zh-cn"
-    else
-        log_info "No zh_Hans dependency found, skipping"
-    fi
-else
-    log_info "Default-settings Makefile not found, skipping"
-fi
-
-# -------------------- 版本文件生成 --------------------
-VERSION_FILE="files/etc/firmware-release"
-mkdir -p "$(dirname "$VERSION_FILE")"
-echo -e "Firmware Release: $(date +'%Y-%m-%d %H:%M:%S')\n" > "$VERSION_FILE"
-
-# PassWall2 版本
-PW2_DIR="package/custom/luci-app-passwall2"
-PW2_VER=$(awk -F'=' '/PKG_VERSION/ {print $2}' "$PW2_DIR/Makefile" 2>/dev/null | tr -d ' ' || echo "not found")
-echo "PassWall2 version: $PW2_VER" >> "$VERSION_FILE"
-
-# OpenClash 版本
-OC_DIR="package/custom/luci-app-openclash"
-OC_VER=$(awk -F'=' '/PKG_VERSION/ {print $2}' "$OC_DIR/Makefile" 2>/dev/null | tr -d ' ' || echo "not found")
-echo "OpenClash version: $OC_VER" >> "$VERSION_FILE"
-
-log_success "Version file generated at $VERSION_FILE"
-log_success "DIY part2 script finished"

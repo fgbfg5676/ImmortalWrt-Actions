@@ -16,7 +16,7 @@ env:
 jobs:
   build:
     runs-on: ubuntu-24.04
-    timeout-minutes: 180
+    timeout-minutes: 240
 
     steps:
     - name: Checkout repository
@@ -63,7 +63,7 @@ jobs:
         ccache --max-size=2G
         ccache --set-config=compression=true
 
-    - name: Cache downloads, toolchain, ipk packages
+    - name: Cache downloads, toolchain, IPK packages
       uses: actions/cache@v4
       with:
         path: |
@@ -129,47 +129,74 @@ jobs:
         cd openwrt
         make defconfig
 
-    - name: Download packages (retry)
+    - name: Download packages (incremental, show names & failures)
       run: |
         cd openwrt
-        if ! timeout 1800 make download -j$(nproc) >/dev/null; then
-          find dl -size -1024c -delete 2>/dev/null || true
-          timeout 1800 make download -j1 >/dev/null || true
-        fi
-        find dl -size -1024c -delete 2>/dev/null || true
-        find dl -name "*.hash" -delete 2>/dev/null || true
-
-    - name: Compile toolchain
-      run: |
-        cd openwrt
-        export PATH="/usr/lib/ccache:$PATH"
-        timeout 3600 make tools/install -j$(($(nproc)+1)) >/dev/null || timeout 3600 make tools/install -j1 >/dev/null
-        timeout 3600 make toolchain/install -j$(($(nproc)+1)) >/dev/null || timeout 3600 make toolchain/install -j1 >/dev/null
-
-    - name: Build OpenWrt packages (only names & failures)
-      run: |
-        cd openwrt
-        export PATH="/usr/lib/ccache:$PATH"
-        BUILD_SUCCESS=false
+        mkdir -p .dl_cache
         for pkg in $(make -q world 2>/dev/null | grep -oP '(?<=package/).*?(?=/)'); do
-          echo "[INFO] Compiling $pkg..."
-          if [ -f "bin/packages/*/*/$pkg*.ipk" ]; then
-            echo "[INFO] $pkg already built, skipping."
+          if [ -f ".dl_cache/$pkg.done" ]; then
+            echo "[INFO] $pkg already downloaded, skipping."
             continue
           fi
+          echo "[INFO] Downloading $pkg..."
+          if ! timeout 300 make package/$pkg/download -j1 >/dev/null 2>dl_error.log; then
+            echo "[ERROR] Download $pkg failed!"
+            cat dl_error.log
+            exit 1
+          fi
+          touch ".dl_cache/$pkg.done"
+        done
+
+    - name: Compile toolchain (show names & failures)
+      run: |
+        cd openwrt
+        export PATH="/usr/lib/ccache:$PATH"
+        echo "[INFO] Compiling toolchain..."
+        if ! timeout 3600 make tools/install -j$(($(nproc)+1)) >/dev/null 2>toolchain_error.log; then
+          echo "[ERROR] Toolchain compilation failed!"
+          cat toolchain_error.log
+          exit 1
+        fi
+        if ! timeout 3600 make toolchain/install -j$(($(nproc)+1)) >/dev/null 2>toolchain_error.log; then
+          echo "[ERROR] Toolchain install failed!"
+          cat toolchain_error.log
+          exit 1
+        fi
+
+    - name: Build OpenWrt packages (incremental IPK cache, names & failures)
+      run: |
+        cd openwrt
+        export PATH="/usr/lib/ccache:$PATH"
+        mkdir -p .ipk_cache
+        for pkg in $(make -q world 2>/dev/null | grep -oP '(?<=package/).*?(?=/)'); do
+          IPK_FILE=$(find bin/packages/*/*/$pkg*.ipk 2>/dev/null | head -1)
+          HASH_FILE=".ipk_cache/${pkg}.hash"
+          PKG_HASH=$(sha256sum package/$pkg/Makefile 2>/dev/null | cut -d' ' -f1)
+          OLD_HASH=""
+          [ -f "$HASH_FILE" ] && OLD_HASH=$(cat "$HASH_FILE")
+          if [ -f "$IPK_FILE" ] && [ "$PKG_HASH" = "$OLD_HASH" ]; then
+            echo "[INFO] $pkg already built, using cached IPK"
+            continue
+          fi
+          echo "[INFO] Compiling $pkg..."
           if ! make package/$pkg/compile -j$(nproc) >/dev/null 2>pkg_error.log; then
             echo "[ERROR] $pkg compilation failed!"
             cat pkg_error.log
             exit 1
           fi
+          echo "$PKG_HASH" > "$HASH_FILE"
         done
-        BUILD_SUCCESS=true
 
-    - name: Build OpenWrt firmware
+    - name: Build OpenWrt firmware (names & failures)
       run: |
         cd openwrt
         export PATH="/usr/lib/ccache:$PATH"
-        timeout 7200 make -j$(($(nproc)+1)) >/dev/null || timeout 3600 make -j2 >/dev/null || timeout 3600 make -j1 >/dev/null
+        echo "[INFO] Compiling firmware..."
+        if ! timeout 7200 make -j$(($(nproc)+1)) >/dev/null 2>firmware_error.log; then
+          echo "[ERROR] Firmware compilation failed!"
+          cat firmware_error.log
+          exit 1
+        fi
 
     - name: Prepare outputs
       run: |

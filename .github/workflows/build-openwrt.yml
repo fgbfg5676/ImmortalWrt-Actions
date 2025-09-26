@@ -90,14 +90,13 @@ jobs:
 
     - name: Verify Go version
       run: |
-        echo "[INFO] PATH=$PATH"
         if ! command -v go >/dev/null 2>&1; then
           echo "[ERROR] Go not found, exiting..."
           exit 1
         fi
         GO_VER=$(go version | awk '{print $3}')
         REQUIRED_GO_VER="go1.25.0"
-        if [[ "$GO_VER" != "$REQUIRED_GO_VER" ]]; then
+        if [ "$GO_VER" != "$REQUIRED_GO_VER" ]; then
           echo "[ERROR] Go version mismatch. Required: $REQUIRED_GO_VER, Found: $GO_VER, exiting..."
           exit 1
         fi
@@ -197,4 +196,50 @@ jobs:
       if: (!cancelled())
       run: df -hT
 
-    - name: Uploa
+    - name: Upload firmware artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: OpenWrt_${{ env.FILE_NAME }}_${{ env.DEVICE_NAME }}_${{ env.FILE_DATE }}
+        path: ${{ env.FIRMWARE_PATH }}
+        retention-days: 30
+
+    - name: Upload build logs and config
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: build-info_${{ env.FILE_DATE }}
+        path: |
+          openwrt/logs/
+          openwrt/.config
+          openwrt/bin/packages/
+        retention-days: 7
+
+    - name: Create GitHub Release
+      if: success()
+      uses: ncipollo/release-action@v1
+      with:
+        name: R${{ env.DATE }} for ${{ env.FILE_NAME }}
+        tag: ${{ env.FILE_NAME }}-${{ env.FILE_DATE }}
+        commit: ${{ github.sha }}
+        allowUpdates: true
+        removeArtifacts: true
+        artifacts: ${{ env.FIRMWARE_PATH }}/*
+        body: |
+          - 设备型号：CM520-79F
+          - 当前使用版本:【编译前的最后一次更新记录】
+          ${{ env.useVersionInfo }}
+
+    - name: Delete workflow runs
+      uses: Mattraks/delete-workflow-runs@v2
+      with:
+        retain_days: 7
+        keep_minimum_runs: 10
+
+    - name: Remove old Releases
+      if: success()
+      uses: dev-drprasad/delete-older-releases@v0.3.4
+      with:
+        keep_latest: 3
+        delete_tags: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

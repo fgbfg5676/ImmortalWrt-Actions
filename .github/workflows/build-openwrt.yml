@@ -63,7 +63,7 @@ jobs:
         ccache --max-size=2G
         ccache --set-config=compression=true
 
-    - name: Cache downloads and toolchain
+    - name: Cache downloads, toolchain, ipk packages
       uses: actions/cache@v4
       with:
         path: |
@@ -71,6 +71,7 @@ jobs:
           ~/.ccache
           openwrt/staging_dir
           openwrt/build_dir/toolchain-*
+          openwrt/bin/packages
         key: build-cache-${{ env.REPO_BRANCH }}-${{ hashFiles('**/.config') }}
         restore-keys: |
           build-cache-${{ env.REPO_BRANCH }}-
@@ -94,7 +95,7 @@ jobs:
         ./scripts/feeds update -a
         ./scripts/feeds install -a
 
-    - name: Run DIY part1 script
+    - name: Run DIY part1 script (full output)
       run: |
         cd openwrt
         if [ -f "../$DIY_P1_SH" ]; then
@@ -111,7 +112,7 @@ jobs:
           make defconfig
         fi
 
-    - name: Run DIY part2 script and create banner
+    - name: Run DIY part2 script and create banner (full output)
       run: |
         cd openwrt
         if [ -f "../$DIY_P2_SH" ]; then
@@ -128,12 +129,12 @@ jobs:
         cd openwrt
         make defconfig
 
-    - name: Download packages with retry
+    - name: Download packages (retry)
       run: |
         cd openwrt
-        if ! timeout 1800 make download -j$(nproc) V=s; then
+        if ! timeout 1800 make download -j$(nproc) >/dev/null; then
           find dl -size -1024c -delete 2>/dev/null || true
-          timeout 1800 make download -j1 V=s || true
+          timeout 1800 make download -j1 >/dev/null || true
         fi
         find dl -size -1024c -delete 2>/dev/null || true
         find dl -name "*.hash" -delete 2>/dev/null || true
@@ -142,20 +143,33 @@ jobs:
       run: |
         cd openwrt
         export PATH="/usr/lib/ccache:$PATH"
-        timeout 3600 make tools/install -j$(($(nproc)+1)) V=s || timeout 3600 make tools/install -j1 V=s
-        timeout 3600 make toolchain/install -j$(($(nproc)+1)) V=s || timeout 3600 make toolchain/install -j1 V=s
+        timeout 3600 make tools/install -j$(($(nproc)+1)) >/dev/null || timeout 3600 make tools/install -j1 >/dev/null
+        timeout 3600 make toolchain/install -j$(($(nproc)+1)) >/dev/null || timeout 3600 make toolchain/install -j1 >/dev/null
+
+    - name: Build OpenWrt packages (only names & failures)
+      run: |
+        cd openwrt
+        export PATH="/usr/lib/ccache:$PATH"
+        BUILD_SUCCESS=false
+        for pkg in $(make -q world 2>/dev/null | grep -oP '(?<=package/).*?(?=/)'); do
+          echo "[INFO] Compiling $pkg..."
+          if [ -f "bin/packages/*/*/$pkg*.ipk" ]; then
+            echo "[INFO] $pkg already built, skipping."
+            continue
+          fi
+          if ! make package/$pkg/compile -j$(nproc) >/dev/null 2>pkg_error.log; then
+            echo "[ERROR] $pkg compilation failed!"
+            cat pkg_error.log
+            exit 1
+          fi
+        done
+        BUILD_SUCCESS=true
 
     - name: Build OpenWrt firmware
       run: |
         cd openwrt
         export PATH="/usr/lib/ccache:$PATH"
-        BUILD_SUCCESS=false
-        if timeout 7200 make -j$(($(nproc)+1)) V=s; then
-          BUILD_SUCCESS=true
-        else
-          timeout 3600 make -j2 V=s && BUILD_SUCCESS=true || timeout 3600 make -j1 V=s && BUILD_SUCCESS=true
-        fi
-        if [ "$BUILD_SUCCESS" != "true" ]; then exit 1; fi
+        timeout 7200 make -j$(($(nproc)+1)) >/dev/null || timeout 3600 make -j2 >/dev/null || timeout 3600 make -j1 >/dev/null
 
     - name: Prepare outputs
       run: |

@@ -19,181 +19,164 @@ jobs:
     timeout-minutes: 240
 
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v5
+      - name: Checkout repository
+        uses: actions/checkout@v5
 
-    - name: Free up disk space
-      run: |
-        echo "Freeing up disk space..."
-        sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
-        sudo docker image prune --all --force
-        sudo rm -rf /usr/local/.ghcup /usr/local/graalvm /opt/microsoft
-        df -h
+      - name: Free up disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          sudo docker image prune --all --force
+          sudo rm -rf /usr/local/.ghcup /usr/local/graalvm /opt/microsoft
+          df -h
 
-    - name: Install build dependencies
-      run: |
-        sudo dpkg --add-architecture i386
-        sudo apt-get update
-        sudo apt-get install -y --no-install-recommends \
-          build-essential clang flex bison g++ gawk gcc-multilib g++-multilib \
-          gettext git libncurses5-dev libssl-dev python3-dev python3-setuptools rsync unzip \
-          zlib1g-dev file wget subversion patch upx-ucl autoconf automake \
-          curl asciidoc binutils bzip2 gzip p7zip p7zip-full libelf-dev \
-          lib32gcc-s1 libc6-dev lib32stdc++6 zlib1g-dev:i386 lib32z1-dev \
-          ccache ecj fastjar re2c xz-utils python3 python3-pip python3-ply \
-          python3-venv python3-yaml haveged lrzsz device-tree-compiler scons \
-          antlr3 gperf intltool mkisofs qemu-utils swig tar jq
-        sudo apt-get clean
-        sudo apt-get autoremove -y
+      - name: Install build dependencies
+        run: |
+          sudo dpkg --add-architecture i386
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential clang flex bison g++ gawk gcc-multilib g++-multilib \
+            gettext git libncurses5-dev libssl-dev python3-dev python3-setuptools rsync unzip \
+            zlib1g-dev file wget subversion patch upx-ucl autoconf automake \
+            curl asciidoc binutils bzip2 gzip p7zip p7zip-full libelf-dev \
+            lib32gcc-s1 libc6-dev lib32stdc++6 zlib1g-dev:i386 lib32z1-dev \
+            ccache ecj fastjar re2c xz-utils python3 python3-pip python3-ply \
+            python3-venv python3-yaml haveged lrzsz device-tree-compiler scons \
+            antlr3 gperf intltool mkisofs qemu-utils swig tar jq
+          sudo apt-get clean
+          sudo apt-get autoremove -y
 
-    - name: Setup Go (1.25.0)
-      uses: actions/setup-go@v5
-      with:
-        go-version: '1.25.0'
+      - name: Setup Go 1.25.0
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.0'
 
-    - name: Setup ccache
-      run: |
-        sudo mkdir -p /usr/lib/ccache
-        sudo ln -sf /usr/bin/ccache /usr/lib/ccache/gcc
-        sudo ln -sf /usr/bin/ccache /usr/lib/ccache/g++
-        sudo ln -sf /usr/bin/ccache /usr/lib/ccache/cc
-        sudo ln -sf /usr/bin/ccache /usr/lib/ccache/c++
-        export PATH="/usr/lib/ccache:$PATH"
-        ccache --max-size=2G
-        ccache --set-config=compression=true
+      - name: Setup ccache
+        run: |
+          sudo mkdir -p /usr/lib/ccache
+          sudo ln -sf /usr/bin/ccache /usr/lib/ccache/gcc
+          sudo ln -sf /usr/bin/ccache /usr/lib/ccache/g++
+          sudo ln -sf /usr/bin/ccache /usr/lib/ccache/cc
+          sudo ln -sf /usr/bin/ccache /usr/lib/ccache/c++
+          export PATH="/usr/lib/ccache:$PATH"
+          ccache --max-size=2G
+          ccache --set-config=compression=true
 
-    - name: Cache downloads, toolchain, IPK packages
-      uses: actions/cache@v4
-      with:
-        path: |
-          openwrt/dl
-          ~/.ccache
-          openwrt/staging_dir
-          openwrt/build_dir/toolchain-*
-          openwrt/bin/packages
-        key: build-cache-${{ env.REPO_BRANCH }}-${{ hashFiles('**/.config') }}
-        restore-keys: |
-          build-cache-${{ env.REPO_BRANCH }}-
+      - name: Cache downloads, toolchain, IPK packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            openwrt/dl
+            ~/.ccache
+            openwrt/staging_dir
+            openwrt/build_dir/toolchain-*
+            openwrt/bin/packages
+          key: build-cache-${{ env.REPO_BRANCH }}-${{ hashFiles('**/.config') }}
+          restore-keys: |
+            build-cache-${{ env.REPO_BRANCH }}-
 
-    - name: Clone ImmortalWrt source
-      run: |
-        if [ -d openwrt ]; then rm -rf openwrt; fi
-        git clone --depth=1 -b $REPO_BRANCH $REPO_URL openwrt
-        cd openwrt
-        echo "COMMIT_HASH=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
+      - name: Clone source
+        run: |
+          rm -rf openwrt || true
+          git clone --depth=1 -b $REPO_BRANCH $REPO_URL openwrt
+          cd openwrt
+          echo "COMMIT_HASH=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
 
-    - name: Add additional feeds
-      run: |
-        cd openwrt
-        echo "src-git golang https://github.com/sbwml/packages_lang_golang;22.x" >> feeds.conf.default
-        sed -i '/openwrt-node-packages/d' feeds.conf.default || true
-        sed -i '/node/d' feeds.conf.default || true
+      - name: Add feeds
+        run: |
+          cd openwrt
+          echo "src-git golang https://github.com/sbwml/packages_lang_golang;22.x" >> feeds.conf.default
+          sed -i '/openwrt-node-packages/d' feeds.conf.default || true
+          sed -i '/node/d' feeds.conf.default || true
 
-    - name: Update and install feeds
-      run: |
-        cd openwrt
-        ./scripts/feeds update -a
-        ./scripts/feeds install -a
+      - name: Update and install feeds
+        run: |
+          cd openwrt
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
 
-    - name: Disable Node.js completely
-      run: |
-        cd openwrt
-        echo "[INFO] Disabling Node.js and npm (target + hostpkg)..."
-        cat >> .config <<EOF
+      - name: Disable Node.js
+        run: |
+          cd openwrt
+          cat >> .config <<EOF
 # Disable Node.js
 # CONFIG_PACKAGE_node is not set
 # CONFIG_PACKAGE_node-npm is not set
 # CONFIG_PACKAGE_node-host is not set
 # CONFIG_NODEJS_NPM_CACHE_DIR is not set
 EOF
-        echo "[SUCCESS] Node.js disabled"
 
-    - name: Remove Node.js related packages
-      run: |
-        cd openwrt
-        echo "[INFO] Removing Node.js packages from feeds, staging_dir, hostpkg..."
-        rm -rf staging_dir/hostpkg/node* staging_dir/target-*/*/node*
-        rm -rf package/feeds/packages/node* package/feeds/packages/node-npm*
-        echo "[SUCCESS] Node.js packages removed"
+      - name: Remove Node.js
+        run: |
+          cd openwrt
+          rm -rf staging_dir/hostpkg/node* staging_dir/target-*/*/node*
+          rm -rf package/feeds/packages/node* package/feeds/packages/node-npm*
 
-    - name: Run DIY part1 script
-      run: |
-        cd openwrt
-        if [ -f "../$DIY_P1_SH" ]; then
-          chmod +x "../$DIY_P1_SH"
-          "../$DIY_P1_SH"
-        fi
+      - name: Run DIY part1
+        run: |
+          cd openwrt
+          [ -f "../$DIY_P1_SH" ] && chmod +x "../$DIY_P1_SH" && "../$DIY_P1_SH"
 
-    - name: Copy custom configuration
-      run: |
-        cd openwrt
-        if [ -f "../$CONFIG_FILE" ]; then
-          cp "../$CONFIG_FILE" .config
-        else
+      - name: Copy custom config
+        run: |
+          cd openwrt
+          [ -f "../$CONFIG_FILE" ] && cp "../$CONFIG_FILE" .config || make defconfig
+
+      - name: Run DIY part2
+        run: |
+          cd openwrt
+          [ -f "../$DIY_P2_SH" ] && chmod +x "../$DIY_P2_SH" && "../$DIY_P2_SH"
+
+      - name: Generate final config
+        run: |
+          cd openwrt
           make defconfig
-        fi
 
-    - name: Run DIY part2 script
-      run: |
-        cd openwrt
-        if [ -f "../$DIY_P2_SH" ]; then
-          chmod +x "../$DIY_P2_SH"
-          "../$DIY_P2_SH"
-        fi
+      - name: Compile toolchain
+        run: |
+          cd openwrt
+          export PATH="/usr/lib/ccache:$PATH"
+          timeout 3600 make tools/install -j$(($(nproc)+1)) V=s || timeout 3600 make tools/install -j1 V=s
+          timeout 3600 make toolchain/install -j$(($(nproc)+1)) V=s || timeout 3600 make toolchain/install -j1 V=s
 
-    - name: Generate final config
-      run: |
-        cd openwrt
-        make defconfig
+      - name: Build firmware
+        run: |
+          cd openwrt
+          export PATH="/usr/lib/ccache:$PATH"
+          timeout 7200 make -j$(($(nproc)+1)) V=s || timeout 3600 make -j2 V=s || timeout 3600 make -j1 V=s
 
-    - name: Compile toolchain
-      run: |
-        cd openwrt
-        export PATH="/usr/lib/ccache:$PATH"
-        timeout 3600 make tools/install -j$(($(nproc)+1)) V=s || timeout 3600 make tools/install -j1 V=s
-        timeout 3600 make toolchain/install -j$(($(nproc)+1)) V=s || timeout 3600 make toolchain/install -j1 V=s
+      - name: Prepare outputs
+        run: |
+          cd openwrt
+          DEVICE_NAME=$(grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' | head -1)
+          DEVICE_NAME=${DEVICE_NAME:-unknown}
+          echo "DEVICE_NAME=$DEVICE_NAME" >> $GITHUB_ENV
+          echo "FILE_DATE=$(date +'%Y%m%d-%H%M')" >> $GITHUB_ENV
+          echo "FIRMWARE_PATH=$(pwd)/bin/targets/*/*" >> $GITHUB_ENV
 
-    - name: Build OpenWrt firmware
-      run: |
-        cd openwrt
-        export PATH="/usr/lib/ccache:$PATH"
-        if ! timeout 7200 make -j$(($(nproc)+1)) V=s; then
-          timeout 3600 make -j2 V=s || timeout 3600 make -j1 V=s
-        fi
+      - name: Upload firmware
+        uses: actions/upload-artifact@v4
+        with:
+          name: OpenWrt_${{ env.FILE_NAME }}_${{ env.DEVICE_NAME }}_${{ env.FILE_DATE }}
+          path: ${{ env.FIRMWARE_PATH }}
+          retention-days: 30
 
-    - name: Prepare outputs
-      run: |
-        cd openwrt
-        DEVICE_NAME=$(grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' | head -1)
-        DEVICE_NAME=${DEVICE_NAME:-unknown}
-        echo "DEVICE_NAME=$DEVICE_NAME" >> $GITHUB_ENV
-        echo "FILE_DATE=$(date +'%Y%m%d-%H%M')" >> $GITHUB_ENV
-        echo "FIRMWARE_PATH=$(pwd)/bin/targets/*/*" >> $GITHUB_ENV
+      - name: Upload build logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-info_${{ env.FILE_DATE }}
+          path: |
+            openwrt/logs/
+            openwrt/.config
+            openwrt/bin/packages/
+          retention-days: 7
 
-    - name: Upload firmware artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: OpenWrt_${{ env.FILE_NAME }}_${{ env.DEVICE_NAME }}_${{ env.FILE_DATE }}
-        path: ${{ env.FIRMWARE_PATH }}
-        retention-days: 30
-
-    - name: Upload build logs and config
-      if: always()
-      uses: actions/upload-artifact@v4
-      with:
-        name: build-info_${{ env.FILE_DATE }}
-        path: |
-          openwrt/logs/
-          openwrt/.config
-          openwrt/bin/packages/
-        retention-days: 7
-
-    - name: Create GitHub Release
-      if: success()
-      uses: ncipollo/release-action@v1
-      with:
-        name: OpenWrt ${{ env.FILE_NAME }} - ${{ env.FILE_DATE }}
-        tag: ${{ env.FILE_NAME }}-${{ env.FILE_DATE }}
-        commit: ${{ github.sha }}
-        allowUpdates: true
-        artifacts: ${{ env.FIRMWARE_PATH }}/*
+      - name: Create GitHub Release
+        if: success()
+        uses: ncipollo/release-action@v1
+        with:
+          name: OpenWrt ${{ env.FILE_NAME }} - ${{ env.FILE_DATE }}
+          tag: ${{ env.FILE_NAME }}-${{ env.FILE_DATE }}
+          commit: ${{ github.sha }}
+          allowUpdates: true
+          artifacts: ${{ env.FIRMWARE_PATH }}/*

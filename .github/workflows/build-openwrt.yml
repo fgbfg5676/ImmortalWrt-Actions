@@ -131,9 +131,10 @@ jobs:
     - name: Download packages with retry
       run: |
         cd openwrt
-        if ! timeout 1800 make download -j$(nproc) V=s; then
-          find dl -size -1024c -delete 2>/dev/null || true
-          timeout 1800 make download -j1 V=s || true
+        echo "Downloading packages..."
+        if ! timeout 1800 make download -j$(nproc) V=; then
+          echo "[ERROR] Download failed, retrying verbose output..."
+          timeout 1800 make download -j1 V=s || exit 1
         fi
         find dl -size -1024c -delete 2>/dev/null || true
         find dl -name "*.hash" -delete 2>/dev/null || true
@@ -142,20 +143,32 @@ jobs:
       run: |
         cd openwrt
         export PATH="/usr/lib/ccache:$PATH"
-        timeout 3600 make tools/install -j$(($(nproc)+1)) V=s || timeout 3600 make tools/install -j1 V=s
-        timeout 3600 make toolchain/install -j$(($(nproc)+1)) V=s || timeout 3600 make toolchain/install -j1 V=s
+        echo "Compiling toolchain..."
+        if ! timeout 3600 make tools/install -j$(($(nproc)+1)) V=; then
+          echo "[ERROR] Toolchain install failed, retrying verbose..."
+          timeout 3600 make tools/install -j1 V=s || exit 1
+        fi
+        if ! timeout 3600 make toolchain/install -j$(($(nproc)+1)) V=; then
+          echo "[ERROR] Toolchain build failed, retrying verbose..."
+          timeout 3600 make toolchain/install -j1 V=s || exit 1
+        fi
 
     - name: Build OpenWrt firmware
       run: |
         cd openwrt
         export PATH="/usr/lib/ccache:$PATH"
+        echo "Building OpenWrt firmware..."
         BUILD_SUCCESS=false
-        if timeout 7200 make -j$(($(nproc)+1)) V=s; then
+        if timeout 7200 make -j$(($(nproc)+1)) V=; then
           BUILD_SUCCESS=true
         else
-          timeout 3600 make -j2 V=s && BUILD_SUCCESS=true || timeout 3600 make -j1 V=s && BUILD_SUCCESS=true
+          echo "[ERROR] Build failed, retrying verbose..."
+          if timeout 3600 make -j2 V=s || timeout 3600 make -j1 V=s; then
+            BUILD_SUCCESS=true
+          fi
         fi
         if [ "$BUILD_SUCCESS" != "true" ]; then
+          echo "[ERROR] Firmware build failed!"
           exit 1
         fi
 

@@ -115,7 +115,7 @@ jobs:
       run: |
         cd openwrt
         echo "src-git golang https://github.com/sbwml/packages_lang_golang;22.x" >> feeds.conf.default
-        echo "src-git node https://github.com/nxhack/openwrt-node-packages.git" >> feeds.conf.default
+       
 
     - name: Run DIY part1 script
       run: |

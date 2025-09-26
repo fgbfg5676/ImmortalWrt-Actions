@@ -142,6 +142,7 @@ jobs:
           if ! timeout 300 make package/$pkg/download -j1 >/dev/null 2>dl_error.log; then
             echo "[ERROR] Download $pkg failed!"
             cat dl_error.log
+            rm -f dl_error.log
             exit 1
           fi
           touch ".dl_cache/$pkg.done"
@@ -151,19 +152,17 @@ jobs:
       run: |
         cd openwrt
         export PATH="/usr/lib/ccache:$PATH"
-        echo "[INFO] Compiling toolchain..."
-        if ! timeout 3600 make tools/install -j$(($(nproc)+1)) >/dev/null 2>toolchain_error.log; then
-          echo "[ERROR] Toolchain compilation failed!"
-          cat toolchain_error.log
-          exit 1
-        fi
-        if ! timeout 3600 make toolchain/install -j$(($(nproc)+1)) >/dev/null 2>toolchain_error.log; then
-          echo "[ERROR] Toolchain install failed!"
-          cat toolchain_error.log
-          exit 1
-        fi
+        echo "[INFO] Compiling tools and toolchain..."
+        for step in tools toolchain; do
+          echo "[INFO] $step..."
+          if ! timeout 3600 make $step/install -j$(($(nproc)+1)) >/dev/null 2>${step}_error.log; then
+            echo "[ERROR] $step compilation failed!"
+            cat ${step}_error.log
+            exit 1
+          fi
+        done
 
-    - name: Build OpenWrt packages (incremental IPK cache, names & failures)
+    - name: Build OpenWrt packages (incremental IPK cache)
       run: |
         cd openwrt
         export PATH="/usr/lib/ccache:$PATH"

@@ -116,3 +116,8 @@ else
     log_info "PassWall2 already enabled, skipping"
 fi
 
+
+# Update Golang
+git clone -b master --single-branch https://github.com/immortalwrt/packages.git packages_master
+rm -rf ./feeds/packages/lang/golang
+mv ./packages_master/lang/golang ./feeds/packages/lang

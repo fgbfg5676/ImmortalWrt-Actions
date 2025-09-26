@@ -87,13 +87,37 @@ jobs:
       run: |
         cd openwrt
         echo "src-git golang https://github.com/sbwml/packages_lang_golang;22.x" >> feeds.conf.default
+        # 禁止 Node.js 被 pull 进 feeds
         sed -i '/openwrt-node-packages/d' feeds.conf.default || true
+        sed -i '/node/d' feeds.conf.default || true
 
     - name: Update and install feeds
       run: |
         cd openwrt
         ./scripts/feeds update -a
         ./scripts/feeds install -a
+
+    # -------------------- 禁用 Node.js + 移除 --------------------
+    - name: Disable Node.js completely
+      run: |
+        cd openwrt
+        echo "[INFO] Disabling Node.js and npm (target + hostpkg)..."
+        cat >> .config <<EOF
+# Disable Node.js
+# CONFIG_PACKAGE_node is not set
+# CONFIG_PACKAGE_node-npm is not set
+# CONFIG_PACKAGE_node-host is not set
+# CONFIG_NODEJS_NPM_CACHE_DIR is not set
+EOF
+        echo "[SUCCESS] Node.js disabled"
+
+    - name: Remove Node.js related packages
+      run: |
+        cd openwrt
+        echo "[INFO] Removing Node.js packages from feeds, staging_dir, hostpkg..."
+        rm -rf staging_dir/hostpkg/node* staging_dir/target-*/*/node*
+        rm -rf package/feeds/packages/node* package/feeds/packages/node-npm*
+        echo "[SUCCESS] Node.js packages removed"
 
     - name: Run DIY part1 script (full output)
       run: |

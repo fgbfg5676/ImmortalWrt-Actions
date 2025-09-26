@@ -50,13 +50,12 @@ jobs:
       uses: actions/setup-go@v5
       with:
         go-version: '1.25.0'
-        check-latest: true
 
     - name: Setup ccache
       run: |
         sudo mkdir -p /usr/lib/ccache
         sudo ln -sf /usr/bin/ccache /usr/lib/ccache/gcc
-        sudo ln -sf /usr/bin/ccache /usr/lib/ccache/g++ 
+        sudo ln -sf /usr/bin/ccache /usr/lib/ccache/g++
         sudo ln -sf /usr/bin/ccache /usr/lib/ccache/cc
         sudo ln -sf /usr/bin/ccache /usr/lib/ccache/c++
         export PATH="/usr/lib/ccache:$PATH"
@@ -83,7 +82,7 @@ jobs:
         cd openwrt
         echo "COMMIT_HASH=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
 
-    - name: Add additional feeds and disable Node.js in feeds
+    - name: Add additional feeds
       run: |
         cd openwrt
         echo "src-git golang https://github.com/sbwml/packages_lang_golang;22.x" >> feeds.conf.default
@@ -134,16 +133,12 @@ EOF
           make defconfig
         fi
 
-    - name: Run DIY part2 script and create banner
+    - name: Run DIY part2 script
       run: |
         cd openwrt
         if [ -f "../$DIY_P2_SH" ]; then
           chmod +x "../$DIY_P2_SH"
           "../$DIY_P2_SH"
-        fi
-        if [ -f "../create-banner.sh" ]; then
-          chmod +x "../create-banner.sh"
-          "../create-banner.sh"
         fi
 
     - name: Generate final config
@@ -151,64 +146,19 @@ EOF
         cd openwrt
         make defconfig
 
-    - name: Download packages incrementally
-      run: |
-        cd openwrt
-        mkdir -p .dl_cache
-        for pkg in $(make -q world 2>/dev/null | grep -oP '(?<=package/).*?(?=/)'); do
-          if [ -f ".dl_cache/$pkg.done" ]; then
-            echo "[INFO] $pkg already downloaded, skipping."
-            continue
-          fi
-          echo "[INFO] Downloading $pkg..."
-          if ! timeout 300 make package/$pkg/download -j1 >/dev/null 2>dl_error.log; then
-            echo "[ERROR] Download $pkg failed!"
-            cat dl_error.log
-            rm -f dl_error.log
-            exit 1
-          fi
-          touch ".dl_cache/$pkg.done"
-        done
-
     - name: Compile toolchain
       run: |
         cd openwrt
         export PATH="/usr/lib/ccache:$PATH"
-        for step in tools toolchain; do
-          if ! timeout 3600 make $step/install -j$(($(nproc)+1)) >/dev/null 2>${step}_error.log; then
-            cat ${step}_error.log
-            exit 1
-          fi
-        done
-
-    - name: Build OpenWrt packages incrementally
-      run: |
-        cd openwrt
-        export PATH="/usr/lib/ccache:$PATH"
-        mkdir -p .ipk_cache
-        for pkg in $(make -q world 2>/dev/null | grep -oP '(?<=package/).*?(?=/)'); do
-          IPK_FILE=$(find bin/packages/*/*/$pkg*.ipk 2>/dev/null | head -1)
-          HASH_FILE=".ipk_cache/${pkg}.hash"
-          PKG_HASH=$(sha256sum package/$pkg/Makefile 2>/dev/null | cut -d' ' -f1)
-          OLD_HASH=""
-          [ -f "$HASH_FILE" ] && OLD_HASH=$(cat "$HASH_FILE")
-          if [ -f "$IPK_FILE" ] && [ "$PKG_HASH" = "$OLD_HASH" ]; then
-            continue
-          fi
-          if ! make package/$pkg/compile -j$(nproc) >/dev/null 2>pkg_error.log; then
-            cat pkg_error.log
-            exit 1
-          fi
-          echo "$PKG_HASH" > "$HASH_FILE"
-        done
+        timeout 3600 make tools/install -j$(($(nproc)+1)) V=s || timeout 3600 make tools/install -j1 V=s
+        timeout 3600 make toolchain/install -j$(($(nproc)+1)) V=s || timeout 3600 make toolchain/install -j1 V=s
 
     - name: Build OpenWrt firmware
       run: |
         cd openwrt
         export PATH="/usr/lib/ccache:$PATH"
-        if ! timeout 7200 make -j$(($(nproc)+1)) >/dev/null 2>firmware_error.log; then
-          cat firmware_error.log
-          exit 1
+        if ! timeout 7200 make -j$(($(nproc)+1)) V=s; then
+          timeout 3600 make -j2 V=s || timeout 3600 make -j1 V=s
         fi
 
     - name: Prepare outputs
@@ -233,9 +183,9 @@ EOF
       with:
         name: build-info_${{ env.FILE_DATE }}
         path: |
+          openwrt/logs/
           openwrt/.config
           openwrt/bin/packages/
-          openwrt/tmp/.packagefeeds
         retention-days: 7
 
     - name: Create GitHub Release
@@ -246,4 +196,4 @@ EOF
         tag: ${{ env.FILE_NAME }}-${{ env.FILE_DATE }}
         commit: ${{ github.sha }}
         allowUpdates: true
-        artifacts: ${{ env.FIRMWARE_PATH }}/*,openwrt/.config
+        artifacts: ${{ env.FIRMWARE_PATH }}/*

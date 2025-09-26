@@ -15,8 +15,8 @@ env:
 
 jobs:
   build:
-    runs-on: ubuntu-22.04  # 切换回性能更好的22.04
-    timeout-minutes: 240   # 增加到4小时
+    runs-on: ubuntu-22.04
+    timeout-minutes: 240
     permissions:
       actions: write
       contents: write
@@ -88,6 +88,20 @@ jobs:
       with:
         go-version: '1.25.0'
 
+    - name: Verify Go version
+      run: |
+        if ! command -v go >/dev/null 2>&1; then
+          echo "[ERROR] Go not found"
+          exit 1
+        fi
+        GO_VER=$(go version | awk '{print $3}')
+        REQUIRED_GO_VER="go1.25.0"
+        if [ "$GO_VER" != "$REQUIRED_GO_VER" ]; then
+          echo "[ERROR] Go version mismatch. Required: $REQUIRED_GO_VER, Found: $GO_VER"
+          exit 1
+        fi
+        echo "[INFO] Go version verified: $GO_VER"
+
     - name: Clone ImmortalWrt source
       run: |
         if [ -d openwrt ]; then
@@ -115,7 +129,6 @@ jobs:
       run: |
         cd openwrt
         echo "src-git golang https://github.com/sbwml/packages_lang_golang;22.x" >> feeds.conf.default
-       
 
     - name: Run DIY part1 script
       run: |
@@ -164,7 +177,6 @@ jobs:
       run: |
         cd openwrt
         echo -e "$(nproc) thread compile"
-        # 使用更保守的并行策略，避免内存不足
         make -j$(nproc) || make -j1 || make -j1 V=s
         echo "status=success" >> $GITHUB_OUTPUT
         grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME

@@ -91,13 +91,13 @@ jobs:
     - name: Verify Go version
       run: |
         if ! command -v go >/dev/null 2>&1; then
-          echo "[ERROR] Go not found"
+          echo "[ERROR] Go not found, exiting..."
           exit 1
         fi
         GO_VER=$(go version | awk '{print $3}')
         REQUIRED_GO_VER="go1.25.0"
         if [ "$GO_VER" != "$REQUIRED_GO_VER" ]; then
-          echo "[ERROR] Go version mismatch. Required: $REQUIRED_GO_VER, Found: $GO_VER"
+          echo "[ERROR] Go version mismatch. Required: $REQUIRED_GO_VER, Found: $GO_VER, exiting..."
           exit 1
         fi
         echo "[INFO] Go version verified: $GO_VER"

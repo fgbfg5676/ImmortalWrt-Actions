@@ -86,12 +86,13 @@ jobs:
       run: |
         cd openwrt
         echo "src-git golang https://github.com/sbwml/packages_lang_golang;22.x" >> feeds.conf.default
-        echo "src-git node https://github.com/nxhack/openwrt-node-packages.git" >> feeds.conf.default
+        echo "src-git my_packages https://github.com/Gzxhwq/openwrt-packages" >> feeds.conf.default
+        # Node feed removed
 
-    - name: Update and install feeds
+    - name: Update and install feeds (minimal output)
       run: |
         cd openwrt
-        ./scripts/feeds update -a -s | grep -E "Updating|Installing|Feeds"
+        ./scripts/feeds update -a -s | grep -E "Updating|Feeds"
         ./scripts/feeds install -a -s | grep -E "Installing"
 
     - name: Run DIY part1 script

@@ -16,7 +16,7 @@ env:
 jobs:
   build:
     runs-on: ubuntu-24.04
-    timeout-minutes: 180
+    timeout-minutes: 240
 
     steps:
     - name: Checkout repository
@@ -132,7 +132,7 @@ jobs:
       run: |
         cd openwrt
         echo "Downloading packages..."
-        if ! timeout 1800 make download -j$(nproc) V=; then
+        if ! timeout 1800 make download -j$(nproc) V=s -s; then
           echo "[ERROR] Download failed, retrying verbose output..."
           timeout 1800 make download -j1 V=s || exit 1
         fi
@@ -144,11 +144,11 @@ jobs:
         cd openwrt
         export PATH="/usr/lib/ccache:$PATH"
         echo "Compiling toolchain..."
-        if ! timeout 3600 make tools/install -j$(($(nproc)+1)) V=; then
+        if ! timeout 3600 make tools/install -j$(($(nproc)+1)) V=s -s; then
           echo "[ERROR] Toolchain install failed, retrying verbose..."
           timeout 3600 make tools/install -j1 V=s || exit 1
         fi
-        if ! timeout 3600 make toolchain/install -j$(($(nproc)+1)) V=; then
+        if ! timeout 3600 make toolchain/install -j$(($(nproc)+1)) V=s -s; then
           echo "[ERROR] Toolchain build failed, retrying verbose..."
           timeout 3600 make toolchain/install -j1 V=s || exit 1
         fi
@@ -159,7 +159,7 @@ jobs:
         export PATH="/usr/lib/ccache:$PATH"
         echo "Building OpenWrt firmware..."
         BUILD_SUCCESS=false
-        if timeout 7200 make -j$(($(nproc)+1)) V=; then
+        if timeout 7200 make -j$(($(nproc)+1)) V=s -s; then
           BUILD_SUCCESS=true
         else
           echo "[ERROR] Build failed, retrying verbose..."

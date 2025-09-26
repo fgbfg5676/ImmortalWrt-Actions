@@ -22,6 +22,25 @@ CUSTOM_PLUGINS_DIR="$PWD/package/custom"
 
 mkdir -p "$DTS_DIR" "$BOARD_DIR" "$CUSTOM_PLUGINS_DIR"
 
+# -------------------- /var/partexp 目录准备 --------------------
+PARTEEXP_DIR="files/var/partexp"
+mkdir -p "$PARTEEXP_DIR"
+
+# 输出目录权限和状态
+log_info "Checking $PARTEEXP_DIR permissions..."
+ls -ld "$PARTEEXP_DIR" || log_error "Failed to access $PARTEEXP_DIR"
+log_info "Directory $PARTEEXP_DIR ready with permissions:"
+stat "$PARTEEXP_DIR"
+log_success "$PARTEEXP_DIR is ready for use"
+
+# -------------------- 检查 uci.sh 文件 --------------------
+UCI_FILE="/usr/share/openclash/uci.sh"
+if [ ! -f "$UCI_FILE" ]; then
+    log_info "Warning: $UCI_FILE not found. If OpenClash requires it, make sure it's copied or installed."
+else
+    log_success "$UCI_FILE exists"
+fi
+
 # -------------------- DTS补丁 --------------------
 DTS_PATCH_URL="https://git.ix.gs/mptcp/openmptcprouter/commit/a66353a01576c5146ae0d72ee1f8b24ba33cb88e.patch"
 DTS_PATCH_FILE="$DTS_DIR/qcom-ipq4019-cm520-79f.dts.patch"

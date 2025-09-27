@@ -78,6 +78,30 @@ jobs:
         wget -qO /tmp/create-banner.sh https://raw.githubusercontent.com/fgbfg5676/ImmortalWrt-Actions/main/create-banner.sh
         chmod +x /tmp/create-banner.sh
         bash /tmp/create-banner.sh
+        
+    - name: Debug banner package creation
+      run: |
+        echo "=== Banner Package Debug Information ==="
+        echo "Checking if banner package was created..."
+        if [ -d "openwrt/package/custom/luci-app-banner" ]; then
+          echo "✓ Banner package directory exists"
+          echo "Package structure:"
+          find openwrt/package/custom/luci-app-banner -type f | sort
+          echo ""
+          echo "Makefile preview:"
+          head -30 openwrt/package/custom/luci-app-banner/Makefile
+          echo ""
+          echo "Controller file preview:"
+          head -20 openwrt/package/custom/luci-app-banner/luasrc/controller/banner.lua
+          echo ""
+          echo "UCI config preview:"
+          cat openwrt/package/custom/luci-app-banner/root/etc/config/banner
+        else
+          echo "✗ Banner package directory NOT found"
+          echo "Available custom packages:"
+          ls -la openwrt/package/custom/ 2>/dev/null || echo "No custom packages found"
+          exit 1
+        fi
 
     - name: Run DIY part1 script
       run: |
@@ -139,25 +163,48 @@ jobs:
     - name: Generate final config and verify banner
       run: |
         cd openwrt
-        make defconfig
-        
-        echo "Final check for banner package in config:"
+        echo "=== Pre-defconfig Banner Check ==="
         if grep -q "CONFIG_PACKAGE_luci-app-banner=y" .config; then
-          echo "[SUCCESS] luci-app-banner confirmed in final config"
+          echo "✓ Banner package found in config before defconfig"
         else
-          echo "[ERROR] luci-app-banner missing from final config"
+          echo "! Banner package not in config before defconfig"
           echo "Adding banner package to config..."
           echo "CONFIG_PACKAGE_luci-app-banner=y" >> .config
-          make defconfig
         fi
         
-        echo "Verifying custom package can be found:"
-        if [ -f "package/custom/luci-app-banner/Makefile" ]; then
-          echo "[SUCCESS] Banner package Makefile found and ready for build"
+        echo "Running make defconfig..."
+        make defconfig
+        
+        echo "=== Post-defconfig Banner Check ==="
+        if grep -q "CONFIG_PACKAGE_luci-app-banner=y" .config; then
+          echo "✓ Banner package confirmed in final config"
         else
-          echo "[ERROR] Banner package Makefile not found"
+          echo "✗ Banner package missing from final config after defconfig"
+          echo "This might indicate package dependency issues"
+          echo "Adding banner package to config again..."
+          echo "CONFIG_PACKAGE_luci-app-banner=y" >> .config
+          make defconfig
+          if grep -q "CONFIG_PACKAGE_luci-app-banner=y" .config; then
+            echo "✓ Banner package now in config after manual addition"
+          else
+            echo "✗ Banner package still missing - there may be dependency issues"
+          fi
+        fi
+        
+        echo "=== Final Banner Package Verification ==="
+        if [ -f "package/custom/luci-app-banner/Makefile" ]; then
+          echo "✓ Banner package Makefile found and ready for build"
+          echo "Testing package definition with make command..."
+          make package/luci-app-banner/info V=s || echo "Package info command failed (this is often normal)"
+        else
+          echo "✗ Banner package Makefile not found"
           exit 1
         fi
+        
+        echo "=== Configuration Summary ==="
+        echo "Total enabled packages: $(grep -c "^CONFIG_PACKAGE.*=y" .config)"
+        echo "LuCI packages enabled: $(grep -c "^CONFIG_PACKAGE_luci-.*=y" .config)"
+        echo "Custom packages enabled: $(grep "^CONFIG_PACKAGE.*custom.*=y" .config | wc -l)"
 
     - name: Download packages with retry
       run: |
@@ -171,15 +218,32 @@ jobs:
         echo "Starting build process..."
         make -j$(nproc) || make -j1 || make -j1 V=s
         
-        # Check if banner package was built
-        if [ -f "bin/packages/*/luci/luci-app-banner*.ipk" ]; then
-          echo "[SUCCESS] luci-app-banner package was built successfully"
-          ls -la bin/packages/*/luci/luci-app-banner*
+        echo "Build completed, checking results..."
+        
+        # 更准确的包检查
+        echo "Looking for luci-app-banner package files..."
+        if find bin -name "*luci-app-banner*" -type f 2>/dev/null | head -1; then
+          echo "Banner package files found:"
+          find bin -name "*luci-app-banner*" -type f -exec ls -la {} \; 2>/dev/null || true
         else
-          echo "[WARNING] luci-app-banner package not found in build output"
-          echo "Available LuCI packages:"
-          find bin/packages -name "luci-app-*" | head -5
+          echo "No explicit banner package files found, checking build logs..."
+          if grep -q "make.*luci-app-banner.*compile" logs/*.log 2>/dev/null; then
+            echo "Banner package was compiled (found in build logs)"
+          else
+            echo "Banner package may not have been built"
+          fi
         fi
+        
+        # 检查是否在固件中集成
+        echo "Checking if banner is integrated in firmware..."
+        if ls bin/targets/*/*-squashfs-*.bin >/dev/null 2>&1; then
+          echo "Firmware files found - banner should be integrated if compilation succeeded"
+        fi
+        
+        # 显示编译完成的包统计
+        echo "Build summary:"
+        echo "- Total packages built: $(find bin/packages -name "*.ipk" 2>/dev/null | wc -l)"
+        echo "- LuCI packages: $(find bin/packages -name "luci-*" 2>/dev/null | wc -l)"
         
         grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
         [ -s DEVICE_NAME ] && echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> $GITHUB_ENV

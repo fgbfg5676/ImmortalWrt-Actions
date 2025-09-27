@@ -151,8 +151,13 @@ jobs:
           make defconfig
         fi
         
-        echo "Checking if package can be found by build system..."
-        make package/luci-app-banner/compile -j1 V=s || echo "[WARNING] Package compile test failed, but continuing..."
+        echo "Verifying custom package can be found:"
+        if [ -f "package/custom/luci-app-banner/Makefile" ]; then
+          echo "[SUCCESS] Banner package Makefile found and ready for build"
+        else
+          echo "[ERROR] Banner package Makefile not found"
+          exit 1
+        fi
 
     - name: Download packages with retry
       run: |

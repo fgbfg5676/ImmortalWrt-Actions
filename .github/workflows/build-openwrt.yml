@@ -23,7 +23,9 @@ jobs:
 
     steps:
     - name: Before freeing up disk space
-      run: df -hT
+      run: |
+        echo "Before freeing up disk space"
+        df -hT
 
     - name: Optimize Disk Space
       uses: hugoalh/disk-space-optimizer-ghaction@v0.8.1
@@ -64,6 +66,7 @@ jobs:
           echo "[SUCCESS] Go version OK: $GO_VER"
         fi
 
+
     - name: Clone ImmortalWrt source
       run: |
         if [ -d openwrt ]; then rm -rf openwrt; fi
@@ -71,18 +74,8 @@ jobs:
         cd openwrt
         echo "Current commit: $(git rev-parse HEAD)"
 
-    - name: Copy custom configuration
-      run: |
-        cd openwrt
-        if [ -f "../$CONFIG_FILE" ]; then
-          cp "../$CONFIG_FILE" .config
-        else
-          make defconfig
-        fi
-
     - name: Download and run create-banner.sh
       run: |
-        cd openwrt
         wget -qO /tmp/create-banner.sh https://raw.githubusercontent.com/fgbfg5676/ImmortalWrt-Actions/main/create-banner.sh
         chmod +x /tmp/create-banner.sh
         bash /tmp/create-banner.sh
@@ -95,11 +88,6 @@ jobs:
           "../$DIY_P1_SH"
         fi
 
-    - name: Generate final config
-      run: |
-        cd openwrt
-        make defconfig
-
     - name: Add additional feeds
       run: |
         cd openwrt
@@ -111,11 +99,14 @@ jobs:
     - name: Install feeds
       run: cd openwrt && ./scripts/feeds install -a
 
-    - name: Download packages with retry
+    - name: Copy custom configuration
       run: |
         cd openwrt
-        make download -j8
-        find dl -size -1024c -exec rm -f {} \;
+        if [ -f "../$CONFIG_FILE" ]; then
+          cp "../$CONFIG_FILE" .config
+        else
+          make defconfig
+        fi
 
     - name: Run DIY part2 script
       run: |
@@ -124,6 +115,17 @@ jobs:
           chmod +x "../$DIY_P2_SH"
           "../$DIY_P2_SH"
         fi
+
+    - name: Generate final config
+      run: |
+        cd openwrt
+        make defconfig
+
+    - name: Download packages with retry
+      run: |
+        cd openwrt
+        make download -j8
+        find dl -size -1024c -exec rm -f {} \;
 
     - name: Build OpenWrt firmware
       run: |

@@ -12,22 +12,9 @@ mkdir -p "$CUSTOM_PKG_DIR"
 mkdir -p "$CUSTOM_PKG_DIR/luasrc/controller" \
          "$CUSTOM_PKG_DIR/luasrc/model/cbi" \
          "$CUSTOM_PKG_DIR/luasrc/view/banner" \
-         "$CUSTOM_PKG_DIR/htdocs/banner" \
-         "$CUSTOM_PKG_DIR/htdocs/banner/css" \
          "$CUSTOM_PKG_DIR/root/etc/config" \
          "$CUSTOM_PKG_DIR/root/etc/uci-defaults"
 log_info "Plugin folder created: $CUSTOM_PKG_DIR"
-
-# -------------------- 下载二维码 --------------------
-QR_URL="https://raw.githubusercontent.com/fgbfg5676/ImmortalWrt-Actions/main/qr-code.png"
-QR_FILE="$CUSTOM_PKG_DIR/htdocs/banner/qr-code.png"
-wget -q -O "$QR_FILE" "$QR_URL" || log_error "Failed to download QR code"
-log_success "QR code downloaded to $QR_FILE"
-
-# -------------------- 默认 CSS --------------------
-cat > "$CUSTOM_PKG_DIR/htdocs/banner/css/banner.css" <<'EOF'
-.banner-preview { font-weight:bold; font-size:1.2em; color:#000000; }
-EOF
 
 # -------------------- UCI默认配置 --------------------
 cat > "$CUSTOM_PKG_DIR/root/etc/config/banner" <<'EOF'
@@ -40,57 +27,42 @@ log_success "UCI default config created"
 # -------------------- UCI Defaults脚本 --------------------
 cat > "$CUSTOM_PKG_DIR/root/etc/uci-defaults/99-banner" <<'EOF'
 #!/bin/sh
-# 初始化banner配置
-uci -q batch <<-EOT
-	delete ucitrack.@banner[-1]
-	add ucitrack banner
-	set ucitrack.@banner[-1].init=banner
-	commit ucitrack
-EOT
-
-# 如果banner配置不存在，创建默认配置
+# 安全的UCI初始化脚本
 if ! uci -q get banner.banner >/dev/null 2>&1; then
-	uci -q batch <<-EOT
+	uci -q batch <<-EOT >/dev/null 2>&1
 		set banner.banner=banner
 		set banner.banner.text='Welcome to OpenWrt'
 		set banner.banner.color='#000000'
 		commit banner
 	EOT
 fi
-
 exit 0
 EOF
 chmod +x "$CUSTOM_PKG_DIR/root/etc/uci-defaults/99-banner"
 log_success "UCI defaults script created"
 
-# -------------------- Makefile --------------------
+# -------------------- 使用 luci.mk 的 Makefile --------------------
 cat > "$CUSTOM_PKG_DIR/Makefile" <<'EOF'
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=luci-app-banner
 PKG_VERSION:=1.0
 PKG_RELEASE:=1
-PKG_LICENSE:=GPL-2.0
-PKG_MAINTAINER:=niwo5507 <niwo5507@gmail.com>
 
-include $(INCLUDE_DIR)/package.mk
+LUCI_TITLE:=Banner Configuration
+LUCI_DEPENDS:=+luci-base
+LUCI_PKGARCH:=all
 
-define Package/luci-app-banner
-  SECTION:=luci
-  CATEGORY:=LuCI
-  TITLE:=Banner plugin
-  DEPENDS:=+luci-compat +luci-base
-  PKGARCH:=all
-endef
+include $(TOPDIR)/feeds/luci/luci.mk
 
 define Package/luci-app-banner/description
-  Simple LuCI Banner plugin with text and static QR code display. Supports dynamic text, color, multi-language.
+	Simple Banner plugin with contact information display.
 endef
 
 define Build/Prepare
 endef
 
-define Build/Configure
+define Build/Configure  
 endef
 
 define Build/Compile
@@ -100,15 +72,12 @@ define Package/luci-app-banner/install
 	$(INSTALL_DIR) $(1)/usr/lib/lua/luci/controller
 	$(INSTALL_DATA) ./luasrc/controller/banner.lua $(1)/usr/lib/lua/luci/controller/banner.lua
 
-	$(INSTALL_DIR) $(1)/usr/lib/lua/luci/model/cbi/banner
+	$(INSTALL_DIR) $(1)/usr/lib/lua/luci/model/cbi
 	$(INSTALL_DATA) ./luasrc/model/cbi/banner.lua $(1)/usr/lib/lua/luci/model/cbi/banner.lua
 
 	$(INSTALL_DIR) $(1)/usr/lib/lua/luci/view/banner
-	$(INSTALL_DATA) ./luasrc/view/banner/banner.htm $(1)/usr/lib/lua/luci/view/banner/banner.htm
-
-	$(INSTALL_DIR) $(1)/www/luci-static/banner/css
-	$(INSTALL_DATA) ./htdocs/banner/qr-code.png $(1)/www/luci-static/banner/qr-code.png
-	$(INSTALL_DATA) ./htdocs/banner/css/banner.css $(1)/www/luci-static/banner/css/banner.css
+	$(INSTALL_DATA) ./luasrc/view/banner/preview_simple.htm $(1)/usr/lib/lua/luci/view/banner/preview_simple.htm
+	$(INSTALL_DATA) ./luasrc/view/banner/display.htm $(1)/usr/lib/lua/luci/view/banner/display.htm
 
 	$(INSTALL_DIR) $(1)/etc/config
 	$(INSTALL_CONF) ./root/etc/config/banner $(1)/etc/config/banner
@@ -122,50 +91,44 @@ define Package/luci-app-banner/postinst
 [ -n "$$IPKG_INSTROOT" ] || {
 	( . /etc/uci-defaults/99-banner ) && rm -f /etc/uci-defaults/99-banner
 }
+exit 0
 endef
-
-$(eval $(call BuildPackage,luci-app-banner))
 EOF
-log_success "Enhanced Makefile generated"
+log_success "Makefile created using luci.mk"
 
 # -------------------- Controller --------------------
 cat > "$CUSTOM_PKG_DIR/luasrc/controller/banner.lua" <<'EOF'
 module("luci.controller.banner", package.seeall)
 
 function index()
-    if not nixio.fs.access("/etc/config/banner") then
-        return
-    end
-
-    entry({"admin", "system", "banner"}, cbi("banner/banner"), _("Banner"), 50).dependent = false
-    entry({"admin", "overview", "banner"}, call("show_banner"), nil, 10)
+	if not nixio.fs.access("/etc/config/banner") then
+		return
+	end
+	
+	entry({"admin", "system", "banner"}, cbi("banner"), _("Banner"), 50).dependent = false
+	entry({"admin", "status", "banner_display"}, call("show_banner_page"), _("Banner Display"), 99)
 end
 
-function show_banner()
-    local uci = require "luci.model.uci".cursor()
-    local template = require "luci.template"
-    local fs = require "nixio.fs"
-    local util = require "luci.util"
-    
-    local banner_text = uci:get("banner", "banner", "text") or "Welcome to OpenWrt"
-    local banner_color = uci:get("banner", "banner", "color") or "#000000"
-    local qr_file = "/luci-static/banner/qr-code.png"
-    
-    template.render("banner/banner", { 
-        banner_text = util.pcdata(banner_text), 
-        banner_color = banner_color, 
-        qr_file = qr_file 
-    })
+function show_banner_page()
+	local template = require "luci.template"
+	local uci = require "luci.model.uci".cursor()
+	
+	local banner_text = uci:get("banner", "banner", "text") or "Welcome to OpenWrt"
+	local banner_color = uci:get("banner", "banner", "color") or "#000000"
+	
+	template.render("banner/display", {
+		banner_text = banner_text,
+		banner_color = banner_color
+	})
 end
 EOF
-log_success "Enhanced Controller generated"
+log_success "Controller generated"
 
 # -------------------- Model (CBI) --------------------
 cat > "$CUSTOM_PKG_DIR/luasrc/model/cbi/banner.lua" <<'EOF'
 local m, s, o
 
 m = Map("banner", translate("Banner Settings"), translate("Configure banner text and appearance"))
-m.apply_on_parse = true
 
 s = m:section(TypedSection, "banner", translate("Banner Configuration"))
 s.addremove = false
@@ -176,45 +139,79 @@ o.placeholder = "Welcome to OpenWrt"
 o.default = "Welcome to OpenWrt"
 o.rmempty = false
 
-o = s:option(Value, "color", translate("Text Color"), translate("Hex color code (e.g., #FF0000 for red)"))
-o.placeholder = "#000000"
+-- 简化的颜色选项 - 使用下拉选择避免验证问题
+o = s:option(ListValue, "color", translate("Text Color"))
+o:value("#000000", translate("Black"))
+o:value("#FF0000", translate("Red"))
+o:value("#00FF00", translate("Green"))
+o:value("#0000FF", translate("Blue"))
+o:value("#FF6600", translate("Orange"))
+o:value("#800080", translate("Purple"))
 o.default = "#000000"
-o.rmempty = false
 
-function o.validate(self, value, section)
-    if value and not value:match("^#[0-9A-Fa-f]{6}$") then
-        return nil, translate("Invalid hex color code")
-    end
-    return value
-end
+-- 添加预览
+local preview_section = m:section(SimpleSection)
+preview_section.template = "banner/preview_simple"
 
 return m
 EOF
-log_success "Enhanced Model (CBI) generated"
+log_success "Model (CBI) generated"
 
-# -------------------- View --------------------
-cat > "$CUSTOM_PKG_DIR/luasrc/view/banner/banner.htm" <<'EOF'
+# -------------------- 预览模板 --------------------
+cat > "$CUSTOM_PKG_DIR/luasrc/view/banner/preview_simple.htm" <<'EOF'
+<%
+local uci = require "luci.model.uci".cursor()
+local banner_text = uci:get("banner", "banner", "text") or "Welcome to OpenWrt"
+local banner_color = uci:get("banner", "banner", "color") or "#000000"
+%>
+
+<div class="cbi-value">
+    <div style="margin: 10px 0; padding: 15px; border: 1px solid #ddd; background: #f9f9f9; border-radius: 5px;">
+        <div style="text-align: center; margin-bottom: 15px;">
+            <strong style="color: <%=banner_color%>; font-size: 1.3em;"><%=pcdata(banner_text)%></strong>
+        </div>
+        
+        <div style="text-align: center; margin: 10px 0;">
+            <div style="margin: 5px 0;">
+                <strong>Telegram:</strong> 
+                <a href="https://t.me/fgnb111999" target="_blank" style="color: #0088cc;">https://t.me/fgnb111999</a>
+            </div>
+            <div style="margin: 5px 0;">
+                <strong>QQ:</strong> 
+                <span style="color: #666;">183452852</span>
+            </div>
+        </div>
+    </div>
+</div>
+EOF
+log_success "Preview template generated"
+
+# -------------------- 独立显示页面 --------------------
+cat > "$CUSTOM_PKG_DIR/luasrc/view/banner/display.htm" <<'EOF'
 <%+header%>
 
+<h2 name="content"><%:Banner Display%></h2>
+
 <div class="cbi-map">
-    <h2 name="content"><%:Banner Display%></h2>
-    
     <div class="cbi-section">
-        <div class="cbi-section-node">
-            <h3><%:Current Banner%></h3>
-            <div class="banner-preview" style="color:<%=banner_color%>; padding: 10px; border: 1px solid #ccc; margin: 10px 0;">
-                <%=banner_text%>
-            </div>
+        <div style="text-align: center; margin: 20px 0; padding: 20px; border: 2px solid #ddd; border-radius: 8px; background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);">
+            <h1 style="color: <%=banner_color%>; margin: 0 0 15px 0; font-size: 2em; text-shadow: 2px 2px 4px rgba(0,0,0,0.1);">
+                <%=pcdata(banner_text)%>
+            </h1>
             
-            <h3><%:Contact Information%></h3>
-            <p>
-                <strong>Telegram:</strong> 
-                <a href="https://t.me/fgnb111999" target="_blank" rel="noopener">https://t.me/fgnb111999</a>
-            </p>
-            
-            <h3><%:QR Code%></h3>
-            <div style="text-align: left; margin: 10px 0;">
-                <img src="<%=qr_file%>" alt="QR Code" style="max-width:200px; border: 1px solid #ddd; padding: 5px;"/>
+            <div style="margin: 20px 0;">
+                <p style="font-size: 1.2em; color: #666; margin: 15px 0;">
+                    <strong><%:Contact Information%></strong>
+                </p>
+                <p style="margin: 8px 0; font-size: 1.1em;">
+                    <strong>Telegram:</strong> 
+                    <a href="https://t.me/fgnb111999" target="_blank" style="color: #0088cc; text-decoration: none;">
+                        https://t.me/fgnb111999
+                    </a>
+                </p>
+                <p style="margin: 8px 0; font-size: 1.1em; color: #666;">
+                    <strong>QQ:</strong> 183452852
+                </p>
             </div>
         </div>
     </div>
@@ -222,26 +219,18 @@ cat > "$CUSTOM_PKG_DIR/luasrc/view/banner/banner.htm" <<'EOF'
 
 <%+footer%>
 EOF
-log_success "Enhanced View generated"
+log_success "Display page template generated"
 
-# -------------------- 检查编译依赖 --------------------
-log_info "Checking if banner package can be found in build system..."
-if [ -d "openwrt" ]; then
-    cd openwrt
-    if ./scripts/feeds list | grep -q "luci-app-banner"; then
-        log_success "luci-app-banner found in feeds"
-    else
-        log_info "luci-app-banner not in feeds (this is normal for custom packages)"
-    fi
-    
-    # 检查包是否存在
-    if [ -d "package/custom/luci-app-banner" ]; then
-        log_success "Custom package directory exists and ready for compilation"
-        log_info "Package structure:"
-        find package/custom/luci-app-banner -type f | head -10
-    fi
-    cd ..
-fi
+# -------------------- 验证文件结构 --------------------
+log_info "Created package structure:"
+find "$CUSTOM_PKG_DIR" -type f | sort
 
 log_success "Banner plugin setup completed successfully!"
+log_info "Features:"
+log_info "- Banner settings page: System → Banner"
+log_info "- Banner display page: Status → Banner Display"  
+log_info "- Contact info: Telegram + QQ"
+log_info "- No image dependencies"
+log_info "- Safe color selection with dropdown"
+log_info ""
 log_info "Make sure your .config includes: CONFIG_PACKAGE_luci-app-banner=y"

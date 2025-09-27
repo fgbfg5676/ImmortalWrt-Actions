@@ -23,12 +23,14 @@ TARGET_DTS="$DTS_DIR/qcom-ipq4019-cm520-79f.dts"
 log_info "Downloading DTS patch..."
 wget $WGET_OPTS -O "$DTS_PATCH_FILE" "$DTS_PATCH_URL" || log_error "Failed to download DTS patch"
 
-if [ ! -f "$TARGET_DTS" ]; then
+if [ -f "$TARGET_DTS" ]; then
     log_info "Applying DTS patch..."
-    patch -p1 < "$DTS_PATCH_FILE" || log_error "Failed to apply DTS patch"
+    patch "$TARGET_DTS" "$DTS_PATCH_FILE" || log_error "Failed to apply DTS patch"
     log_success "DTS patch applied successfully"
 else
-    log_info "Target DTS already exists, skipping patch"
+    log_info "Target DTS not found, creating new DTS from patch..."
+    cp "$DTS_PATCH_FILE" "$TARGET_DTS" || log_error "Failed to create target DTS"
+    log_success "Target DTS created from patch"
 fi
 
 # -------------------- 设备规则 --------------------
@@ -78,47 +80,22 @@ EOF
 chmod +x "$NETWORK_FILE"
 log_success "Network configuration file created"
 
-
 # -------------------- 修改默认 LAN IP --------------------
 NEW_LAN_IP="192.168.3.1"
 CONFIG_GENERATE_FILE="package/base-files/files/bin/config_generate"
 
 if [ -f "$CONFIG_GENERATE_FILE" ]; then
     log_info "Modifying default LAN IP to $NEW_LAN_IP..."
+    cp "$CONFIG_GENERATE_FILE" "$CONFIG_GENERATE_FILE.bak"
     sed -i "s/192\.168\.1\.1/$NEW_LAN_IP/g" "$CONFIG_GENERATE_FILE"
     log_success "Default LAN IP set to $NEW_LAN_IP"
 else
     log_error "config_generate file not found, cannot modify default LAN IP"
 fi
 
-# -------------------- 主机名修改 --------------------
-NEW_HOSTNAME="CM520-79F"
-SYSTEM_FILE="package/base-files/files/etc/config/system"
-log_info "Setting hostname to $NEW_HOSTNAME..."
-if [ ! -f "$SYSTEM_FILE" ]; then
-    mkdir -p "$(dirname "$SYSTEM_FILE")"
-    cat <<EOF > "$SYSTEM_FILE"
-config system
-    option hostname '$NEW_HOSTNAME'
-EOF
-    log_success "System config created with hostname $NEW_HOSTNAME"
-else
-    if grep -q "option hostname" "$SYSTEM_FILE"; then
-        sed -i "s/^\(\s*option hostname\s*\).*$/\1'$NEW_HOSTNAME'/" "$SYSTEM_FILE"
-        log_success "Hostname updated to $NEW_HOSTNAME in existing system config"
-    else
-        awk -v hn="$NEW_HOSTNAME" '
-            BEGIN { added=0 }
-            /^config system/ && added==0 { print; print "    option hostname \x27" hn "\x27"; added=1; next }
-            { print }
-        ' "$SYSTEM_FILE" > "$SYSTEM_FILE.tmp" && mv "$SYSTEM_FILE.tmp" "$SYSTEM_FILE"
-        log_success "Hostname added as $NEW_HOSTNAME in system config"
-    fi
-fi
-
 # -------------------- 插件处理 --------------------
-PLUGIN_LIST=("luci-app-partexp" "luci-app-advancedplus")
-PLUGIN_REPOS=("https://github.com/sirpdboy/luci-app-partexp.git" "https://github.com/sirpdboy/luci-app-advancedplus.git")
+PLUGIN_LIST=("luci-app-partexp")
+PLUGIN_REPOS=("https://github.com/sirpdboy/luci-app-partexp.git")
 
 for i in "${!PLUGIN_LIST[@]}"; do
     PLUGIN_NAME="${PLUGIN_LIST[$i]}"
@@ -162,5 +139,3 @@ rm -rf ./feeds/packages/lang/golang
 mv "$TMP_DIR/lang/golang" ./feeds/packages/lang/ || log_error "Failed to update Golang"
 rm -rf "$TMP_DIR"
 log_success "Golang package updated successfully"
-
-

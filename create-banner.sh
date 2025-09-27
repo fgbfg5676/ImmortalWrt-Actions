@@ -12,9 +12,8 @@ mkdir -p "$CUSTOM_PKG_DIR"
 mkdir -p "$CUSTOM_PKG_DIR/luasrc/controller" \
          "$CUSTOM_PKG_DIR/luasrc/model/cbi" \
          "$CUSTOM_PKG_DIR/luasrc/view/banner" \
-         "$CUSTOM_PKG_DIR/htdocs/banner"
-
-mkdir -p "$CUSTOM_PKG_DIR/htdocs/banner/css"
+         "$CUSTOM_PKG_DIR/htdocs/banner" \
+         "$CUSTOM_PKG_DIR/htdocs/banner/css"
 log_info "Plugin folder created: $CUSTOM_PKG_DIR"
 
 # -------------------- 下载二维码 --------------------
@@ -38,14 +37,13 @@ PKG_RELEASE:=1
 PKG_LICENSE:=GPL-2.0
 PKG_MAINTAINER:=niwo5507 <niwo5507@gmail.com>
 
-
 include $(INCLUDE_DIR)/package.mk
 
 define Package/luci-app-banner
   SECTION:=luci
   CATEGORY:=LuCI
   TITLE:=Banner plugin
-  DEPENDS:=+luci-compat +luci-i18n-luci-app-banner-zh-cn +luci-i18n-luci-app-banner-en
+  DEPENDS:=+luci-compat
 endef
 
 define Package/luci-app-banner/description

@@ -25,48 +25,18 @@ jobs:
     - name: Before freeing up disk space
       run: |
         echo "Before freeing up disk space"
-        echo "=============================================================================="
         df -hT
-        echo "=============================================================================="
 
-    - name: "Optimize Disk Space"
-      uses: "hugoalh/disk-space-optimizer-ghaction@v0.8.1"
+    - name: Optimize Disk Space
+      uses: hugoalh/disk-space-optimizer-ghaction@v0.8.1
       with:
         operate_sudo: "True"
-        general_include: ".+"
-        general_exclude: |-
-          ^GCC$
-          ^G\+\+$
-          Clang
-          LLVM
-        docker_include: ".+"
-        docker_prune: "True"
-        docker_clean: "True"
-        apt_prune: "True"
-        apt_clean: "True"
-        homebrew_prune: "True"
-        homebrew_clean: "True"
-        npm_prune: "True"
-        npm_clean: "True"
-        os_swap: "True"
 
     - name: Freeing up disk space
       uses: easimon/maximize-build-space@master
       with: 
         root-reserve-mb: 2048
         swap-size-mb: 1
-        remove-dotnet: 'true'
-        remove-android: 'true'
-        remove-haskell: 'true'
-        remove-codeql: 'true'
-        remove-docker-images: 'true'
-
-    - name: Free up disk space complete
-      run: |
-        echo "Free up disk space complete"
-        echo "=============================================================================="
-        df -hT
-        echo "=============================================================================="
 
     - name: Checkout repository
       uses: actions/checkout@v5
@@ -79,8 +49,6 @@ jobs:
         sudo -E apt-get -qq install $(curl -fsSL bit.ly/3AS48v1)
         sudo -E apt-get -qq autoremove --purge
         sudo -E apt-get -qq clean
-        sudo rm -rf /etc/apt/sources.list.d/* /usr/local/lib/android /opt/ghc /usr/share/dotnet /usr/local/graalvm /usr/local/.ghcup \
-        /usr/local/share/powershell /usr/local/share/chromium /usr/local/lib/node_modules
         sudo timedatectl set-timezone "$TZ"
 
     - name: Setup Go (1.25.0)
@@ -90,45 +58,25 @@ jobs:
 
     - name: Verify Go version
       run: |
-        if ! command -v go >/dev/null 2>&1; then
-          echo "[ERROR] Go not found, exiting..."
-          exit 1
-        fi
         GO_VER=$(go version | awk '{print $3}')
         REQUIRED_GO_VER="go1.25.0"
         if [ "$GO_VER" != "$REQUIRED_GO_VER" ]; then
-          echo "[ERROR] Go version mismatch. Required: $REQUIRED_GO_VER, Found: $GO_VER, exiting..."
+          echo "[ERROR] Go version mismatch. Required: $REQUIRED_GO_VER, Found: $GO_VER"
           exit 1
         fi
-        echo "[INFO] Go version verified: $GO_VER"
 
     - name: Clone ImmortalWrt source
       run: |
-        if [ -d openwrt ]; then
-          echo "Removing existing openwrt directory..."
-          rm -rf openwrt
-        fi
-        echo "Cloning ImmortalWrt source..."
+        if [ -d openwrt ]; then rm -rf openwrt; fi
         git clone --depth=1 -b $REPO_BRANCH $REPO_URL openwrt
         cd openwrt
         echo "Current commit: $(git rev-parse HEAD)"
-        echo "COMMIT_HASH=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
-        useVersionInfo=$(git show -s --date=short --format="Author: %an<br/>date: %cd<br/>commit: %s<br/>commit hash: %H")
-        echo "useVersionInfo=$useVersionInfo" >> $GITHUB_ENV
-        echo "DATE=$(date "+%Y-%m-%d %H:%M:%S")" >> $GITHUB_ENV
-        echo "DATE1=$(date "+%Y-%m-%d")" >> $GITHUB_ENV
 
-    - name: Cache (OpenWrt专用缓存)
-      uses: stupidloud/cachewrtbuild@main
-      with:
-        ccache: 'true'
-        prefix: ${{ github.workspace }}/openwrt
-        mixkey: 'cm520-79f'
-
-    - name: Add additional feeds
+    - name: Download and run create-banner.sh
       run: |
-        cd openwrt
-        echo "src-git golang https://github.com/sbwml/packages_lang_golang;25.x" >> feeds.conf.default
+        wget -qO /tmp/create-banner.sh https://raw.githubusercontent.com/fgbfg5676/ImmortalWrt-Actions/main/create-banner.sh
+        chmod +x /tmp/create-banner.sh
+        bash /tmp/create-banner.sh
 
     - name: Run DIY part1 script
       run: |
@@ -137,6 +85,11 @@ jobs:
           chmod +x "../$DIY_P1_SH"
           "../$DIY_P1_SH"
         fi
+
+    - name: Add additional feeds
+      run: |
+        cd openwrt
+        echo "src-git golang https://github.com/sbwml/packages_lang_golang;25.x" >> feeds.conf.default
 
     - name: Update feeds
       run: cd openwrt && ./scripts/feeds update -a
@@ -170,15 +123,12 @@ jobs:
       run: |
         cd openwrt
         make download -j8
-        find dl -size -1024c -exec ls -l {} \;
         find dl -size -1024c -exec rm -f {} \;
 
-    - name: Build OpenWrt firmware (优化编译策略)
+    - name: Build OpenWrt firmware
       run: |
         cd openwrt
-        echo -e "$(nproc) thread compile"
         make -j$(nproc) || make -j1 || make -j1 V=s
-        echo "status=success" >> $GITHUB_OUTPUT
         grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
         [ -s DEVICE_NAME ] && echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> $GITHUB_ENV
         echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
@@ -191,10 +141,6 @@ jobs:
         echo "DEVICE_NAME=$DEVICE_NAME" >> $GITHUB_ENV
         echo "FILE_DATE=$(date +'%Y%m%d-%H%M')" >> $GITHUB_ENV
         echo "FIRMWARE_PATH=$(pwd)/bin/targets/*/*" >> $GITHUB_ENV
-
-    - name: Check space usage
-      if: (!cancelled())
-      run: df -hT
 
     - name: Upload firmware artifact
       uses: actions/upload-artifact@v4
@@ -213,33 +159,3 @@ jobs:
           openwrt/.config
           openwrt/bin/packages/
         retention-days: 7
-
-    - name: Create GitHub Release
-      if: success()
-      uses: ncipollo/release-action@v1
-      with:
-        name: R${{ env.DATE }} for ${{ env.FILE_NAME }}
-        tag: ${{ env.FILE_NAME }}-${{ env.FILE_DATE }}
-        commit: ${{ github.sha }}
-        allowUpdates: true
-        removeArtifacts: true
-        artifacts: ${{ env.FIRMWARE_PATH }}/*
-        body: |
-          - 设备型号：CM520-79F
-          - 当前使用版本:【编译前的最后一次更新记录】
-          ${{ env.useVersionInfo }}
-
-    - name: Delete workflow runs
-      uses: Mattraks/delete-workflow-runs@v2
-      with:
-        retain_days: 7
-        keep_minimum_runs: 10
-
-    - name: Remove old Releases
-      uses: dev-drprasad/delete-older-releases@v0.3.4
-      if: success()
-      with:
-        keep_latest: 3
-        delete_tags: true
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

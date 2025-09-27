@@ -6,12 +6,6 @@ log_success() { echo -e "\033[32m[SUCCESS] $*\033[0m"; }
 log_error()   { echo -e "\033[31m[ERROR] $*\033[0m"; exit 1; }
 log_info()    { echo -e "\033[34m[INFO] $*\033[0m"; }
 
-# -------------------- 验证 Go 环境 --------------------
-if ! command -v go >/dev/null 2>&1 || [ "$(go version | grep -o 'go1.25.0')" != "go1.25.0" ]; then
-    log_error "Go 1.25.0 is required but not found or incorrect version: $(go version 2>/dev/null || echo 'Go not installed')"
-fi
-log_info "Go version: $(go version)"
-
 # -------------------- 基础变量 --------------------
 WGET_OPTS="-q --timeout=30 --tries=3 --retry-connrefused --connect-timeout 10"
 ARCH="armv7"
@@ -19,7 +13,6 @@ DTS_DIR="target/linux/ipq40xx/files/arch/arm/boot/dts"
 GENERIC_MK="target/linux/ipq40xx/image/generic.mk"
 BOARD_DIR="$PWD/board"
 CUSTOM_PLUGINS_DIR="$PWD/package/custom"
-
 mkdir -p "$DTS_DIR" "$BOARD_DIR" "$CUSTOM_PLUGINS_DIR"
 
 # -------------------- DTS补丁 --------------------
@@ -53,11 +46,11 @@ define Device/mobipromo_cm520-79f
   ROOTFS_SIZE := 26624k
   IMAGE_SIZE := 32768k
   DEVICE_PACKAGES := \\
-	ath10k-firmware-qca4019-ct \\
-	kmod-ath10k-ct-smallbuffers
+    ath10k-firmware-qca4019-ct \\
+    kmod-ath10k-ct-smallbuffers
   IMAGE/trx := append-kernel | pad-to \$(KERNEL_SIZE) | append-rootfs | trx-nand-edgecore-ecw5211 \\
-	-F 0x524D424E -N 1000 -M 0x2 -C 0x2 -I 0x2 -V "U-Boot 2012.07" -e 0x80208000 -i /dev/mtd10 \\
-	-a 0x80208000 -n "Kernel" -d /dev/mtd11 -c "Rootfs" | trx-header -s 16384 -o \$@
+    -F 0x524D424E -N 1000 -M 0x2 -C 0x2 -I 0x2 -V "U-Boot 2012.07" -e 0x80208000 -i /dev/mtd10 \\
+    -a 0x80208000 -n "Kernel" -d /dev/mtd11 -c "Rootfs" | trx-header -s 16384 -o \$@
 endef
 TARGET_DEVICES += mobipromo_cm520-79f
 EOF
@@ -82,31 +75,66 @@ ipq40xx_board_detect() {
 }
 boot_hook_add preinit_main ipq40xx_board_detect
 EOF
-
 chmod +x "$NETWORK_FILE"
 log_success "Network configuration file created"
 
-# -------------------- luci-app-partexp --------------------
-PLUGIN_PATH="$CUSTOM_PLUGINS_DIR/luci-app-partexp"
-if [ ! -d "$PLUGIN_PATH/.git" ]; then
-    log_info "Cloning luci-app-partexp..."
-    git clone --depth 1 https://github.com/sirpdboy/luci-app-partexp.git "$PLUGIN_PATH" || log_error "Failed to clone plugin"
-    log_success "Plugin cloned successfully"
+
+# Modify default IP
+sed -i 's/192.168.1.1/192.168.3.1/g' package/base-files/files/bin/config_generate
+# -------------------- 主机名修改 --------------------
+NEW_HOSTNAME="CM520-79F"
+SYSTEM_FILE="package/base-files/files/etc/config/system"
+log_info "Setting hostname to $NEW_HOSTNAME..."
+if [ ! -f "$SYSTEM_FILE" ]; then
+    mkdir -p "$(dirname "$SYSTEM_FILE")"
+    cat <<EOF > "$SYSTEM_FILE"
+config system
+    option hostname '$NEW_HOSTNAME'
+EOF
+    log_success "System config created with hostname $NEW_HOSTNAME"
 else
-    log_info "Plugin already exists, skipping clone"
+    if grep -q "option hostname" "$SYSTEM_FILE"; then
+        sed -i "s/^\(\s*option hostname\s*\).*$/\1'$NEW_HOSTNAME'/" "$SYSTEM_FILE"
+        log_success "Hostname updated to $NEW_HOSTNAME in existing system config"
+    else
+        awk -v hn="$NEW_HOSTNAME" '
+            BEGIN { added=0 }
+            /^config system/ && added==0 { print; print "    option hostname \x27" hn "\x27"; added=1; next }
+            { print }
+        ' "$SYSTEM_FILE" > "$SYSTEM_FILE.tmp" && mv "$SYSTEM_FILE.tmp" "$SYSTEM_FILE"
+        log_success "Hostname added as $NEW_HOSTNAME in system config"
+    fi
 fi
 
-if [ ! -d "package/luci-app-partexp" ]; then
-    cp -r "$PLUGIN_PATH" package/
-    log_success "Plugin copied to package/"
-fi
+# -------------------- 插件处理 --------------------
+PLUGIN_LIST=("luci-app-partexp" "luci-app-advancedplus")
+PLUGIN_REPOS=("https://github.com/sirpdboy/luci-app-partexp.git" "https://github.com/sirpdboy/luci-app-advancedplus.git")
 
-if ! grep -q "CONFIG_PACKAGE_luci-app-partexp=y" .config 2>/dev/null; then
-    echo "CONFIG_PACKAGE_luci-app-partexp=y" >> .config
-    log_success "luci-app-partexp enabled"
-else
-    log_info "luci-app-partexp already enabled, skipping"
-fi
+for i in "${!PLUGIN_LIST[@]}"; do
+    PLUGIN_NAME="${PLUGIN_LIST[$i]}"
+    PLUGIN_URL="${PLUGIN_REPOS[$i]}"
+    PLUGIN_PATH="$CUSTOM_PLUGINS_DIR/$PLUGIN_NAME"
+
+    if [ ! -d "$PLUGIN_PATH/.git" ]; then
+        log_info "Cloning $PLUGIN_NAME..."
+        git clone --depth 1 "$PLUGIN_URL" "$PLUGIN_PATH" || log_error "Failed to clone $PLUGIN_NAME"
+        log_success "Plugin $PLUGIN_NAME cloned successfully"
+    else
+        log_info "$PLUGIN_NAME already exists, skipping clone"
+    fi
+
+    if [ ! -d "package/$PLUGIN_NAME" ]; then
+        cp -r "$PLUGIN_PATH" package/
+        log_success "Plugin $PLUGIN_NAME copied to package/"
+    fi
+
+    if ! grep -q "CONFIG_PACKAGE_$PLUGIN_NAME=y" .config 2>/dev/null; then
+        echo "CONFIG_PACKAGE_$PLUGIN_NAME=y" >> .config
+        log_success "$PLUGIN_NAME enabled"
+    else
+        log_info "$PLUGIN_NAME already enabled, skipping"
+    fi
+done
 
 # -------------------- PassWall2 --------------------
 if ! grep -q "CONFIG_PACKAGE_luci-app-passwall2=y" .config 2>/dev/null; then
@@ -116,8 +144,13 @@ else
     log_info "PassWall2 already enabled, skipping"
 fi
 
-
-# Update Golang
-git clone -b master --single-branch https://github.com/immortalwrt/packages.git packages_master
+# -------------------- Golang 更新 --------------------
+log_info "Updating Golang package..."
+TMP_DIR=$(mktemp -d)
+git clone -b master --single-branch --depth 1 https://github.com/immortalwrt/packages.git "$TMP_DIR" || log_error "Failed to clone packages repo"
 rm -rf ./feeds/packages/lang/golang
-mv ./packages_master/lang/golang ./feeds/packages/lang
+mv "$TMP_DIR/lang/golang" ./feeds/packages/lang/ || log_error "Failed to update Golang"
+rm -rf "$TMP_DIR"
+log_success "Golang package updated successfully"
+
+

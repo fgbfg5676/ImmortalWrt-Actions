@@ -79,8 +79,18 @@ chmod +x "$NETWORK_FILE"
 log_success "Network configuration file created"
 
 
-# Modify default IP
-sed -i 's/192.168.1.1/192.168.3.1/g' package/base-files/files/bin/config_generate
+# -------------------- 修改默认 LAN IP --------------------
+NEW_LAN_IP="192.168.3.1"
+CONFIG_GENERATE_FILE="package/base-files/files/bin/config_generate"
+
+if [ -f "$CONFIG_GENERATE_FILE" ]; then
+    log_info "Modifying default LAN IP to $NEW_LAN_IP..."
+    sed -i "s/192\.168\.1\.1/$NEW_LAN_IP/g" "$CONFIG_GENERATE_FILE"
+    log_success "Default LAN IP set to $NEW_LAN_IP"
+else
+    log_error "config_generate file not found, cannot modify default LAN IP"
+fi
+
 # -------------------- 主机名修改 --------------------
 NEW_HOSTNAME="CM520-79F"
 SYSTEM_FILE="package/base-files/files/etc/config/system"

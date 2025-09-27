@@ -147,15 +147,3 @@ cat > "$CUSTOM_PKG_DIR/luasrc/view/banner/banner.htm" <<'EOF'
 EOF
 log_success "View generated"
 
-# -------------------- 写入 .config --------------------
-CONFIG_FILE="openwrt/.config"
-[ ! -f "$CONFIG_FILE" ] && touch "$CONFIG_FILE"
-
-if ! grep -q "CONFIG_PACKAGE_luci-app-banner=y" "$CONFIG_FILE"; then
-    echo "CONFIG_PACKAGE_luci-app-banner=y" >> "$CONFIG_FILE"
-    log_success "luci-app-banner enabled in .config"
-else
-    log_info "luci-app-banner already enabled in .config"
-fi
-
-log_success "create-banner.sh finished successfully"

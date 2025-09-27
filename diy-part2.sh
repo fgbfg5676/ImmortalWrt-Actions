@@ -23,14 +23,12 @@ TARGET_DTS="$DTS_DIR/qcom-ipq4019-cm520-79f.dts"
 log_info "Downloading DTS patch..."
 wget $WGET_OPTS -O "$DTS_PATCH_FILE" "$DTS_PATCH_URL" || log_error "Failed to download DTS patch"
 
-if [ -f "$TARGET_DTS" ]; then
+if [ ! -f "$TARGET_DTS" ]; then
     log_info "Applying DTS patch..."
-    patch "$TARGET_DTS" "$DTS_PATCH_FILE" || log_error "Failed to apply DTS patch"
+    patch -p1 < "$DTS_PATCH_FILE" || log_error "Failed to apply DTS patch"
     log_success "DTS patch applied successfully"
 else
-    log_info "Target DTS not found, creating new DTS from patch..."
-    cp "$DTS_PATCH_FILE" "$TARGET_DTS" || log_error "Failed to create target DTS"
-    log_success "Target DTS created from patch"
+    log_info "Target DTS already exists, skipping patch"
 fi
 
 # -------------------- 设备规则 --------------------
@@ -86,7 +84,6 @@ CONFIG_GENERATE_FILE="package/base-files/files/bin/config_generate"
 
 if [ -f "$CONFIG_GENERATE_FILE" ]; then
     log_info "Modifying default LAN IP to $NEW_LAN_IP..."
-    cp "$CONFIG_GENERATE_FILE" "$CONFIG_GENERATE_FILE.bak"
     sed -i "s/192\.168\.1\.1/$NEW_LAN_IP/g" "$CONFIG_GENERATE_FILE"
     log_success "Default LAN IP set to $NEW_LAN_IP"
 else

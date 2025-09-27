@@ -41,28 +41,35 @@ EOF
 chmod +x "$CUSTOM_PKG_DIR/root/etc/uci-defaults/99-banner"
 log_success "UCI defaults script created"
 
-# -------------------- 使用 luci.mk 的 Makefile --------------------
+# -------------------- 使用传统的 Makefile --------------------
 cat > "$CUSTOM_PKG_DIR/Makefile" <<'EOF'
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=luci-app-banner
 PKG_VERSION:=1.0
 PKG_RELEASE:=1
+PKG_LICENSE:=GPL-2.0
+PKG_MAINTAINER:=niwo5507 <niwo5507@gmail.com>
 
-LUCI_TITLE:=Banner Configuration
-LUCI_DEPENDS:=+luci-base
-LUCI_PKGARCH:=all
+include $(INCLUDE_DIR)/package.mk
 
-include $(TOPDIR)/feeds/luci/luci.mk
+define Package/luci-app-banner
+	SECTION:=luci
+	CATEGORY:=LuCI
+	TITLE:=Banner Configuration
+	DEPENDS:=+luci-base +luci-compat
+	PKGARCH:=all
+endef
 
 define Package/luci-app-banner/description
 	Simple Banner plugin with contact information display.
 endef
 
 define Build/Prepare
+	[ ! -d ./src/ ] || $(CP) ./src/* $(PKG_BUILD_DIR)/
 endef
 
-define Build/Configure  
+define Build/Configure
 endef
 
 define Build/Compile
@@ -88,13 +95,15 @@ endef
 
 define Package/luci-app-banner/postinst
 #!/bin/sh
-[ -n "$$IPKG_INSTROOT" ] || {
+[ -n "$IPKG_INSTROOT" ] || {
 	( . /etc/uci-defaults/99-banner ) && rm -f /etc/uci-defaults/99-banner
 }
 exit 0
 endef
+
+$(eval $(call BuildPackage,luci-app-banner))
 EOF
-log_success "Makefile created using luci.mk"
+log_success "Makefile created using traditional format"
 
 # -------------------- Controller --------------------
 cat > "$CUSTOM_PKG_DIR/luasrc/controller/banner.lua" <<'EOF'

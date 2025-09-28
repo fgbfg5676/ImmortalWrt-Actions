@@ -355,7 +355,7 @@ PKG_NAME:=luci-app-banner
 PKG_VERSION:=2.1
 PKG_RELEASE:=1
 PKG_LICENSE:=GPL-2.0
-PKG_MAINTAINER:=fgbfg5676 <fgbfg5676@gmail.com>
+PKG_MAINTAINER:=fgbfg5676 <niwo5507@gmail.com>
 
 include $(INCLUDE_DIR)/package.mk
 

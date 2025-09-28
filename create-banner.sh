@@ -918,12 +918,10 @@ log_info "📋 GitHub配置步骤："
 log_info "1. 在GitHub创建仓库: openwrt-banner"
 log_info "2. 上传banner.json文件:"
 log_info '   {"text":"🎉 最新广告内容","color":"#FF0000"}'
-log_info "3. 修改脚本中的GitHub用户名: niwo5507 -> 你的用户名"
 log_info "4. 编译固件，客户使用时会自动获取最新内容"
 log_info ""
 log_info "🔧 管理方式："
 log_info "• 作者: 修改GitHub仓库中的banner.json文件"
 log_info "• 客户: 只能查看，无法修改（密码保护）"
 log_info "• 更新: 完全自动化，无需任何手动操作"
-log_info ""
-log_info "💡 这是最适合你需求
+

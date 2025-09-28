@@ -25,7 +25,7 @@ config banner 'banner'
 	option color '#FF0000'
 	option enabled '1'
 	option remote_update '1'
-	option update_url 'https://cdn.jsdelivr.net/gh/niwo5507/openwrt-banner@main/banner.json'
+	option update_url 'https://cdn.jsdelivr.net/gh/fgbfg5676/openwrt-banner@main/banner.json'
 	option update_interval '3600'
 	option last_update '0'
 	option author_mode '0'
@@ -46,7 +46,7 @@ if ! uci -q get banner.banner >/dev/null 2>&1; then
 		set banner.banner.color='#FF0000'
 		set banner.banner.enabled='1'
 		set banner.banner.remote_update='1'
-		set banner.banner.update_url='https://cdn.jsdelivr.net/gh/niwo5507/openwrt-banner@main/banner.json'
+		set banner.banner.update_url='https://cdn.jsdelivr.net/gh/fgbfg5676/openwrt-banner@main/banner.json'
 		set banner.banner.update_interval='3600'
 		set banner.banner.last_update='0'
 		set banner.banner.author_mode='0'
@@ -111,7 +111,7 @@ LAST_UPDATE=$(uci -q get banner.banner.last_update 2>/dev/null || echo "0")
 # 检查URL
 if [ -z "$UPDATE_URL" ] || [ "$UPDATE_URL" = "https://cdn.jsdelivr.net/gh/your-username/openwrt-banner@main/banner.json" ]; then
     # 使用默认URL
-    UPDATE_URL="https://cdn.jsdelivr.net/gh/niwo5507/openwrt-banner@main/banner.json"
+    UPDATE_URL="https://cdn.jsdelivr.net/gh/fgbfg5676/openwrt-banner@main/banner.json"
     uci set banner.banner.update_url="$UPDATE_URL"
     uci commit banner
 fi
@@ -355,7 +355,7 @@ PKG_NAME:=luci-app-banner
 PKG_VERSION:=2.1
 PKG_RELEASE:=1
 PKG_LICENSE:=GPL-2.0
-PKG_MAINTAINER:=niwo5507 <niwo5507@gmail.com>
+PKG_MAINTAINER:=fgbfg5676 <fgbfg5676@gmail.com>
 
 include $(INCLUDE_DIR)/package.mk
 
@@ -579,7 +579,7 @@ o.default = "1"
 o:depends("auto_update_enabled", "1")
 
 o = update_section:option(Value, "update_url", translate("GitHub jsDelivr地址"))
-o.default = "https://cdn.jsdelivr.net/gh/niwo5507/openwrt-banner@main/banner.json"
+o.default = "https://cdn.jsdelivr.net/gh/fgbfg5676/openwrt-banner@main/banner.json"
 o:depends("remote_update", "1")
 o.description = translate("默认使用作者仓库，可以修改为你的GitHub地址")
 
@@ -926,4 +926,4 @@ log_info "• 作者: 修改GitHub仓库中的banner.json文件"
 log_info "• 客户: 只能查看，无法修改（密码保护）"
 log_info "• 更新: 完全自动化，无需任何手动操作"
 log_info ""
-log_info "💡 这是最适合你需求的完美解决方案！"
+log_info "💡 这是最适合你需求

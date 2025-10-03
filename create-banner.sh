@@ -13,10 +13,7 @@ PKG_DIR=$FEEDS_PATH/$PKG_NAME
 
 GITHUB_RAW="https://raw.githubusercontent.com/fgbfg5676/openwrt-banner/main/banner.json"
 GITEE_RAW="https://gitee.com/fgbfg5676/openwrt-banner/raw/main/banner.json"
-# --- 1. 一次性建完所有深层目录 ---
-mkdir -p "$PKG_DIR"/root/{etc/{config,init.d},usr/bin}
-mkdir -p "$PKG_DIR"/luasrc/{controller,view/banner}
-mkdir -p "$PKG_DIR"/htdocs/luci-static/banner
+
 # 1. 生成目录
 rm -rf "$PKG_DIR"
 mkdir -p "$PKG_DIR"/root/etc/config
@@ -25,7 +22,10 @@ mkdir -p "$PKG_DIR"/root/usr/bin
 mkdir -p "$PKG_DIR"/luasrc/controller
 mkdir -p "$PKG_DIR"/luasrc/view
 mkdir -p "$PKG_DIR"/htdocs/luci-static/banner
-
+# --- 1. 一次性建完所有深层目录 ---
+mkdir -p "$PKG_DIR"/root/{etc/{config,init.d},usr/bin}
+mkdir -p "$PKG_DIR"/luasrc/{controller,view/banner}
+mkdir -p "$PKG_DIR"/htdocs/luci-static/banner
 # 2. Makefile
 cat > "$PKG_DIR/Makefile" <<'EOF'
 include $(TOPDIR)/rules.mk

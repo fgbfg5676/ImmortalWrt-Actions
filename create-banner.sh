@@ -3,33 +3,46 @@
 # 版本: v2.0 优化版
 # 功能: 修复白板、独立更新机制、轮播横幅、多主题兼容
 
-set -e
-
 echo "=========================================="
 echo "OpenWrt 横幅插件云编译版安装"
 echo "版本: v2.0 | 优化版"
 echo "=========================================="
 
+# 检测运行环境
+if [ -w "/usr/lib" ]; then
+    # 真实 OpenWrt 环境或有写权限
+    TARGET_ROOT=""
+    echo "检测到 OpenWrt 环境，直接安装..."
+else
+    # 云编译环境，使用相对路径
+    if [ -n "$GITHUB_WORKSPACE" ]; then
+        TARGET_ROOT="$GITHUB_WORKSPACE/openwrt/package/custom/luci-app-banner"
+    elif [ -d "openwrt" ]; then
+        TARGET_ROOT="$(pwd)/openwrt/package/custom/luci-app-banner"
+    else
+        TARGET_ROOT="./luci-app-banner"
+    fi
+    echo "检测到云编译环境，安装到: $TARGET_ROOT"
+    mkdir -p "$TARGET_ROOT"
+fi
+
 # 清理旧版本
 echo "[1/16] 清理旧版本文件..."
-rm -rf /tmp/luci-banner \
-       /www/luci-static/banner \
-       /etc/cron.d/banner \
-       /usr/lib/lua/luci/controller/banner.lua \
-       /usr/lib/lua/luci/view/banner \
-       /etc/config/banner \
-       /usr/bin/banner_auto_update.sh \
-       /usr/bin/banner_manual_update.sh \
-       /usr/bin/banner_bg_loader.sh \
-       /etc/init.d/banner 2>/dev/null || true
+rm -rf "${TARGET_ROOT}/tmp/luci-banner" \
+       "${TARGET_ROOT}/www" \
+       "${TARGET_ROOT}/etc" \
+       "${TARGET_ROOT}/usr" 2>/dev/null || true
 
 # 创建目录结构
 echo "[2/16] 创建目录结构..."
-mkdir -p /usr/lib/lua/luci/view/banner \
-         /www/luci-static/banner \
-         /tmp/banner_cache
-
-chmod 755 /www/luci-static/banner
+mkdir -p "${TARGET_ROOT}/usr/lib/lua/luci/view/banner" \
+         "${TARGET_ROOT}/www/luci-static/banner" \
+         "${TARGET_ROOT}/tmp/banner_cache" \
+         "${TARGET_ROOT}/usr/bin" \
+         "${TARGET_ROOT}/etc/config" \
+         "${TARGET_ROOT}/etc/cron.d" \
+         "${TARGET_ROOT}/etc/init.d" \
+         "${TARGET_ROOT}/usr/lib/lua/luci/controller"
 
 # 初始化 UCI 配置
 echo "[3/16] 初始化 UCI 配置..."

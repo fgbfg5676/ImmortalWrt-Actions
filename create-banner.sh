@@ -282,7 +282,7 @@ end
 EOF
 
 # 9. 全局样式（修复白板）
-cat > "$PKG_DIR/luasrc/view/banner/global_style.htm" <<<'EOF'
+cat > "$PKG_DIR/luasrc/view/banner/global_style.htm" <<'EOF'
 <%
 local uci=require"luci.model.uci".cursor()
 local opacity=tonumber(uci:get("banner","banner","opacity") or "50")

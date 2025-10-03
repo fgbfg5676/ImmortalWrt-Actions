@@ -189,8 +189,7 @@ if [ $SUCCESS -eq 0 ]; then
                 if [ -s "$CACHE/banner_new.json" ] && jq empty "$CACHE/banner_new.json" 2>/dev/null; then
                     log "[√] URL Download Successful (Valid JSON)"
                     uci set banner.banner.selected_url="$url"
-                    uci commit
-
+                    uci commit banner
                     SUCCESS=1
                     break 2
                 fi
@@ -369,6 +368,14 @@ log() {
     }
 }
 
+validate_url() {
+    local url=$1
+    case "$url" in
+        http://*|https://*) return 0 ;;
+        *) log "[×] Invalid URL: $url"; return 1 ;;
+    esac
+}
+
 log "加载第 ${BG_GROUP} 组背景图..."
 
 START_IDX=$(( (BG_GROUP - 1) * 3 + 1 ))
@@ -383,16 +390,20 @@ rm -f "$DEST"/bg{0,1,2}.jpg
 for i in 0 1 2; do
     KEY="background_$((START_IDX + i))"
     URL=$(jsonfilter -i "$JSON" -e "@.$KEY" 2>/dev/null)
-    if [ -n "$URL" ]; then
+    if [ -n "$URL" ] && validate_url "$URL"; then
         log "  下载 $KEY..."
         curl -sL --max-time 15 "$URL" -o "$DEST/bg$i.jpg" 2>/dev/null
         if [ -s "$DEST/bg$i.jpg" ]; then
             chmod 644 "$DEST/bg$i.jpg"
             [ "$UCI_PERSISTENT" = "1" ] && cp "$DEST/bg$i.jpg" "$WEB/bg$i.jpg" 2>/dev/null
             log "  [√] bg$i.jpg"
+            # Set first valid image as current_bg.jpg for initial display
+            [ $i -eq 0 ] && cp "$DEST/bg$i.jpg" "$CACHE/current_bg.jpg" 2>/dev/null
         else
             log "  [×] bg$i.jpg 失败"
         fi
+    else
+        log "  [×] $KEY 无效或URL格式错误"
     fi
 done
 
@@ -658,9 +669,8 @@ cat > "$PKG_DIR/root/usr/lib/lua/luci/view/banner/global_style.htm" <<'GLOBALSTY
 local uci = require "luci.model.uci".cursor()
 local opacity = tonumber(uci:get("banner", "banner", "opacity") or "50")
 local alpha = (100 - opacity) / 100
-local bg_num = tonumber(uci:get("banner", "banner", "current_bg") or "0")
 local persistent = uci:get("banner", "banner", "persistent_storage") or "0"
-local bg_path = (persistent == "1") and "/overlay/banner" or "/www/luci-static/banner"
+local bg_path = "/tmp/banner_cache"
 %>
 <style>
 html, body, #maincontent, .container, .cbi-map, .cbi-section, 
@@ -671,7 +681,7 @@ html, body, #maincontent, .container, .cbi-map, .cbi-section,
 }
 body {
     background: linear-gradient(rgba(0,0,0,<%=alpha%>), rgba(0,0,0,<%=alpha%>)), 
-                url(<%=bg_path%>/bg<%=bg_num%>.jpg?t=<%=os.time()%>) center/cover fixed !important;
+                url(<%=bg_path%>/current_bg.jpg?t=<%=os.time()%>) center/cover fixed !important;
     min-height: 100vh;
 }
 .cbi-map, #maincontent > .container > .cbi-map {
@@ -715,7 +725,7 @@ input:disabled, select:disabled {
             var a = (100 - val) / 100;
             document.body.style.background = 
                 'linear-gradient(rgba(0,0,0,' + a + '), rgba(0,0,0,' + a + ')), ' +
-                'url(<%=bg_path%>/bg<%=bg_num%>.jpg?t=<%=os.time()%>) center/cover fixed';
+                'url(<%=bg_path%>/current_bg.jpg?t=<%=os.time()%>) center/cover fixed';
             var display = document.getElementById('opacity-display');
             if (display) display.textContent = val + '%';
             var xhr = new XMLHttpRequest();
@@ -986,7 +996,7 @@ cat > "$PKG_DIR/root/usr/lib/lua/luci/view/banner/display.htm" <<'DISPLAYVIEW'
 </div>
 <% end %>
 <script>
-// 背景轮播
+// 背景轮播（仅前端切换）
 (function() {
     var images = document.querySelectorAll('.carousel img');
     var interval = parseInt('<%=carousel_interval%>', 10) || 5000;
@@ -997,13 +1007,6 @@ cat > "$PKG_DIR/root/usr/lib/lua/luci/view/banner/display.htm" <<'DISPLAYVIEW'
             images[current].classList.remove('active');
             current = (current + 1) % images.length;
             images[current].classList.add('active');
-            var bgNum = images[current].getAttribute('data-bg');
-            var f = document.createElement('form');
-            f.method = 'POST';
-            f.action = '<%=luci.dispatcher.build_url("admin/status/banner/do_set_bg")%>';
-            f.innerHTML = '<input type="hidden" name="token" value="<%=token%>"><input type="hidden" name="bg" value="' + bgNum + '">';
-            document.body.appendChild(f);
-            f.submit();
         }, interval);
     }
 })();

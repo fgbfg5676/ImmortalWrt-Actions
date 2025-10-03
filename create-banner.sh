@@ -324,14 +324,12 @@ input[type=text],textarea,select{background:rgba(255,255,255,.9)!important;borde
 EOF
 
 # 10. 首页展示（彩虹渐变+5s轮播）
-cat > "$PKG_DIR/luasrc/view/banner/display.htm" <<<'EOF'
+cat > "$PKG_DIR/luasrc/view/banner/display.htm" <<'EOF'
 <%+header%>
 <%+banner/global_style%>
 <style>
 .banner-hero{background:rgba(0,0,0,.3);backdrop-filter:blur(8px);border:1px solid rgba(255,255,255,.12);border-radius:15px;padding:25px;margin:20px auto;max-width:1200px;}
-.banner-scroll{padding:25px;margin-bottom:50px;text-align:center;font-weight:bold;font-size:20px;border-radius:10px;min-height:60px;display:flex;align-items:center;justify-content:center;
-<% if color=='rainbow' then %>background:linear-gradient(90deg,#ff0000,#ff7f00,#ffff00,#00ff00,#0000ff,#4b0082,#9400d3);background-size:400% 400%;animation:rainbow 8s ease infinite;color:white;text-shadow:2px 2px 4px rgba(0,0,0,.5);
-<% else %>background:rgba(255,255,255,.15);color:<%=color%>;<% end %>}
+.banner-scroll{padding:25px;margin-bottom:50px;text-align:center;font-weight:bold;font-size:20px;border-radius:10px;min-height:60px;display:flex;align-items:center;justify-content:center;<% if color=='rainbow' then %>background:linear-gradient(90deg,#ff0000,#ff7f00,#ffff00,#00ff00,#0000ff,#4b0082,#9400d3);background-size:400% 400%;animation:rainbow 8s ease infinite;color:white;text-shadow:2px 2px 4px rgba(0,0,0,.5);<% else %>background:rgba(255,255,255,.15);color:<%=color%>;<% end %>}
 @keyframes rainbow{0%,100%{background-position:0% 50%}50%{background-position:100% 50%}}
 .banner-contacts{display:flex;justify-content:space-around;gap:25px;margin-bottom:50px;flex-wrap:wrap;}
 .contact-card{flex:1;min-width:200px;background:rgba(0,0,0,.3);backdrop-filter:blur(6px);border:1px solid rgba(255,255,255,.18);border-radius:10px;padding:15px;text-align:center;color:white;}
@@ -408,6 +406,7 @@ function copyText(txt){
 </script>
 <%+footer%>
 EOF
+
 
 # 11. 设置页面
 cat > "$PKG_DIR/luasrc/view/banner/settings.htm" <<<'EOF'

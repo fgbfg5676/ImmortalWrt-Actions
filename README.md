@@ -12,7 +12,17 @@
 [![LICENSE](https://img.shields.io/github/license/mashape/apistatus.svg?style=flat-square&label=LICENSE)](https://github.com/P3TERX/Actions-OpenWrt/blob/master/LICENSE)
 ![GitHub Stars](https://img.shields.io/github/stars/P3TERX/Actions-OpenWrt.svg?style=flat-square&label=Stars&logo=github)
 ![GitHub Forks](https://img.shields.io/github/forks/P3TERX/Actions-OpenWrt.svg?style=flat-square&label=Forks&logo=github)
-
+// "enabled": 是否启用插件，true 表示启用，false 表示禁用（默认 true）
+"enabled": true,
+// "disable_message": 当 enabled 为 false 时显示的禁用消息，建议提供简短说明
+"disable_message": "服务维护中，请稍后访问",
+// "text": 主横幅文本，显示在页面顶部
+"text": "🎉 新春特惠 · 技术支持24/7 · 已服务500+用户 · 安全稳定运行",
+// "banner_texts": 轮播文本数组，每隔 carousel_interval（默认 5000ms）切换显示
+"banner_texts": [
+  "🎉 新春特惠 · 技术支持24/7 · 已服务500+用户 · 安全稳定运行",
+  "💻 定制 OpenWrt 固件 · 极速稳定"
+]
 A template for building OpenWrt with GitHub Actions
 
 ## Usage

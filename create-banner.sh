@@ -894,9 +894,9 @@ cat > "$PKG_DIR/root/usr/lib/lua/luci/view/banner/background.htm" <<'BGVIEW'
 BGVIEW
 
 # 检查依赖
-for cmd in curl jsonfilter; do
-    command -v $cmd >/dev/null 2>&1 || { echo "错误：需要安装 $cmd"; exit 1; }
-done
+#for cmd in curl jsonfilter; do
+#   command -v $cmd >/dev/null 2>&1 || { echo "错误：需要安装 $cmd"; exit 1; }
+#done
 
 echo "=========================================="
 echo "✓ 软件包 luci-app-banner_2.1-1_all.ipk 准备完成！"

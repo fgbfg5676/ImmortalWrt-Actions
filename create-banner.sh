@@ -851,6 +851,8 @@ cat > "$PKG_DIR/root/usr/lib/lua/luci/view/banner/display.htm" <<'DISPLAYVIEW'
 .nav-links {
     display: none;
     padding: 10px;
+    max-height: 300px;
+    overflow-y: auto;
 }
 .nav-links.active {
     display: block;

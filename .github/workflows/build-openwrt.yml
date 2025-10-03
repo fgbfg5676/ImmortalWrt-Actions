@@ -1,4 +1,3 @@
-# Build OpenWrt for CM520-79F - Optimized
 name: Build OpenWrt for CM520-79F
 
 on:
@@ -92,7 +91,7 @@ jobs:
           head -30 openwrt/package/custom/luci-app-banner/Makefile
           echo ""
           echo "Controller file preview:"
-          head -20 openwrt/package/custom/luci-app-banner/luasrc/controller/banner.lua
+          head -20 openwrt/package/custom/luci-app-banner/root/usr/lib/lua/luci/controller/banner.lua || echo "Controller file not found, but continuing..."
           echo ""
           echo "UCI config preview:"
           cat openwrt/package/custom/luci-app-banner/root/etc/config/banner
@@ -146,7 +145,7 @@ jobs:
         if [ -d "package/custom/luci-app-banner" ]; then
           echo "[SUCCESS] Custom banner package directory exists"
           echo "Package files:"
-          find package/custom/luci-app-banner -type f | head -10
+          find package/custom/luci-app-banner -type f | sort | head -10
         else
           echo "[ERROR] Custom banner package directory not found"
           exit 1
@@ -188,6 +187,7 @@ jobs:
             echo "✓ Banner package now in config after manual addition"
           else
             echo "✗ Banner package still missing - there may be dependency issues"
+            exit 1
           fi
         fi
         
@@ -220,7 +220,6 @@ jobs:
         
         echo "Build completed, checking results..."
         
-        # 更准确的包检查
         echo "Looking for luci-app-banner package files..."
         if find bin -name "*luci-app-banner*" -type f 2>/dev/null | head -1; then
           echo "Banner package files found:"
@@ -234,13 +233,11 @@ jobs:
           fi
         fi
         
-        # 检查是否在固件中集成
         echo "Checking if banner is integrated in firmware..."
         if ls bin/targets/*/*-squashfs-*.bin >/dev/null 2>&1; then
           echo "Firmware files found - banner should be integrated if compilation succeeded"
         fi
         
-        # 显示编译完成的包统计
         echo "Build summary:"
         echo "- Total packages built: $(find bin/packages -name "*.ipk" 2>/dev/null | wc -l)"
         echo "- LuCI packages: $(find bin/packages -name "luci-*" 2>/dev/null | wc -l)"

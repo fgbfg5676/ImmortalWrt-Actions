@@ -16,7 +16,12 @@ GITEE_RAW="https://gitee.com/fgbfg5676/openwrt-banner/raw/main/banner.json"
 
 # 1. 生成目录
 rm -rf "$PKG_DIR"
-mkdir -p "$PKG_DIR"/{root,luasrc/{controller,view},htdocs/luci-static/banner}
+mkdir -p "$PKG_DIR"/root/etc/config
+mkdir -p "$PKG_DIR"/root/etc/init.d
+mkdir -p "$PKG_DIR"/root/usr/bin
+mkdir -p "$PKG_DIR"/luasrc/controller
+mkdir -p "$PKG_DIR"/luasrc/view
+mkdir -p "$PKG_DIR"/htdocs/luci-static/banner
 
 # 2. Makefile
 cat > "$PKG_DIR/Makefile" <<'EOF'

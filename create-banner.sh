@@ -1,13 +1,13 @@
 #!/bin/bash
 # OpenWrt 横幅福利导航插件 - 云编译完整脚本
-# 版本: v2.2 最终版
+# 版本: v2.3 修复版
 # 适配: GitHub Actions / 云编译环境
 
 set -e
 
 echo "=========================================="
 echo "OpenWrt 横幅插件云编译打包"
-echo "版本: v2.2 | 最终优化版"
+echo "版本: v2.3 | 语法修复 + 优化版"
 echo "=========================================="
 
 # 确定包目录位置
@@ -32,7 +32,7 @@ cat > "$PKG_DIR/Makefile" <<'MAKEFILE'
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=luci-app-banner
-PKG_VERSION:=2.2
+PKG_VERSION:=2.3
 PKG_RELEASE:=1
 
 PKG_LICENSE:=Apache-2.0
@@ -346,7 +346,7 @@ else
 fi
 AUTOUPDATE
 
-# 背景图加载器
+# 背景图加载器（添加完成标记）
 cat > "$PKG_DIR/root/usr/bin/banner_bg_loader.sh" <<'BGLOADER'
 #!/bin/sh
 BG_GROUP=${1:-1}
@@ -355,7 +355,12 @@ CACHE="/tmp/banner_cache"
 WEB="/www/luci-static/banner"
 PERSISTENT="/overlay/banner"
 UCI_PERSISTENT=$(uci -q get banner.banner.persistent_storage || echo 0)
-DEST="$([ "$UCI_PERSISTENT" = "1" ] && echo "$PERSISTENT" || echo "$WEB")"
+
+if [ "$UCI_PERSISTENT" = "1" ]; then
+    DEST="$PERSISTENT"
+else
+    DEST="$WEB"
+fi
 
 mkdir -p "$CACHE" "$WEB" "$PERSISTENT"
 
@@ -378,14 +383,19 @@ validate_url() {
 
 log "加载第 ${BG_GROUP} 组背景图..."
 
+# 创建加载中标记
+echo "loading" > "$CACHE/bg_loading"
+
 START_IDX=$(( (BG_GROUP - 1) * 3 + 1 ))
 JSON="$CACHE/nav_data.json"
 
-[ ! -f "$JSON" ] && log "[×] 数据文件未找到" && exit 1
+[ ! -f "$JSON" ] && log "[×] 数据文件未找到" && rm -f "$CACHE/bg_loading" && exit 1
 
 # Clean old backgrounds, keep only 3
 rm -f "$DEST"/bg{0,1,2}.jpg
-[ "$UCI_PERSISTENT" = "1" ] && rm -f "$WEB"/bg{0,1,2}.jpg
+if [ "$UCI_PERSISTENT" = "1" ]; then
+    rm -f "$WEB"/bg{0,1,2}.jpg
+fi
 
 for i in 0 1 2; do
     KEY="background_$((START_IDX + i))"
@@ -395,10 +405,14 @@ for i in 0 1 2; do
         curl -sL --max-time 15 "$URL" -o "$DEST/bg$i.jpg" 2>/dev/null
         if [ -s "$DEST/bg$i.jpg" ]; then
             chmod 644 "$DEST/bg$i.jpg"
-            [ "$UCI_PERSISTENT" = "1" ] && cp "$DEST/bg$i.jpg" "$WEB/bg$i.jpg" 2>/dev/null
+            if [ "$UCI_PERSISTENT" = "1" ]; then
+                cp "$DEST/bg$i.jpg" "$WEB/bg$i.jpg" 2>/dev/null
+            fi
             log "  [√] bg$i.jpg"
             # Set first valid image as current_bg.jpg for initial display
-            [ $i -eq 0 ] && cp "$DEST/bg$i.jpg" "$CACHE/current_bg.jpg" 2>/dev/null
+            if [ $i -eq 0 ]; then
+                cp "$DEST/bg$i.jpg" "$CACHE/current_bg.jpg" 2>/dev/null
+            fi
         else
             log "  [×] bg$i.jpg 失败"
         fi
@@ -417,6 +431,10 @@ if [ ! -s "$CACHE/current_bg.jpg" ]; then
 fi
 
 log "[完成] 第 ${BG_GROUP} 组"
+
+# 删除加载标记，创建完成标记
+rm -f "$CACHE/bg_loading"
+echo "complete" > "$CACHE/bg_complete"
 BGLOADER
 
 # 定时任务
@@ -475,7 +493,7 @@ status() {
 }
 INIT
 
-# LuCI 控制器
+# LuCI 控制器（修复 Lua 语法）
 cat > "$PKG_DIR/root/usr/lib/lua/luci/controller/banner.lua" <<'CONTROLLER'
 module("luci.controller.banner", package.seeall)
 
@@ -553,8 +571,10 @@ function action_do_set_bg()
         uci:set("banner", "banner", "current_bg", bg)
         uci:commit("banner")
         local persistent = uci:get("banner", "banner", "persistent_storage") or "0"
-        local src="/www/luci-static/banner"
-        [ "$persistent" = "1" ] && src="/overlay/banner"
+        local src = "/www/luci-static/banner"
+        if persistent == "1" then
+            src = "/overlay/banner"
+        end
         luci.sys.call(string.format("cp %s/bg%s.jpg /tmp/banner_cache/current_bg.jpg 2>/dev/null", src, bg))
     end
     luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/display"))
@@ -581,20 +601,25 @@ function action_do_upload_bg()
     local http = require "luci.http"
     local uci = require "luci.model.uci".cursor()
     local persistent = uci:get("banner", "banner", "persistent_storage") or "0"
-    local dest="/www/luci-static/banner"
-    [ "$persistent" = "1" ] && dest="/overlay/banner"
+    local dest = "/www/luci-static/banner"
+    if persistent == "1" then
+        dest = "/overlay/banner"
+    end
+    
     http.setfilehandler(function(meta, chunk, eof)
         if not meta then return end
         if meta.name == "bg_file" then
-            local path = "$dest/upload_temp.jpg"
+            local path = dest .. "/upload_temp.jpg"
             if chunk then
                 local fp = io.open(path, meta.file and "ab" or "wb")
                 if fp then fp:write(chunk); fp:close() end
             end
             if eof and fs.stat(path) then
-                luci.sys.call("cp " .. path .. " $dest/bg0.jpg")
+                luci.sys.call("cp " .. path .. " " .. dest .. "/bg0.jpg")
                 luci.sys.call("rm -f " .. path)
-                [ "$persistent" = "1" ] && luci.sys.call("cp $dest/bg0.jpg /www/luci-static/banner/bg0.jpg")
+                if persistent == "1" then
+                    luci.sys.call("cp " .. dest .. "/bg0.jpg /www/luci-static/banner/bg0.jpg")
+                end
                 local log = fs.readfile("/tmp/banner_bg.log") or ""
                 fs.writefile("/tmp/banner_bg.log", log .. "\n[" .. os.date("%Y-%m-%d %H:%M:%S") .. "] 本地上传成功")
             end
@@ -607,11 +632,15 @@ function action_do_apply_url()
     local url = luci.http.formvalue("custom_bg_url")
     local uci = require "luci.model.uci".cursor()
     local persistent = uci:get("banner", "banner", "persistent_storage") or "0"
-    local dest="/www/luci-static/banner"
-    [ "$persistent" = "1" ] && dest="/overlay/banner"
+    local dest = "/www/luci-static/banner"
+    if persistent == "1" then
+        dest = "/overlay/banner"
+    end
     if url and url:match("^https?://") then
         luci.sys.call(string.format("curl -sL --max-time 15 '%s' -o %s/bg0.jpg 2>/dev/null", url, dest))
-        [ "$persistent" = "1" ] && luci.sys.call(string.format("cp %s/bg0.jpg /www/luci-static/banner/bg0.jpg", dest))
+        if persistent == "1" then
+            luci.sys.call(string.format("cp %s/bg0.jpg /www/luci-static/banner/bg0.jpg", dest))
+        end
     end
     luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/background"))
 end
@@ -619,7 +648,7 @@ end
 function action_do_set_opacity()
     local uci = require "luci.model.uci".cursor()
     local opacity = luci.http.formvalue("opacity")
-    if opacity and opacity:match("^[0-9]+$") and opacity >= 0 and opacity <= 100 then
+    if opacity and tonumber(opacity) and tonumber(opacity) >= 0 and tonumber(opacity) <= 100 then
         uci:set("banner", "banner", "opacity", opacity)
         uci:commit("banner")
     end
@@ -629,7 +658,7 @@ end
 function action_do_set_carousel_interval()
     local uci = require "luci.model.uci".cursor()
     local interval = luci.http.formvalue("carousel_interval")
-    if interval and interval:match("^[0-9]+$") and interval >= 1000 and interval <= 30000 then
+    if interval and tonumber(interval) and tonumber(interval) >= 1000 and tonumber(interval) <= 30000 then
         uci:set("banner", "banner", "carousel_interval", interval)
         uci:commit("banner")
     end
@@ -652,12 +681,12 @@ function action_do_set_persistent_storage()
     if persistent and persistent:match("^[0-1]$") then
         uci:set("banner", "banner", "persistent_storage", persistent)
         uci:commit("banner")
-        if [ "$persistent" = "1" ]; then
+        if persistent == "1" then
             luci.sys.call("mkdir -p /overlay/banner")
             luci.sys.call("cp /www/luci-static/banner/bg*.jpg /overlay/banner/ 2>/dev/null")
         else
             luci.sys.call("cp /overlay/banner/bg*.jpg /www/luci-static/banner/ 2>/dev/null")
-        fi
+        end
     end
     luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/settings"))
 end
@@ -738,14 +767,13 @@ input:disabled, select:disabled {
 </script>
 GLOBALSTYLE
 
-# 首页展示（带轮播图和导航）
+# 首页展示（去除磨砂玻璃，改为透明层）
 cat > "$PKG_DIR/root/usr/lib/lua/luci/view/banner/display.htm" <<'DISPLAYVIEW'
 <%+header%>
 <%+banner/global_style%>
 <style>
 .banner-hero {
     background: rgba(0,0,0,0.3);
-    backdrop-filter: blur(8px);
     border: 1px solid rgba(255,255,255,0.12);
     border-radius: 15px;
     padding: 25px;
@@ -789,7 +817,6 @@ cat > "$PKG_DIR/root/usr/lib/lua/luci/view/banner/display.htm" <<'DISPLAYVIEW'
     flex: 1;
     min-width: 200px;
     background: rgba(0,0,0,0.3);
-    backdrop-filter: blur(6px);
     border: 1px solid rgba(255,255,255,0.18);
     border-radius: 10px;
     padding: 15px;
@@ -818,7 +845,6 @@ cat > "$PKG_DIR/root/usr/lib/lua/luci/view/banner/display.htm" <<'DISPLAYVIEW'
 .nav-group {
     min-width: 220px;
     background: rgba(0,0,0,0.3);
-    backdrop-filter: blur(6px);
     border: 1px solid rgba(255,255,255,0.15);
     border-radius: 10px;
     padding: 15px;
@@ -928,6 +954,24 @@ cat > "$PKG_DIR/root/usr/lib/lua/luci/view/banner/display.htm" <<'DISPLAYVIEW'
     text-align: center;
     font-weight: bold;
 }
+.pagination {
+    text-align: center;
+    margin-top: 20px;
+    color: white;
+}
+.pagination button {
+    background: rgba(66,139,202,0.9);
+    border: 1px solid rgba(255,255,255,0.3);
+    color: white;
+    padding: 8px 15px;
+    margin: 0 5px;
+    border-radius: 5px;
+    cursor: pointer;
+}
+.pagination button:disabled {
+    background: rgba(100,100,100,0.5);
+    cursor: not-allowed;
+}
 </style>
 <% if bg_enabled == '0' then %>
 <div class="disabled-message"><%=pcdata(remote_message)%></div>
@@ -998,7 +1042,7 @@ cat > "$PKG_DIR/root/usr/lib/lua/luci/view/banner/display.htm" <<'DISPLAYVIEW'
 </div>
 <% end %>
 <script>
-// 背景轮播（仅前端切换）
+// 背景轮播
 (function() {
     var images = document.querySelectorAll('.carousel img');
     var interval = parseInt('<%=carousel_interval%>', 10) || 5000;
@@ -1084,15 +1128,39 @@ function copyText(txt) {
 <%+footer%>
 DISPLAYVIEW
 
-# 设置页面
+# 设置页面（添加背景切换器 + 自动刷新监控）
 cat > "$PKG_DIR/root/usr/lib/lua/luci/view/banner/settings.htm" <<'SETTINGSVIEW'
 <%+header%>
 <%+banner/global_style%>
+<style>
+.bg-selector {
+    position: fixed;
+    bottom: 30px;
+    right: 30px;
+    display: flex;
+    gap: 12px;
+    z-index: 999;
+}
+.bg-circle {
+    width: 60px;
+    height: 60px;
+    border-radius: 50%;
+    border: 3px solid rgba(255,255,255,0.8);
+    background-size: cover;
+    cursor: pointer;
+    transition: all 0.3s;
+    box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+}
+.bg-circle:hover {
+    transform: scale(1.15);
+    border-color: #4fc3f7;
+}
+</style>
 <div class="cbi-map">
     <h2>远程更新设置</h2>
     <div class="cbi-section"><div class="cbi-section-node">
         <% if remote_message and remote_message ~= '' then %>
-        <div class="disabled-message" style="background:rgba(100,100,100,0.8);color:white;padding:15px;border-radius:10px;margin-bottom:20px;text-align:center;font-weight:bold">
+        <div style="background:rgba(100,100,100,0.8);color:white;padding:15px;border-radius:10px;margin-bottom:20px;text-align:center;font-weight:bold">
             <%=pcdata(remote_message)%>
         </div>
         <% end %>
@@ -1120,7 +1188,7 @@ cat > "$PKG_DIR/root/usr/lib/lua/luci/view/banner/settings.htm" <<'SETTINGSVIEW'
             <div class="cbi-value-field">
                 <form method="post" action="<%=luci.dispatcher.build_url('admin/status/banner/do_set_persistent_storage')%>">
                     <input type="hidden" name="token" value="<%=token%>" />
-                    <input type="checkbox" name="persistent_storage" value="1" <%=persistent_storage=='1' and 'checked' or ''%> />
+                    <input type="checkbox" name="persistent_storage" value="1" <%=persistent_storage=='1' and 'checked' or''%> />
                     <input type="submit" class="cbi-button cbi-button-apply" value="应用" />
                 </form>
                 <p style="color:#aaa;font-size:12px">💡 启用后背景图存储到 /overlay/banner（防止掉电丢失）</p>
@@ -1133,7 +1201,7 @@ cat > "$PKG_DIR/root/usr/lib/lua/luci/view/banner/settings.htm" <<'SETTINGSVIEW'
                     <input type="hidden" name="token" value="<%=token%>" />
                     <select name="selected_url" style="flex:1;background:rgba(255,255,255,0.9);color:#333">
                         <% for _, url in ipairs(uci:get_list("banner", "banner", "update_urls")) do %>
-                        <option value="<%=url%>" <%=url==uci:get("banner", "banner", "selected_url") and 'selected' or ''%>><%=url%></option>
+                        <option value="<%=url%>" <%=url==uci:get("banner", "banner", "selected_url") and 'selected' or''%>><%=url%></option>
                         <% end %>
                     </select>
                     <input type="submit" class="cbi-button cbi-button-apply" value="选择更新源" />
@@ -1174,13 +1242,98 @@ cat > "$PKG_DIR/root/usr/lib/lua/luci/view/banner/settings.htm" <<'SETTINGSVIEW'
         <div style="background:rgba(0,0,0,0.5);padding:12px;border-radius:8px;max-height:250px;overflow-y:auto;font-family:monospace;font-size:12px;color:#0f0;white-space:pre-wrap;border:1px solid rgba(255,255,255,0.1)"><%=pcdata(log)%></div>
     </div></div>
 </div>
+<%
+local persistent = uci:get("banner", "banner", "persistent_storage") or "0"
+local bg_path = (persistent == "1") and "/overlay/banner" or "/www/luci-static/banner"
+%>
+<div class="bg-selector">
+    <div class="bg-circle" style="background-image:url(<%=bg_path%>/bg0.jpg?t=<%=os.time()%>)" onclick="changeBg(0)"></div>
+    <div class="bg-circle" style="background-image:url(<%=bg_path%>/bg1.jpg?t=<%=os.time()%>)" onclick="changeBg(1)"></div>
+    <div class="bg-circle" style="background-image:url(<%=bg_path%>/bg2.jpg?t=<%=os.time()%>)" onclick="changeBg(2)"></div>
+</div>
+<script>
+function changeBg(n) {
+    var f = document.createElement('form');
+    f.method = 'POST';
+    f.action = '<%=luci.dispatcher.build_url("admin/status/banner/do_set_bg")%>';
+    f.innerHTML = '<input type="hidden" name="token" value="<%=token%>"><input type="hidden" name="bg" value="' + n + '">';
+    document.body.appendChild(f);
+    f.submit();
+}
+</script>
 <%+footer%>
 SETTINGSVIEW
 
-# 背景设置页面
+# 背景设置页面（添加背景切换器 + 自动刷新）
 cat > "$PKG_DIR/root/usr/lib/lua/luci/view/banner/background.htm" <<'BGVIEW'
 <%+header%>
 <%+banner/global_style%>
+<style>
+.bg-selector {
+    position: fixed;
+    bottom: 30px;
+    right: 30px;
+    display: flex;
+    gap: 12px;
+    z-index: 999;
+}
+.bg-circle {
+    width: 60px;
+    height: 60px;
+    border-radius: 50%;
+    border: 3px solid rgba(255,255,255,0.8);
+    background-size: cover;
+    cursor: pointer;
+    transition: all 0.3s;
+    box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+}
+.bg-circle:hover {
+    transform: scale(1.15);
+    border-color: #4fc3f7;
+}
+.loading-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0,0,0,0.8);
+    display: none;
+    justify-content: center;
+    align-items: center;
+    z-index: 9999;
+}
+.loading-overlay.active {
+    display: flex;
+}
+.loading-content {
+    background: rgba(255,255,255,0.1);
+    padding: 30px;
+    border-radius: 15px;
+    text-align: center;
+    color: white;
+}
+.spinner {
+    border: 4px solid rgba(255,255,255,0.3);
+    border-top: 4px solid #4fc3f7;
+    border-radius: 50%;
+    width: 50px;
+    height: 50px;
+    animation: spin 1s linear infinite;
+    margin: 0 auto 20px;
+}
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+</style>
+<div class="loading-overlay" id="loadingOverlay">
+    <div class="loading-content">
+        <div class="spinner"></div>
+        <p style="font-size:18px;font-weight:bold">正在下载背景图...</p>
+        <p style="font-size:14px;color:#aaa">下载完成后将自动刷新</p>
+    </div>
+</div>
 <div class="cbi-map">
     <h2>背景图设置</h2>
     <div class="cbi-section"><div class="cbi-section-node">
@@ -1197,7 +1350,7 @@ cat > "$PKG_DIR/root/usr/lib/lua/luci/view/banner/background.htm" <<'BGVIEW'
             <div class="cbi-value-field">
                 <form method="post" action="<%=luci.dispatcher.build_url('admin/status/banner/do_set_persistent_storage')%>">
                     <input type="hidden" name="token" value="<%=token%>" />
-                    <input type="checkbox" name="persistent_storage" value="1" <%=persistent_storage=='1' and 'checked' or ''%> />
+                    <input type="checkbox" name="persistent_storage" value="1" <%=persistent_storage=='1' and 'checked' or''%> />
                     <input type="submit" class="cbi-button cbi-button-apply" value="应用" />
                 </form>
                 <p style="color:#aaa;font-size:12px">💡 启用后背景图存储到 /overlay/banner（防止掉电丢失）</p>
@@ -1206,10 +1359,10 @@ cat > "$PKG_DIR/root/usr/lib/lua/luci/view/banner/background.htm" <<'BGVIEW'
         <div class="cbi-value">
             <label class="cbi-value-title">选择背景图组</label>
             <div class="cbi-value-field">
-                <form method="post" action="<%=luci.dispatcher.build_url('admin/status/banner/do_load_group')%>">
+                <form method="post" action="<%=luci.dispatcher.build_url('admin/status/banner/do_load_group')%>" id="loadGroupForm">
                     <input type="hidden" name="token" value="<%=token%>" />
                     <select name="group" style="flex:1;background:rgba(255,255,255,0.9);color:#333">
-                        <option value="1" <%=bg_group=='1' and 'selected' or ''%>>第 1 组 (背景1-3)</option>
+                        <option value="1" <%=bg_group=='1' and 'selected' or''%>>第 1 组 (背景1-3)</option>
                         <option value="2" <%=bg_group=='2' and 'selected' or''%>>第 2 组 (背景4-6)</option>
                         <option value="3" <%=bg_group=='3' and 'selected' or''%>>第 3 组 (背景7-9)</option>
                         <option value="4" <%=bg_group=='4' and 'selected' or''%>>第 4 组 (背景10-12)</option>
@@ -1255,15 +1408,87 @@ cat > "$PKG_DIR/root/usr/lib/lua/luci/view/banner/background.htm" <<'BGVIEW'
         <div style="background:rgba(0,0,0,0.5);padding:12px;border-radius:8px;max-height:250px;overflow-y:auto;font-family:monospace;font-size:12px;color:#0f0;white-space:pre-wrap;border:1px solid rgba(255,255,255,0.1)"><%=pcdata(log)%></div>
     </div></div>
 </div>
+<%
+local persistent = uci:get("banner", "banner", "persistent_storage") or "0"
+local bg_path = (persistent == "1") and "/overlay/banner" or "/www/luci-static/banner"
+%>
+<div class="bg-selector">
+    <div class="bg-circle" style="background-image:url(<%=bg_path%>/bg0.jpg?t=<%=os.time()%>)" onclick="changeBg(0)"></div>
+    <div class="bg-circle" style="background-image:url(<%=bg_path%>/bg1.jpg?t=<%=os.time()%>)" onclick="changeBg(1)"></div>
+    <div class="bg-circle" style="background-image:url(<%=bg_path%>/bg2.jpg?t=<%=os.time()%>)" onclick="changeBg(2)"></div>
+</div>
+<script>
+// 拦截加载背景组表单提交，显示加载动画并监控完成状态
+document.getElementById('loadGroupForm').addEventListener('submit', function(e) {
+    e.preventDefault();
+    document.getElementById('loadingOverlay').classList.add('active');
+    
+    // 提交表单
+    var form = this;
+    var formData = new FormData(form);
+    var xhr = new XMLHttpRequest();
+    xhr.open('POST', form.action, true);
+    xhr.onload = function() {
+        // 表单提交后，开始监控完成状态
+        checkLoadingComplete();
+    };
+    xhr.send(formData);
+});
+
+function checkLoadingComplete() {
+    var checkInterval = setInterval(function() {
+        var xhr = new XMLHttpRequest();
+        xhr.open('GET', '/cgi-bin/luci/admin/status/banner/check_bg_complete', true);
+        xhr.onload = function() {
+            if (xhr.responseText.indexOf('complete') !== -1) {
+                clearInterval(checkInterval);
+                // 等待1秒确保文件写入完成，然后刷新页面
+                setTimeout(function() {
+                    window.location.reload();
+                }, 1000);
+            }
+        };
+        xhr.onerror = function() {
+            // 如果检查失败，20秒后自动刷新
+            clearInterval(checkInterval);
+            setTimeout(function() {
+                window.location.reload();
+            }, 20000);
+        };
+        xhr.send();
+    }, 2000); // 每2秒检查一次
+    
+    // 安全机制：30秒后强制刷新
+    setTimeout(function() {
+        clearInterval(checkInterval);
+        window.location.reload();
+    }, 30000);
+}
+
+function changeBg(n) {
+    var f = document.createElement('form');
+    f.method = 'POST';
+    f.action = '<%=luci.dispatcher.build_url("admin/status/banner/do_set_bg")%>';
+    f.innerHTML = '<input type="hidden" name="token" value="<%=token%>"><input type="hidden" name="bg" value="' + n + '">';
+    document.body.appendChild(f);
+    f.submit();
+}
+</script>
 <%+footer%>
 BGVIEW
 
 echo "=========================================="
-echo "✓ 软件包 luci-app-banner_2.2-1_all.ipk 准备完成！"
+echo "✓ 软件包 luci-app-banner_2.3-1_all.ipk 准备完成！"
 echo "=========================================="
 echo "包目录: $PKG_DIR"
 echo "编译提示: 请将 $PKG_DIR 置于 OpenWrt 源码的 package 目录下"
 echo "然后运行 make package/custom/luci-app-banner/compile V=s"
+echo ""
+echo "主要修复："
+echo "  ✓ 修复 Lua 语法错误（shell 语法改为 Lua 语法）"
+echo "  ✓ 去除首页磨砂玻璃效果，改为透明层 rgba(0,0,0,0.3)"
+echo "  ✓ 背景加载完成后自动刷新页面（监控机制）"
+echo "  ✓ 所有页面添加背景切换圆圈（settings + background）"
 echo ""
 echo "主要功能："
 echo "  • 统一背景显示（修复白板问题）"
@@ -1274,6 +1499,8 @@ echo "  • 轮播横幅: 彩虹渐变，每5秒切换（可通过 LuCI 调整�
 echo "  • 分页导航: 每页显示4个导航组，支持 icon 和 desc"
 echo "  • 背景轮播: 首页展示多背景轮播"
 echo "  • 实时透明度调节: 拖动滑块即时生效（自动保存）"
+echo "  • 背景下载监控: 显示加载动画，完成后自动刷新"
+echo "  • 全页面背景切换: 所有页面右下角显示3个圆圈切换器"
 echo "  • 本地上传/远程链接/永久存储支持"
 echo "  • 多源更新: 支持多个 JSON 数据源，LuCI 选择"
 echo "  • 安全增强: JSON 校验 + URL 注入防护"
@@ -1287,21 +1514,10 @@ echo '  "enabled": true,'
 echo '  "disable_message": "系统维护中，请于 2025-10-04 08:00 后访问",'
 echo '  "text": "默认横幅文本",'
 echo '  "color": "rainbow",'
-echo '  "banner_texts": ['
-echo '    "🎉 横幅文本1",'
-echo '    "🚀 横幅文本2",'
-echo '    "💎 横幅文本3"'
-echo '  ],'
+echo '  "banner_texts": ["🎉 横幅1", "🚀 横幅2", "💎 横幅3"],'
 echo '  "background_1": "https://...",'
 echo '  ...'
 echo '  "background_12": "https://...",'
-echo '  "nav_tabs": ['
-echo '    {'
-echo '      "title": "导航组1",'
-echo '      "icon": "https://example.com/icon1.png",'
-echo '      "desc": "组1描述",'
-echo '      "links": [...]'
-echo '    }'
-echo '  ]'
+echo '  "nav_tabs": [{"title": "导航组", "icon": "url", "desc": "描述", "links": [...]}]'
 echo '}'
 echo "=========================================="

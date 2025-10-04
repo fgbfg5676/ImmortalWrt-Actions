@@ -727,11 +727,7 @@ function action_do_upload_bg()
                     uci:commit("banner")
                     local log = fs.readfile("/tmp/banner_bg.log") or ""
                     fs.writefile("/tmp/banner_bg.log", log .. "\n[" .. os.date("%Y-%m-%d %H:%M:%S") .. "] ✅ 本地上传成功 (JPG)")
-                    if false then
-                        fs.remove(finalfile)
-                        local log = fs.readfile("/tmp/banner_bg.log") or ""
-                        fs.writefile("/tmp/banner_bg.log", log .. "\n[" .. os.date("%Y-%m-%d %H:%M:%S") .. "] ❌ EXIF 清除失败 (JPG)")
-                    end
+                    
                 else
                     fs.remove(tmpfile)
                     local log = fs.readfile("/tmp/banner_bg.log") or ""
@@ -765,32 +761,35 @@ function action_do_apply_url()
         local finalfile = dest .. "/bg0.jpg"
         local ok = os.execute(string.format("curl -fsSL --max-time 20 --max-filesize 3145728 '%s' -o '%s'", url, tmpfile))
 
-        if ok == 0 and fs.stat(tmpfile) then
-            local is_jpg = luci.sys.call("file " .. tmpfile .. " | grep -q 'JPEG'") == 0
-            if is_jpg then
-                fs.rename(tmpfile, finalfile)
-                if persistent == "1" then
-                      luci.sys.call(string.format("cp '%s' /www/luci-static/banner/bg0.jpg", finalfile))
-                end
-                uci:set("banner", "banner", "current_bg", "0")
-                uci:commit("banner")
-                local log = fs.readfile("/tmp/banner_bg.log") or ""
-                fs.writefile("/tmp/banner_bg.log", log .. "\n[" .. os.date("%Y-%m-%d %H:%M:%S") .. "] ✅ 下载成功 (JPG): " ..                 url:match("^https?://[^/]+") .. "/...")
-                if false then
-                    fs.remove(finalfile)
-                    local log = fs.readfile("/tmp/banner_bg.log") or ""
-                    fs.writefile("/tmp/banner_bg.log", log .. "\n[" .. os.date("%Y-%m-%d %H:%M:%S") .. "] ❌ EXIF 清除失败 (JPG): " .. url:match("^https?://[^/]+") .. "/...")
-                end
-            else
-                fs.remove(tmpfile)
-                local log = fs.readfile("/tmp/banner_bg.log") or ""
-                fs.writefile("/tmp/banner_bg.log", log .. "\n[" .. os.date("%Y-%m-%d %H:%M:%S") .. "] ❌ 下载失败: 仅支持 JPG 格式")
-            end
-        else
-            fs.remove(tmpfile)
-            local log = fs.readfile("/tmp/banner_bg.log") or ""
-            fs.writefile("/tmp/banner_bg.log", log .. "\n[" .. os.date("%Y-%m-%d %H:%M:%S") .. "] ❌ 下载失败: " .. url:match("^https?://[^/]+") .. "/...")
+       if ok == 0 and fs.stat(tmpfile) then
+    local is_jpg = luci.sys.call("file " .. tmpfile .. " | grep -q 'JPEG'") == 0
+    if is_jpg then
+        fs.rename(tmpfile, finalfile)
+        if persistent == "1" then
+            luci.sys.call(string.format("cp '%s' /www/luci-static/banner/bg0.jpg", finalfile))
         end
+        uci:set("banner", "banner", "current_bg", "0")
+        uci:commit("banner")
+
+        local log = fs.readfile("/tmp/banner_bg.log") or ""
+        fs.writefile("/tmp/banner_bg.log",
+            log .. "\n[" .. os.date("%Y-%m-%d %H:%M:%S") ..
+            "] ✅ 下载成功 (JPG): " .. url:match("^https?://[^/]+") .. "/...")
+    else
+        fs.remove(tmpfile)
+        local log = fs.readfile("/tmp/banner_bg.log") or ""
+        fs.writefile("/tmp/banner_bg.log",
+            log .. "\n[" .. os.date("%Y-%m-%d %H:%M:%S") ..
+            "] ❌ 下载失败: 仅支持 JPG 格式")
+    end
+else
+    fs.remove(tmpfile)
+    local log = fs.readfile("/tmp/banner_bg.log") or ""
+    fs.writefile("/tmp/banner_bg.log",
+        log .. "\n[" .. os.date("%Y-%m-%d %H:%M:%S") ..
+        "] ❌ 下载失败: " .. url:match("^https?://[^/]+") .. "/...")
+end
+
     else
         local log = fs.readfile("/tmp/banner_bg.log") or ""
         fs.writefile("/tmp/banner_bg.log", log .. "\n[" .. os.date("%Y-%m-%d %H:%M:%S") .. "] ⚠️ 非法URL或域名: " .. tostring(url:match("^https?://[^/]+") or url))

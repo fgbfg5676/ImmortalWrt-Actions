@@ -45,7 +45,7 @@ define Package/luci-app-banner
   CATEGORY:=LuCI
   SUBMENU:=3. Applications
   TITLE:=LuCI Support for Banner Navigation
-  DEPENDS:=+curl +jsonfilter +luci-base +jq
+  DEPENDS:=+curl +jsonfilter +luci-base +jq +jhead
   PKGARCH:=all
 endef
 
@@ -107,7 +107,7 @@ config banner 'banner'
 	list update_urls 'https://raw.githubusercontent.com/fgbfg5676/openwrt-banner/main/banner.json'
 	list update_urls 'https://gitee.com/fgbfg5676/openwrt-banner/raw/main/banner.json'
 	option selected_url 'https://raw.githubusercontent.com/fgbfg5676/openwrt-banner/main/banner.json'
-	option update_interval '86400'
+	option update_interval '43200'
 	option last_update '0'
 	option banner_texts ''
 	option remote_message ''
@@ -163,18 +163,22 @@ SELECTED_URL=$(uci -q get banner.banner.selected_url)
 SUCCESS=0
 
 if [ -n "$SELECTED_URL" ] && validate_url "$SELECTED_URL"; then
-    for i in 1 2 3; do
-        log "Selected URL Attempt $i/3 ($SELECTED_URL)..."
-        curl -sL --max-time 15 "$SELECTED_URL" -o "$CACHE/banner_new.json" 2>/dev/null
-        if [ -s "$CACHE/banner_new.json" ] && jq empty "$CACHE/banner_new.json" 2>/dev/null; then
-            log "[√] Selected URL Download Successful (Valid JSON)"
-            SUCCESS=1
-            break
-        fi
-        log "[×] Selected URL Attempt $i Failed or Invalid JSON"
-        rm -f "$CACHE/banner_new.json"
-        sleep 2
-    done
+    if echo "$SELECTED_URL" | grep -qE '^(https://raw\.githubusercontent\.com|https://gitee\.com)/'; then
+        for i in 1 2 3; do
+            log "Selected URL Attempt $i/3 ($SELECTED_URL)..."
+            curl -sL --max-time 15 "$SELECTED_URL" -o "$CACHE/banner_new.json" 2>/dev/null
+            if [ -s "$CACHE/banner_new.json" ] && jq empty "$CACHE/banner_new.json" 2>/dev/null; then
+                log "[√] Selected URL Download Successful (Valid JSON)"
+                SUCCESS=1
+                break
+            fi
+            log "[×] Selected URL Attempt $i Failed or Invalid JSON"
+            rm -f "$CACHE/banner_new.json"
+            sleep 2
+        done
+    else
+        log "[×] Invalid URL domain: $SELECTED_URL (only GitHub or Gitee allowed)"
+    fi
 fi
 
 if [ $SUCCESS -eq 0 ]; then
@@ -254,7 +258,7 @@ log() {
 
 LAST=$(uci -q get banner.banner.last_update || echo 0)
 NOW=$(date +%s)
-INTERVAL=86400
+INTERVAL=43200
 
 [ $((NOW - LAST)) -lt $INTERVAL ] && exit 0
 
@@ -273,18 +277,22 @@ SELECTED_URL=$(uci -q get banner.banner.selected_url)
 SUCCESS=0
 
 if [ -n "$SELECTED_URL" ] && validate_url "$SELECTED_URL"; then
-    for i in 1 2 3; do
-        log "Selected URL Attempt $i/3 ($SELECTED_URL)..."
-        curl -sL --max-time 15 "$SELECTED_URL" -o "$CACHE/banner_new.json" 2>/dev/null
-        if [ -s "$CACHE/banner_new.json" ] && jq empty "$CACHE/banner_new.json" 2>/dev/null; then
-            log "[√] Selected URL Download Successful (Valid JSON)"
-            SUCCESS=1
-            break
-        fi
-        log "[×] Selected URL Attempt $i Failed or Invalid JSON"
-        rm -f "$CACHE/banner_new.json"
-        sleep 3
-    done
+    if echo "$SELECTED_URL" | grep -qE '^(https://raw\.githubusercontent\.com|https://gitee\.com)/'; then
+        for i in 1 2 3; do
+            log "Selected URL Attempt $i/3 ($SELECTED_URL)..."
+            curl -sL --max-time 15 "$SELECTED_URL" -o "$CACHE/banner_new.json" 2>/dev/null
+            if [ -s "$CACHE/banner_new.json" ] && jq empty "$CACHE/banner_new.json" 2>/dev/null; then
+                log "[√] Selected URL Download Successful (Valid JSON)"
+                SUCCESS=1
+                break
+            fi
+            log "[×] Selected URL Attempt $i Failed or Invalid JSON"
+            rm -f "$CACHE/banner_new.json"
+            sleep 3
+        done
+    else
+        log "[×] Invalid URL domain: $SELECTED_URL (only GitHub or Gitee allowed)"
+    fi
 fi
 
 if [ $SUCCESS -eq 0 ]; then
@@ -342,7 +350,6 @@ fi
 AUTOUPDATE
 
 # 背景图加载器
-cat > "$PKG_DIR/root/usr/bin/banner_bg_loader.sh" <<'BGLOADER'
 #!/bin/sh
 BG_GROUP=${1:-1}
 LOG="/tmp/banner_bg.log"
@@ -359,6 +366,19 @@ fi
 
 mkdir -p "$CACHE" "$WEB" "$PERSISTENT"
 
+# -------------------------------
+# 单实例锁
+LOCK_DIR="/tmp/banner_bg_loader.lock"
+
+if ! mkdir "$LOCK_DIR" 2>/dev/null; then
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] 另一个下载任务正在运行" >> "$LOG"
+    exit 1
+fi
+
+# 确保脚本退出时删除锁
+trap 'rm -rf "$LOCK_DIR"' EXIT
+
+# -------------------------------
 log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" >> "$LOG"
     [ -s "$LOG" ] && [ $(stat -f %z "$LOG" 2>/dev/null || stat -c %s "$LOG") -gt 51200 ] && {
@@ -375,6 +395,16 @@ validate_url() {
         *) log "[×] Invalid URL: $url"; return 1 ;;
     esac
 }
+
+# -------------------------------
+# 示例调用日志
+log "开始下载 Banner 背景组 $BG_GROUP"
+# 这里可以放你的下载逻辑，比如 wget/curl 或复制缓存
+# ...
+log "下载完成 Banner 背景组 $BG_GROUP"
+
+# 锁会在脚本结束或被 kill 时自动释放
+
 
 log "加载第 ${BG_GROUP} 组背景图..."
 
@@ -398,16 +428,27 @@ for i in 0 1 2; do
         log "  下载 $KEY..."
         curl -sL --max-time 15 "$URL" -o "$DEST/bg$i.jpg" 2>/dev/null
         if [ -s "$DEST/bg$i.jpg" ]; then
+            if file "$DEST/bg$i.jpg" | grep -q "JPEG"; then
+                jhead -de "$DEST/bg$i.jpg" 2>/dev/null
+                if [ $? -eq 0 ]; then
+                    log "  [√] bg$i.jpg (EXIF cleared)"
+                else
+                    log "  [×] bg$i.jpg EXIF 清除失败"
+                fi
+            else
+                log "  [×] bg$i.jpg 非 JPEG 格式，跳过 EXIF 清除"
+                rm -f "$DEST/bg$i.jpg"
+                continue
+            fi
             chmod 644 "$DEST/bg$i.jpg"
             if [ "$UCI_PERSISTENT" = "1" ]; then
                 cp "$DEST/bg$i.jpg" "$WEB/bg$i.jpg" 2>/dev/null
             fi
-            log "  [√] bg$i.jpg"
             if [ $i -eq 0 ]; then
                 cp "$DEST/bg$i.jpg" "$CACHE/current_bg.jpg" 2>/dev/null
             fi
         else
-            log "  [×] bg$i.jpg 失败"
+            log "  [×] bg$i.jpg 下载失败"
         fi
     else
         log "  [×] $KEY 无效或URL格式错误"
@@ -514,6 +555,13 @@ function action_display()
     if nav_file then
         local success, parsed = pcall(jsonc.parse, nav_file)
         if success and parsed and parsed.nav_tabs then
+            for i, tab in ipairs(parsed.nav_tabs) do
+                for j, link in ipairs(tab.links) do
+                    if not link.url:match("^https?://(raw%.githubusercontent%.com|gitee%.com)/") then
+                        parsed.nav_tabs[i].links[j].url = "#" -- 禁用不可信链接
+                    end
+                end
+            end
             nav_data = parsed
         else
             local log = fs.readfile("/tmp/banner_update.log") or ""
@@ -550,6 +598,16 @@ function action_settings()
     if type(update_urls) ~= "table" then
         update_urls = { update_urls }
     end
+    local display_urls = {}
+    for _, url in ipairs(update_urls) do
+        local display = url
+        if url:match("github.com") then
+            display = "GitHub"
+        elseif url:match("gitee.com") then
+            display = "Gitee"
+        end
+        table.insert(display_urls, {value = url, display = display})
+    end
     local persistent = uci:get("banner", "banner", "persistent_storage") or "0"
     local bg_path = (persistent == "1") and "/overlay/banner" or "/www/luci-static/banner"
     luci.template.render("banner/settings", {
@@ -559,7 +617,7 @@ function action_settings()
         persistent_storage = persistent,
         last_update = uci:get("banner", "banner", "last_update") or "0",
         remote_message = uci:get("banner", "banner", "remote_message") or "",
-        update_urls = update_urls,
+        display_urls = display_urls,
         selected_url = uci:get("banner", "banner", "selected_url") or "",
         bg_path = bg_path,
         token = luci.dispatcher.context.authsession or "",
@@ -605,9 +663,16 @@ function action_do_set_bg()
 end
 
 function action_do_clear_cache()
-    luci.sys.call("rm -rf /tmp/banner_cache/*.jpg /www/luci-static/banner/bg*.jpg /overlay/banner/bg*.jpg")
+    -- 只清理运行时和持久缓存，不动固件自带背景
+    luci.sys.call("rm -f /tmp/banner_cache/bg*.jpg /overlay/banner/bg*.jpg")
+
+    local fs = require("nixio.fs")
+    local log = fs.readfile("/tmp/banner_bg.log") or ""
+    fs.writefile("/tmp/banner_bg.log", log .. "\n[" .. os.date("%Y-%m-%d %H:%M:%S") .. "] 🗑️ 已清理缓存图片")
+
     luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/background"))
 end
+
 
 function action_do_load_group()
     local uci = require("uci").cursor()
@@ -625,60 +690,116 @@ function action_do_upload_bg()
     local http = require("luci.http")
     local uci = require("uci").cursor()
     local persistent = uci:get("banner", "banner", "persistent_storage") or "0"
-    local dest = "/www/luci-static/banner"
-    if persistent == "1" then
-        dest = "/overlay/banner"
-    end
+    local dest = (persistent == "1") and "/overlay/banner" or "/www/luci-static/banner"
+
     luci.sys.call("mkdir -p " .. dest)
+
+    local tmpfile = dest .. "/bg0.tmp"
+    local finalfile = dest .. "/bg0.jpg"
+
+    local filesize = 0
     http.setfilehandler(function(meta, chunk, eof)
         if not meta then return end
         if meta.name == "bg_file" then
-            local path = dest .. "/upload_temp.jpg"
             if chunk then
-                local fp = io.open(path, meta.file and "ab" or "wb")
+                filesize = filesize + #chunk
+                if filesize > 3145728 then  -- >3MB 丢弃
+                    return
+                end
+                local fp = io.open(tmpfile, meta.file and "ab" or "wb")
                 if fp then
                     fp:write(chunk)
                     fp:close()
                 end
             end
-            if eof and fs.stat(path) then
-                luci.sys.call("cp " .. path .. " " .. dest .. "/bg0.jpg")
-                luci.sys.call("rm -f " .. path)
-                if persistent == "1" then
-                    luci.sys.call("cp " .. dest .. "/bg0.jpg /www/luci-static/banner/bg0.jpg")
+
+            if eof and fs.stat(tmpfile) then
+                local is_jpg = luci.sys.call("file " .. tmpfile .. " | grep -q 'JPEG'") == 0
+                if is_jpg then
+                    fs.rename(tmpfile, finalfile)
+                    local ok = luci.sys.call("jhead -de " .. finalfile .. " 2>/dev/null")
+                    if ok == 0 then
+                        if persistent == "1" then
+                            luci.sys.call("cp '" .. finalfile .. "' /www/luci-static/banner/bg0.jpg")
+                        end
+                        uci:set("banner", "banner", "current_bg", "0")
+                        uci:commit("banner")
+                        local log = fs.readfile("/tmp/banner_bg.log") or ""
+                        fs.writefile("/tmp/banner_bg.log", log .. "\n[" .. os.date("%Y-%m-%d %H:%M:%S") .. "] ✅ 本地上传成功 (JPG, EXIF cleared)")
+                    else
+                        fs.remove(finalfile)
+                        local log = fs.readfile("/tmp/banner_bg.log") or ""
+                        fs.writefile("/tmp/banner_bg.log", log .. "\n[" .. os.date("%Y-%m-%d %H:%M:%S") .. "] ❌ EXIF 清除失败 (JPG)")
+                    end
+                else
+                    fs.remove(tmpfile)
+                    local log = fs.readfile("/tmp/banner_bg.log") or ""
+                    fs.writefile("/tmp/banner_bg.log", log .. "\n[" .. os.date("%Y-%m-%d %H:%M:%S") .. "] ❌ 上传失败: 仅支持 JPG 格式")
                 end
-                uci:set("banner", "banner", "current_bg", "0")
-                uci:commit("banner")
-                local log = fs.readfile("/tmp/banner_bg.log") or ""
-                fs.writefile("/tmp/banner_bg.log", log .. "\n[" .. os.date("%Y-%m-%d %H:%M:%S") .. "] 本地上传成功")
             end
         end
     end)
+
     luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/display"))
 end
 
+
 function action_do_apply_url()
     local uci = require("uci").cursor()
+    local fs = require("nixio.fs")
+    local http = require("luci.http")
+
     local url = luci.http.formvalue("custom_bg_url")
+    if not url or url == "" then
+        return luci.http.write("未填写 URL")
+    end
+
     local persistent = uci:get("banner", "banner", "persistent_storage") or "0"
-    local dest = "/www/luci-static/banner"
-    if persistent == "1" then
-        dest = "/overlay/banner"
-    end
+    local dest = (persistent == "1") and "/overlay/banner" or "/www/luci-static/banner"
+
     luci.sys.call("mkdir -p " .. dest)
-    if url and url:match("^https?://") then
-        luci.sys.call(string.format("curl -sL --max-time 15 '%s' -o %s/bg0.jpg 2>/dev/null", url, dest))
-        if persistent == "1" then
-            luci.sys.call(string.format("cp %s/bg0.jpg /www/luci-static/banner/bg0.jpg", dest))
+
+    if url and url:match("^https://(raw%.githubusercontent%.com|gitee%.com)/.*%.(jpg|jpeg)$") then
+        local tmpfile = dest .. "/bg0.tmp"
+        local finalfile = dest .. "/bg0.jpg"
+        local ok = os.execute(string.format("curl -fsSL --max-time 20 --max-filesize 3145728 '%s' -o '%s'", url, tmpfile))
+
+        if ok == 0 and fs.stat(tmpfile) then
+            local is_jpg = luci.sys.call("file " .. tmpfile .. " | grep -q 'JPEG'") == 0
+            if is_jpg then
+                fs.rename(tmpfile, finalfile)
+                local ok_jhead = luci.sys.call("jhead -de " .. finalfile .. " 2>/dev/null")
+                if ok_jhead == 0 then
+                    if persistent == "1" then
+                        luci.sys.call(string.format("cp '%s' /www/luci-static/banner/bg0.jpg", finalfile))
+                    end
+                    uci:set("banner", "banner", "current_bg", "0")
+                    uci:commit("banner")
+                    local log = fs.readfile("/tmp/banner_bg.log") or ""
+                    fs.writefile("/tmp/banner_bg.log", log .. "\n[" .. os.date("%Y-%m-%d %H:%M:%S") .. "] ✅ 下载成功 (JPG, EXIF cleared): " .. url:match("^https?://[^/]+") .. "/...")
+                else
+                    fs.remove(finalfile)
+                    local log = fs.readfile("/tmp/banner_bg.log") or ""
+                    fs.writefile("/tmp/banner_bg.log", log .. "\n[" .. os.date("%Y-%m-%d %H:%M:%S") .. "] ❌ EXIF 清除失败 (JPG): " .. url:match("^https?://[^/]+") .. "/...")
+                end
+            else
+                fs.remove(tmpfile)
+                local log = fs.readfile("/tmp/banner_bg.log") or ""
+                fs.writefile("/tmp/banner_bg.log", log .. "\n[" .. os.date("%Y-%m-%d %H:%M:%S") .. "] ❌ 下载失败: 仅支持 JPG 格式")
+            end
+        else
+            fs.remove(tmpfile)
+            local log = fs.readfile("/tmp/banner_bg.log") or ""
+            fs.writefile("/tmp/banner_bg.log", log .. "\n[" .. os.date("%Y-%m-%d %H:%M:%S") .. "] ❌ 下载失败: " .. url:match("^https?://[^/]+") .. "/...")
         end
-        uci:set("banner", "banner", "current_bg", "0")
-        uci:commit("banner")
-        local fs = require("nixio.fs")
+    else
         local log = fs.readfile("/tmp/banner_bg.log") or ""
-        fs.writefile("/tmp/banner_bg.log", log .. "\n[" .. os.date("%Y-%m-%d %H:%M:%S") .. "] 远程下载成功: " .. url)
+        fs.writefile("/tmp/banner_bg.log", log .. "\n[" .. os.date("%Y-%m-%d %H:%M:%S") .. "] ⚠️ 非法URL或域名: " .. tostring(url:match("^https?://[^/]+") or url))
     end
+
     luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/display"))
 end
+
 
 function action_do_set_opacity()
     local uci = require("uci").cursor()
@@ -1234,24 +1355,24 @@ cat > "$PKG_DIR/root/usr/lib/lua/luci/view/banner/settings.htm" <<'SETTINGSVIEW'
             </div>
         </div>
         <div class="cbi-value">
-            <label class="cbi-value-title">更新源</label>
-            <div class="cbi-value-field">
-                <form method="post" action="<%=luci.dispatcher.build_url('admin/status/banner/do_set_update_url')%>">
-                    <input type="hidden" name="token" value="<%=token%>" />
-                    <select name="selected_url" style="flex:1;background:rgba(255,255,255,0.9);color:#333">
-                        <% if update_urls and type(update_urls) == "table" then %>
-                            <% for _, url in ipairs(update_urls) do %>
-                                <option value="<%=url%>" <%=url==selected_url and 'selected' or ''%>><%=url%></option>
-                            <% end %>
-                        <% else %>
-                            <option value="">无可用更新源</option>
-                        <% end %>
-                    </select>
-                    <input type="submit" class="cbi-button cbi-button-apply" value="选择更新源" />
-                </form>
-                <p style="color:#aaa;font-size:12px">💡 选择优先使用的更新源</p>
-            </div>
-        </div>
+    <label class="cbi-value-title">更新源</label>
+    <div class="cbi-value-field">
+        <form method="post" action="<%=luci.dispatcher.build_url('admin/status/banner/do_set_update_url')%>">
+            <input type="hidden" name="token" value="<%=token%>" />
+            <select name="selected_url" style="flex:1;background:rgba(255,255,255,0.9);color:#333">
+                <% if display_urls and type(display_urls) == "table" then %>
+                    <% for _, item in ipairs(display_urls) do %>
+                        <option value="<%=item.value%>" <%=item.value==selected_url and 'selected' or ''%>><%=item.display%></option>
+                    <% end %>
+                <% else %>
+                    <option value="">无可用更新源</option>
+                <% end %>
+            </select>
+            <input type="submit" class="cbi-button cbi-button-apply" value="选择更新源" />
+        </form>
+        <p style="color:#aaa;font-size:12px">💡 选择优先使用的更新源（GitHub 或 Gitee）</p>
+    </div>
+</div>
         <div class="cbi-value">
             <label class="cbi-value-title">公告文本</label>
             <div class="cbi-value-field">
@@ -1262,7 +1383,7 @@ cat > "$PKG_DIR/root/usr/lib/lua/luci/view/banner/settings.htm" <<'SETTINGSVIEW'
         <div class="cbi-value">
             <label class="cbi-value-title">自动更新间隔</label>
             <div class="cbi-value-field">
-                <input type="text" value="86400 秒 (24小时)" disabled style="background:rgba(200,200,200,0.5);color:#333">
+                <input type="text" value="43200 秒 (12小时)" disabled style="background:rgba(200,200,200,0.5);color:#333">
                 <p style="color:#5cb85c;font-size:12px">✓ 已启用 (系统锁定，不可修改)</p>
             </div>
         </div>
@@ -1412,27 +1533,36 @@ cat > "$PKG_DIR/root/usr/lib/lua/luci/view/banner/background.htm" <<'BGVIEW'
             </div>
         </div>
         <div class="cbi-value">
-            <label class="cbi-value-title">手动填写背景图链接</label>
-            <div class="cbi-value-field">
-                <form method="post" action="<%=luci.dispatcher.build_url('admin/status/banner/do_apply_url')%>">
-                    <input type="hidden" name="token" value="<%=token%>" />
-                    <input type="text" name="custom_bg_url" placeholder="https://example.com/image.jpg" style="width:65%;background:rgba(255,255,255,0.9);color:#333" />
-                    <input type="submit" class="cbi-button cbi-button-apply" value="应用链接" />
-                </form>
-                <p style="color:#aaa;font-size:12px">📌 仅支持 HTTPS 链接（JPG/PNG），应用后覆盖 bg0.jpg</p>
-            </div>
-        </div>
-        <div class="cbi-value">
-            <label class="cbi-value-title">从本地上传背景图</label>
-            <div class="cbi-value-field">
-                <form method="post" action="<%=luci.dispatcher.build_url('admin/status/banner/do_upload_bg')%>" enctype="multipart/form-data">
-                    <input type="hidden" name="token" value="<%=token%>" />
-                    <input type="file" name="bg_file" accept="image/jpeg,image/png" />
-                    <input type="submit" class="cbi-button cbi-button-apply" value="上传并应用" />
-                </form>
-                <p style="color:#aaa;font-size:12px">📤 支持 JPG/PNG，上传后覆盖 bg0.jpg</p>
-            </div>
-        </div>
+    <label class="cbi-value-title">手动填写背景图链接</label>
+    <div class="cbi-value-field">
+        <form id="customBgForm" method="post" action="<%=luci.dispatcher.build_url('admin/status/banner/do_apply_url')%>">
+            <input type="hidden" name="token" value="<%=token%>" />
+            <input type="text" name="custom_bg_url" placeholder="https://raw.githubusercontent.com/.../image.jpg" style="width:65%;background:rgba(255,255,255,0.9);color:#333" />
+            <input type="submit" class="cbi-button cbi-button-apply" value="应用链接" />
+        </form>
+        <script>
+        document.getElementById('customBgForm').addEventListener('submit', function(e){
+            var url = this.custom_bg_url.value.trim();
+            if (!url.startsWith('https://') || !url.match(/\.(jpg|jpeg)$/) || !url.match(/^(https:\/\/raw\.githubusercontent\.com|https:\/\/gitee\.com)/)) {
+                e.preventDefault();
+                alert('⚠️ 仅支持 HTTPS 链接、JPG 格式和 GitHub/Gitee 域名，请输入正确 URL');
+            }
+        });
+        </script>
+        <p style="color:#aaa;font-size:12px">📌 仅支持 HTTPS 链接（JPG，GitHub/Gitee），应用后覆盖 bg0.jpg</p>
+    </div>
+</div>
+<div class="cbi-value">
+    <label class="cbi-value-title">从本地上传背景图</label>
+    <div class="cbi-value-field">
+        <form method="post" action="<%=luci.dispatcher.build_url('admin/status/banner/do_upload_bg')%>" enctype="multipart/form-data">
+            <input type="hidden" name="token" value="<%=token%>" />
+            <input type="file" name="bg_file" accept="image/jpeg" />
+            <input type="submit" class="cbi-button cbi-button-apply" value="上传并应用" />
+        </form>
+        <p style="color:#aaa;font-size:12px">📤 仅支持 JPG，上传后覆盖 bg0.jpg</p>
+    </div>
+</div>
         <div class="cbi-value">
             <label class="cbi-value-title">删除缓存图片</label>
             <div class="cbi-value-field">

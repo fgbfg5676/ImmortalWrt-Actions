@@ -45,7 +45,8 @@ define Package/luci-app-banner
   CATEGORY:=LuCI
   SUBMENU:=3. Applications
   TITLE:=LuCI Support for Banner Navigation
-  DEPENDS:=+curl +jsonfilter +luci-base +jq +jhead
+  DEPENDS:=+curl +jsonfilter +luci-base +jq
+  DEPENDS+=+PACKAGE_jhead:jhead
   PKGARCH:=all
 endef
 
@@ -74,6 +75,9 @@ endef
 define Package/luci-app-banner/postinst
 #!/bin/sh
 [ -n "$${IPKG_INSTROOT}" ] || {
+	# 确保命令存在
+	command -v uci >/dev/null 2>&1 || exit 0
+	
 	mkdir -p /tmp/banner_cache
 	mkdir -p /overlay/banner
 	[ -f /www/luci-static/banner/default_bg.jpg ] || {
@@ -148,6 +152,12 @@ log() {
     }
 }
 
+# 跳过编译时的 UCI 操作
+if ! command -v uci >/dev/null 2>&1; then
+    log "Skipping UCI operations in build environment (uci not found)"
+    exit 0
+fi
+
 log "========== Manual Update Started =========="
 
 validate_url() {
@@ -163,22 +173,18 @@ SELECTED_URL=$(uci -q get banner.banner.selected_url)
 SUCCESS=0
 
 if [ -n "$SELECTED_URL" ] && validate_url "$SELECTED_URL"; then
-    if echo "$SELECTED_URL" | grep -qE '^(https://raw\.githubusercontent\.com|https://gitee\.com)/'; then
-        for i in 1 2 3; do
-            log "Selected URL Attempt $i/3 ($SELECTED_URL)..."
-            curl -sL --max-time 15 "$SELECTED_URL" -o "$CACHE/banner_new.json" 2>/dev/null
-            if [ -s "$CACHE/banner_new.json" ] && jq empty "$CACHE/banner_new.json" 2>/dev/null; then
-                log "[√] Selected URL Download Successful (Valid JSON)"
-                SUCCESS=1
-                break
-            fi
-            log "[×] Selected URL Attempt $i Failed or Invalid JSON"
-            rm -f "$CACHE/banner_new.json"
-            sleep 2
-        done
-    else
-        log "[×] Invalid URL domain: $SELECTED_URL (only GitHub or Gitee allowed)"
-    fi
+    for i in 1 2 3; do
+        log "Selected URL Attempt $i/3 ($SELECTED_URL)..."
+        curl -sL --max-time 15 "$SELECTED_URL" -o "$CACHE/banner_new.json" 2>/dev/null
+        if [ -s "$CACHE/banner_new.json" ] && jq empty "$CACHE/banner_new.json" 2>/dev/null; then
+            log "[√] Selected URL Download Successful (Valid JSON)"
+            SUCCESS=1
+            break
+        fi
+        log "[×] Selected URL Attempt $i Failed or Invalid JSON"
+        rm -f "$CACHE/banner_new.json"
+        sleep 2
+    done
 fi
 
 if [ $SUCCESS -eq 0 ]; then
@@ -234,7 +240,6 @@ else
     log "[×] All Sources Failed or Invalid JSON, keeping old nav_data.json"
 fi
 MANUALUPDATE
-
 # 自动更新脚本
 cat > "$PKG_DIR/root/usr/bin/banner_auto_update.sh" <<'AUTOUPDATE'
 #!/bin/sh
@@ -256,9 +261,15 @@ log() {
     }
 }
 
+# 跳过编译时的 UCI 操作
+if ! command -v uci >/dev/null 2>&1; then
+    log "Skipping UCI operations in build environment (uci not found)"
+    exit 0
+fi
+
 LAST=$(uci -q get banner.banner.last_update || echo 0)
 NOW=$(date +%s)
-INTERVAL=43200
+INTERVAL=86400
 
 [ $((NOW - LAST)) -lt $INTERVAL ] && exit 0
 
@@ -277,22 +288,18 @@ SELECTED_URL=$(uci -q get banner.banner.selected_url)
 SUCCESS=0
 
 if [ -n "$SELECTED_URL" ] && validate_url "$SELECTED_URL"; then
-    if echo "$SELECTED_URL" | grep -qE '^(https://raw\.githubusercontent\.com|https://gitee\.com)/'; then
-        for i in 1 2 3; do
-            log "Selected URL Attempt $i/3 ($SELECTED_URL)..."
-            curl -sL --max-time 15 "$SELECTED_URL" -o "$CACHE/banner_new.json" 2>/dev/null
-            if [ -s "$CACHE/banner_new.json" ] && jq empty "$CACHE/banner_new.json" 2>/dev/null; then
-                log "[√] Selected URL Download Successful (Valid JSON)"
-                SUCCESS=1
-                break
-            fi
-            log "[×] Selected URL Attempt $i Failed or Invalid JSON"
-            rm -f "$CACHE/banner_new.json"
-            sleep 3
-        done
-    else
-        log "[×] Invalid URL domain: $SELECTED_URL (only GitHub or Gitee allowed)"
-    fi
+    for i in 1 2 3; do
+        log "Selected URL Attempt $i/3 ($SELECTED_URL)..."
+        curl -sL --max-time 15 "$SELECTED_URL" -o "$CACHE/banner_new.json" 2>/dev/null
+        if [ -s "$CACHE/banner_new.json" ] && jq empty "$CACHE/banner_new.json" 2>/dev/null; then
+            log "[√] Selected URL Download Successful (Valid JSON)"
+            SUCCESS=1
+            break
+        fi
+        log "[×] Selected URL Attempt $i Failed or Invalid JSON"
+        rm -f "$CACHE/banner_new.json"
+        sleep 3
+    done
 fi
 
 if [ $SUCCESS -eq 0 ]; then
@@ -348,37 +355,16 @@ else
     log "[×] All Sources Failed or Invalid JSON, keeping old nav_data.json"
 fi
 AUTOUPDATE
-
 # 背景图加载器
+cat > "$PKG_DIR/root/usr/bin/banner_bg_loader.sh" <<'BGLOADER'
 #!/bin/sh
 BG_GROUP=${1:-1}
 LOG="/tmp/banner_bg.log"
 CACHE="/tmp/banner_cache"
 WEB="/www/luci-static/banner"
 PERSISTENT="/overlay/banner"
-UCI_PERSISTENT=$(uci -q get banner.banner.persistent_storage || echo 0)
 
-if [ "$UCI_PERSISTENT" = "1" ]; then
-    DEST="$PERSISTENT"
-else
-    DEST="$WEB"
-fi
-
-mkdir -p "$CACHE" "$WEB" "$PERSISTENT"
-
-# -------------------------------
-# 单实例锁
-LOCK_DIR="/tmp/banner_bg_loader.lock"
-
-if ! mkdir "$LOCK_DIR" 2>/dev/null; then
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] 另一个下载任务正在运行" >> "$LOG"
-    exit 1
-fi
-
-# 确保脚本退出时删除锁
-trap 'rm -rf "$LOCK_DIR"' EXIT
-
-# -------------------------------
+# 定义日志函数（必须在所有使用之前）
 log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" >> "$LOG"
     [ -s "$LOG" ] && [ $(stat -f %z "$LOG" 2>/dev/null || stat -c %s "$LOG") -gt 51200 ] && {
@@ -388,6 +374,33 @@ log() {
     }
 }
 
+# 跳过编译时的 UCI 操作
+if ! command -v uci >/dev/null 2>&1; then
+    log "Skipping UCI operations in build environment"
+    DEST="$WEB"
+else
+    UCI_PERSISTENT=$(uci -q get banner.banner.persistent_storage || echo 0)
+    if [ "$UCI_PERSISTENT" = "1" ]; then
+        DEST="$PERSISTENT"
+    else
+        DEST="$WEB"
+    fi
+fi
+
+mkdir -p "$CACHE" "$WEB" "$PERSISTENT"
+
+# 单实例锁
+LOCK_DIR="/tmp/banner_bg_loader.lock"
+
+if ! mkdir "$LOCK_DIR" 2>/dev/null; then
+    log "另一个下载任务正在运行"
+    exit 1
+fi
+
+# 确保脚本退出时删除锁
+trap 'rm -rf "$LOCK_DIR"' EXIT
+
+# URL 验证函数
 validate_url() {
     local url=$1
     case "$url" in
@@ -396,16 +409,7 @@ validate_url() {
     esac
 }
 
-# -------------------------------
-# 示例调用日志
-log "开始下载 Banner 背景组 $BG_GROUP"
-# 这里可以放你的下载逻辑，比如 wget/curl 或复制缓存
-# ...
-log "下载完成 Banner 背景组 $BG_GROUP"
-
-# 锁会在脚本结束或被 kill 时自动释放
-
-
+# 开始下载背景图
 log "加载第 ${BG_GROUP} 组背景图..."
 
 echo "loading" > "$CACHE/bg_loading"
@@ -429,11 +433,15 @@ for i in 0 1 2; do
         curl -sL --max-time 15 "$URL" -o "$DEST/bg$i.jpg" 2>/dev/null
         if [ -s "$DEST/bg$i.jpg" ]; then
             if file "$DEST/bg$i.jpg" | grep -q "JPEG"; then
-                jhead -de "$DEST/bg$i.jpg" 2>/dev/null
-                if [ $? -eq 0 ]; then
-                    log "  [√] bg$i.jpg (EXIF cleared)"
+                if command -v jhead >/dev/null 2>&1; then
+                    jhead -de "$DEST/bg$i.jpg" 2>/dev/null
+                    if [ $? -eq 0 ]; then
+                        log "  [√] bg$i.jpg (EXIF cleared)"
+                    else
+                        log "  [×] bg$i.jpg EXIF 清除失败"
+                    fi
                 else
-                    log "  [×] bg$i.jpg EXIF 清除失败"
+                    log "  [!] jhead 未安装，跳过 EXIF 清除"
                 fi
             else
                 log "  [×] bg$i.jpg 非 JPEG 格式，跳过 EXIF 清除"
@@ -483,6 +491,11 @@ START=99
 USE_PROCD=1
 
 start() {
+    # 跳过编译时的启动操作
+    if ! command -v uci >/dev/null 2>&1; then
+        return 0
+    fi
+    
     if [ ! -s /tmp/banner_cache/current_bg.jpg ]; then
         if [ -s /www/luci-static/banner/bg0.jpg ]; then
             cp /www/luci-static/banner/bg0.jpg /tmp/banner_cache/current_bg.jpg 2>/dev/null
@@ -860,7 +873,7 @@ CONTROLLER
 # 全局样式 - 修复版（使用 /tmp/banner_cache 路径）
 cat > "$PKG_DIR/root/usr/lib/lua/luci/view/banner/global_style.htm" <<'GLOBALSTYLE'
 <%
-local uci = require "luci.model.uci".cursor()
+local uci = require("uci").cursor()
 local opacity = tonumber(uci:get("banner", "banner", "opacity") or "50")
 local alpha = (100 - opacity) / 100
 local bg_path = "/tmp/banner_cache"

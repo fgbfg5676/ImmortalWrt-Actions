@@ -18,7 +18,7 @@
 sed -i '$a src-git my_packages https://github.com/Gzxhwq/openwrt-packages' feeds.conf.default
 # sed -i '$a src-git passwall_packages https://github.com/xiaorouji/openwrt-passwall-packages' feeds.conf.default
 
-#Add external packages
+# Add external packages
 # svn co https://github.com/ophub/luci-app-amlogic/trunk/luci-app-amlogic package/others/luci-app-amlogic
 # svn co https://github.com/QiuSimons/openwrt-mos/trunk/v2ray-geodata package/others/v2ray-geodata
 
@@ -36,3 +36,11 @@ git submodule add https://github.com/Gzxhwq/openwrt-packages.git package/others/
 # git submodule add https://github.com/ophub/luci-app-amlogic.git package/others/luci-app-amlogic
 # git submodule add https://github.com/xiaorouji/openwrt-passwall.git package/others/luci-app-passwall
 git submodule add https://github.com/xiaorouji/openwrt-passwall2.git package/others/luci-app-passwall2
+
+# 确保 jhead 包可用
+echo "[diy-part1] 安装 jhead 包..."
+./scripts/feeds update -a
+./scripts/feeds install jhead
+echo "CONFIG_PACKAGE_jhead=y" >> .config
+make defconfig
+echo "[diy-part1] jhead 配置完成"

@@ -37,10 +37,3 @@ git submodule add https://github.com/Gzxhwq/openwrt-packages.git package/others/
 # git submodule add https://github.com/xiaorouji/openwrt-passwall.git package/others/luci-app-passwall
 git submodule add https://github.com/xiaorouji/openwrt-passwall2.git package/others/luci-app-passwall2
 
-# 确保 jhead 包可用
-echo "[diy-part1] 安装 jhead 包..."
-./scripts/feeds update -a
-./scripts/feeds install jhead
-echo "CONFIG_PACKAGE_jhead=y" >> .config
-make defconfig
-echo "[diy-part1] jhead 配置完成"

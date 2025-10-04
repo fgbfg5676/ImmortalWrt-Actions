@@ -379,6 +379,7 @@ validate_url() {
 log "加载第 ${BG_GROUP} 组背景图..."
 
 echo "loading" > "$CACHE/bg_loading"
+rm -f "$CACHE/bg_complete"
 
 START_IDX=$(( (BG_GROUP - 1) * 3 + 1 ))
 JSON="$CACHE/nav_data.json"
@@ -501,6 +502,7 @@ function index()
     entry({"admin", "status", "banner", "do_set_carousel_interval"}, post("action_do_set_carousel_interval")).leaf = true
     entry({"admin", "status", "banner", "do_set_update_url"}, post("action_do_set_update_url")).leaf = true
     entry({"admin", "status", "banner", "do_set_persistent_storage"}, post("action_do_set_persistent_storage")).leaf = true
+    entry({"admin", "status", "banner", "check_bg_complete"}, call("action_check_bg_complete")).leaf = true
 end
 
 function action_display()
@@ -536,7 +538,8 @@ function action_display()
         banner_texts = banner_texts,
         nav_data = nav_data,
         persistent = persistent,
-        bg_path = bg_path
+        bg_path = bg_path,
+        token = luci.dispatcher.context.authsession or ""
     })
 end
 
@@ -559,6 +562,7 @@ function action_settings()
         update_urls = update_urls,
         selected_url = uci:get("banner", "banner", "selected_url") or "",
         bg_path = bg_path,
+        token = luci.dispatcher.context.authsession or "",
         log = fs.readfile("/tmp/banner_update.log") or "暂无日志"
     })
 end
@@ -574,6 +578,7 @@ function action_background()
         current_bg = uci:get("banner", "banner", "current_bg") or "0",
         persistent_storage = persistent,
         bg_path = bg_path,
+        token = luci.dispatcher.context.authsession or "",
         log = fs.readfile("/tmp/banner_bg.log") or "暂无日志"
     })
 end
@@ -719,6 +724,15 @@ function action_do_set_persistent_storage()
         end
     end
     luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/settings"))
+end
+
+function action_check_bg_complete()
+    local fs = require("nixio.fs")
+    if fs.access("/tmp/banner_cache/bg_complete") then
+        luci.http.write("complete")
+    else
+        luci.http.write("pending")
+    end
 end
 CONTROLLER
 

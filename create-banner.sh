@@ -83,9 +83,8 @@ define Package/luci-app-banner/postinst
 		[ -f /rom/www/luci-static/banner/default_bg.jpg ] && cp /rom/www/luci-static/banner/default_bg.jpg /www/luci-static/banner/default_bg.jpg
 	}
 	/etc/init.d/banner enable
-	/usr/bin/banner_manual_update.sh >/dev/null 2>&1 &
-	sleep 2
-	/usr/bin/banner_bg_loader.sh 1 >/dev/null 2>&1 &
+	# 先手动更新,等待完成后再加载背景
+/usr/bin/banner_manual_update.sh && sleep 5 && /usr/bin/banner_bg_loader.sh 1 >/dev/null 2>&1 &
 	/etc/init.d/nginx restart 2>/dev/null || /etc/init.d/uhttpd restart 2>/dev/null
 }
 exit 0
@@ -206,9 +205,10 @@ if [ $SUCCESS -eq 0 ]; then
         fi
     done
 fi
-
 if [ $SUCCESS -eq 1 ] && [ -s "$CACHE/banner_new.json" ]; then
+    log "[✓] JSON 下载成功,文件大小: $(stat -c %s "$CACHE/banner_new.json") 字节"
     ENABLED=$(jq -r '.enabled // "true"' "$CACHE/banner_new.json")
+
     if [ "$ENABLED" = "false" ] || [ "$ENABLED" = "0" ]; then
         MSG=$(jq -r '.disable_message // "服务已被管理员关闭"' "$CACHE/banner_new.json")
         uci set banner.banner.bg_enabled='0'
@@ -385,14 +385,41 @@ else
         DEST="$WEB"
     fi
 fi
+# 等待 nav_data.json 生成(最多等 10 秒)
+JSON="$CACHE/nav_data.json"
+WAIT_COUNT=0
+while [ ! -f "$JSON" ] && [ $WAIT_COUNT -lt 10 ]; do
+    log "等待 nav_data.json 生成... ($WAIT_COUNT/10)"
+    sleep 1
+    WAIT_COUNT=$((WAIT_COUNT + 1))
+done
 
+if [ ! -f "$JSON" ]; then
+    log "[×] 超时:nav_data.json 未生成,使用默认背景"
+    if [ -s "$WEB/default_bg.jpg" ]; then
+        cp "$WEB/default_bg.jpg" "$CACHE/current_bg.jpg" 2>/dev/null
+    fi
+    exit 1
+fi
 mkdir -p "$CACHE" "$WEB" "$PERSISTENT"
 
 # 单实例锁
 LOCK_DIR="/tmp/banner_bg_loader.lock"
 
+# 检查锁是否超过 5 分钟(可能是僵尸锁)
+if [ -d "$LOCK_DIR" ]; then
+    LOCK_AGE=$(($(date +%s) - $(stat -c %Y "$LOCK_DIR" 2>/dev/null || echo 0)))
+    if [ $LOCK_AGE -gt 300 ]; then
+        log "清理超时锁 (${LOCK_AGE}秒)"
+        rm -rf "$LOCK_DIR"
+    else
+        log "另一个下载任务正在运行 (${LOCK_AGE}秒前)"
+        exit 1
+    fi
+fi
+
 if ! mkdir "$LOCK_DIR" 2>/dev/null; then
-    log "另一个下载任务正在运行"
+    log "无法创建锁"
     exit 1
 fi
 
@@ -417,7 +444,23 @@ rm -f "$CACHE/bg_complete"
 START_IDX=$(( (BG_GROUP - 1) * 3 + 1 ))
 JSON="$CACHE/nav_data.json"
 
-[ ! -f "$JSON" ] && log "[×] 数据文件未找到" && rm -f "$CACHE/bg_loading" && exit 1
+if [ ! -f "$JSON" ]; then
+    log "[×] 数据文件未找到: $JSON"
+    log "尝试使用默认背景"
+    if [ -s "$WEB/default_bg.jpg" ]; then
+        cp "$WEB/default_bg.jpg" "$CACHE/current_bg.jpg" 2>/dev/null
+        log "[✓] 已复制默认背景"
+    fi
+    rm -f "$CACHE/bg_loading"
+    exit 1
+fi
+
+# 验证 JSON 格式
+if ! jq empty "$JSON" 2>/dev/null; then
+    log "[×] JSON 格式错误: $JSON"
+    rm -f "$CACHE/bg_loading"
+    exit 1
+fi
 
 rm -f "$DEST"/bg{0,1,2}.jpg
 if [ "$UCI_PERSISTENT" = "1" ]; then
@@ -485,7 +528,12 @@ start() {
     if ! command -v uci >/dev/null 2>&1; then
         return 0
     fi
-    
+    # 等待网络就绪(最多 60 秒)
+    WAIT=0
+    while ! ping -c 1 -W 2 8.8.8.8 >/dev/null 2>&1 && [ $WAIT -lt 60 ]; do
+        sleep 2
+        WAIT=$((WAIT + 2))
+    done
     if [ ! -s /tmp/banner_cache/current_bg.jpg ]; then
         if [ -s /www/luci-static/banner/bg0.jpg ]; then
             cp /www/luci-static/banner/bg0.jpg /tmp/banner_cache/current_bg.jpg 2>/dev/null
@@ -547,12 +595,34 @@ function index()
     entry({"admin", "status", "banner", "do_set_update_url"}, post("action_do_set_update_url")).leaf = true
     entry({"admin", "status", "banner", "do_set_persistent_storage"}, post("action_do_set_persistent_storage")).leaf = true
     entry({"admin", "status", "banner", "check_bg_complete"}, call("action_check_bg_complete")).leaf = true
+    entry({"admin", "status", "banner", "do_reset_defaults"}, post("action_do_reset_defaults")).leaf = true
 end
 
-function action_display()
+       function action_display()
     local uci = require("uci").cursor()
     local fs = require("nixio.fs")
-    local jsonc = require("luci.jsonc")
+    local jsonc = require("luci.jsonc")  
+    -- 优先检查远程禁用状态
+    local bg_enabled = uci:get("banner", "banner", "bg_enabled") or "1"
+    if bg_enabled == "0" then
+        local remote_msg = uci:get("banner", "banner", "remote_message") or "服务已被远程禁用"
+        luci.template.render("banner/display", {
+            text = "",
+            color = "rainbow",
+            opacity = uci:get("banner", "banner", "opacity") or "50",
+            carousel_interval = "5000",
+            current_bg = "0",
+            bg_enabled = "0",
+            remote_message = remote_msg,
+            banner_texts = "",
+            nav_data = { nav_tabs = {} },
+            persistent = uci:get("banner", "banner", "persistent_storage") or "0",
+            bg_path = "/tmp/banner_cache",
+            token = luci.dispatcher.context.authsession or ""
+        })
+        return
+    end
+    
     local nav_file = fs.readfile("/tmp/banner_cache/nav_data.json")
     local nav_data = { nav_tabs = {} }
     if nav_file then
@@ -561,7 +631,7 @@ function action_display()
             for i, tab in ipairs(parsed.nav_tabs) do
                 for j, link in ipairs(tab.links) do
                     if not link.url:match("^https?://(raw%.githubusercontent%.com|gitee%.com)/") then
-                        parsed.nav_tabs[i].links[j].url = "#" -- 禁用不可信链接
+                        parsed.nav_tabs[i].links[j].url = "#"
                     end
                 end
             end
@@ -574,6 +644,7 @@ function action_display()
         local log = fs.readfile("/tmp/banner_update.log") or ""
         fs.writefile("/tmp/banner_update.log", log .. "\n[" .. os.date("%Y-%m-%d %H:%M:%S") .. "] nav_data.json 文件不存在")
     end
+    
     local banner_texts = uci:get("banner", "banner", "banner_texts") or ""
     local persistent = uci:get("banner", "banner", "persistent_storage") or "0"
     local bg_path = (persistent == "1") and "/overlay/banner" or "/www/luci-static/banner"
@@ -584,7 +655,7 @@ function action_display()
         opacity = uci:get("banner", "banner", "opacity") or "50",
         carousel_interval = uci:get("banner", "banner", "carousel_interval") or "5000",
         current_bg = uci:get("banner", "banner", "current_bg") or "0",
-        bg_enabled = uci:get("banner", "banner", "bg_enabled") or "1",
+        bg_enabled = bg_enabled,
         remote_message = uci:get("banner", "banner", "remote_message") or "",
         banner_texts = banner_texts,
         nav_data = nav_data,
@@ -692,54 +763,121 @@ function action_do_upload_bg()
     local fs = require("nixio.fs")
     local http = require("luci.http")
     local uci = require("uci").cursor()
+    local sys = require("luci.sys")
+    
     local persistent = uci:get("banner", "banner", "persistent_storage") or "0"
     local dest = (persistent == "1") and "/overlay/banner" or "/www/luci-static/banner"
 
-    luci.sys.call("mkdir -p " .. dest)
+    -- 确保目录存在且可写
+    if not fs.stat(dest) then
+        local ok = sys.call("mkdir -p '" .. dest .. "' && chmod 755 '" .. dest .. "'")
+        if ok ~= 0 then
+            local log = fs.readfile("/tmp/banner_bg.log") or ""
+            fs.writefile("/tmp/banner_bg.log", log .. "\n[" .. os.date("%Y-%m-%d %H:%M:%S") .. "] ❌ 无法创建目录: " .. dest)
+            http.redirect(luci.dispatcher.build_url("admin/status/banner/display"))
+            return
+        end
+    end
 
     local tmpfile = dest .. "/bg0.tmp"
     local finalfile = dest .. "/bg0.jpg"
-
     local filesize = 0
+    local upload_failed = false
+    local fail_reason = ""
+
     http.setfilehandler(function(meta, chunk, eof)
         if not meta then return end
+        
         if meta.name == "bg_file" then
             if chunk then
                 filesize = filesize + #chunk
-                if filesize > 3145728 then  -- >3MB 丢弃
+                
+                -- 文件大小限制 5MB
+                if filesize > 5242880 then
+                    upload_failed = true
+                    fail_reason = "文件超过 5MB"
+                    fs.remove(tmpfile)
                     return
                 end
+                
                 local fp = io.open(tmpfile, meta.file and "ab" or "wb")
                 if fp then
                     fp:write(chunk)
                     fp:close()
+                else
+                    upload_failed = true
+                    fail_reason = "无法写入临时文件"
+                    return
                 end
             end
 
-            if eof and fs.stat(tmpfile) then
-                local is_jpg = luci.sys.call("file " .. tmpfile .. " | grep -q 'JPEG'") == 0
+            if eof then
+                if upload_failed then
+                    fs.remove(tmpfile)
+                    local log = fs.readfile("/tmp/banner_bg.log") or ""
+                    fs.writefile("/tmp/banner_bg.log", 
+                        log .. "\n[" .. os.date("%Y-%m-%d %H:%M:%S") .. "] ❌ 上传失败: " .. fail_reason)
+                    return
+                end
+                
+                if not fs.stat(tmpfile) then
+                    local log = fs.readfile("/tmp/banner_bg.log") or ""
+                    fs.writefile("/tmp/banner_bg.log", 
+                        log .. "\n[" .. os.date("%Y-%m-%d %H:%M:%S") .. "] ❌ 临时文件不存在")
+                    return
+                end
+
+                -- 多种方式验证 JPEG
+                local is_jpg = false
+                
+                -- 方法1: 使用 file 命令
+                if sys.call("command -v file >/dev/null 2>&1") == 0 then
+                    is_jpg = sys.call("file '" .. tmpfile .. "' | grep -qiE '(JPEG|JPG)'") == 0
+                end
+                
+                -- 方法2: 检查文件头魔数 (FF D8 FF)
+                if not is_jpg then
+                    local fp = io.open(tmpfile, "rb")
+                    if fp then
+                        local header = fp:read(3)
+                        fp:close()
+                        if header and #header == 3 then
+                            local b1, b2, b3 = header:byte(1, 3)
+                            is_jpg = (b1 == 0xFF and b2 == 0xD8 and b3 == 0xFF)
+                        end
+                    end
+                end
+
                 if is_jpg then
                     fs.rename(tmpfile, finalfile)
+                    sys.call("chmod 644 '" .. finalfile .. "'")
+                    
+                    -- 同步到另一个位置
                     if persistent == "1" then
-                          luci.sys.call("cp '" .. finalfile .. "' /www/luci-static/banner/bg0.jpg")
+                        sys.call("cp '" .. finalfile .. "' /www/luci-static/banner/bg0.jpg 2>/dev/null")
                     end
+                    
+                    -- 更新当前背景
+                    sys.call("cp '" .. finalfile .. "' /tmp/banner_cache/current_bg.jpg 2>/dev/null")
+                    
                     uci:set("banner", "banner", "current_bg", "0")
                     uci:commit("banner")
-                    local log = fs.readfile("/tmp/banner_bg.log") or ""
-                    fs.writefile("/tmp/banner_bg.log", log .. "\n[" .. os.date("%Y-%m-%d %H:%M:%S") .. "] ✅ 本地上传成功 (JPG)")
                     
+                    local log = fs.readfile("/tmp/banner_bg.log") or ""
+                    fs.writefile("/tmp/banner_bg.log", 
+                        log .. "\n[" .. os.date("%Y-%m-%d %H:%M:%S") .. "] ✅ 本地上传成功 (" .. filesize .. " 字节)")
                 else
                     fs.remove(tmpfile)
                     local log = fs.readfile("/tmp/banner_bg.log") or ""
-                    fs.writefile("/tmp/banner_bg.log", log .. "\n[" .. os.date("%Y-%m-%d %H:%M:%S") .. "] ❌ 上传失败: 仅支持 JPG 格式")
+                    fs.writefile("/tmp/banner_bg.log", 
+                        log .. "\n[" .. os.date("%Y-%m-%d %H:%M:%S") .. "] ❌ 上传失败: 仅支持 JPG 格式")
                 end
             end
         end
     end)
 
-    luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/display"))
+    http.redirect(luci.dispatcher.build_url("admin/status/banner/display"))
 end
-
 
 function action_do_apply_url()
     local uci = require("uci").cursor()
@@ -754,8 +892,9 @@ function action_do_apply_url()
     local persistent = uci:get("banner", "banner", "persistent_storage") or "0"
     local dest = (persistent == "1") and "/overlay/banner" or "/www/luci-static/banner"
 
-    luci.sys.call("mkdir -p " .. dest)
-
+-- 确保目录存在
+    luci.sys.call("mkdir -p '" .. dest .. "' && chmod 755 '" .. dest .. "'")
+    
     if url and url:match("^https://(raw%.githubusercontent%.com|gitee%.com)/.*%.(jpg|jpeg)$") then
         local tmpfile = dest .. "/bg0.tmp"
         local finalfile = dest .. "/bg0.jpg"
@@ -853,7 +992,37 @@ function action_check_bg_complete()
         luci.http.write("pending")
     end
 end
+
+function action_do_reset_defaults()
+    local uci = require("uci").cursor()
+    local fs = require("nixio.fs")
+    
+    -- 恢复默认配置
+    uci:set("banner", "banner", "text", "🎉 新春特惠 · 技术支持24/7 · 已服务500+用户 · 安全稳定运行")
+    uci:set("banner", "banner", "color", "rainbow")
+    uci:set("banner", "banner", "opacity", "50")
+    uci:set("banner", "banner", "carousel_interval", "5000")
+    uci:set("banner", "banner", "bg_group", "1")
+    uci:set("banner", "banner", "current_bg", "0")
+    uci:set("banner", "banner", "bg_enabled", "1")
+    uci:set("banner", "banner", "persistent_storage", "0")
+    uci:delete("banner", "banner", "remote_message")
+    uci:set("banner", "banner", "last_update", "0")
+    uci:commit("banner")
+    
+    -- 清理缓存
+    luci.sys.call("rm -f /tmp/banner_cache/*.json /tmp/banner_cache/*.jpg")
+    luci.sys.call("rm -f /overlay/banner/*.jpg")
+    
+    -- 记录日志
+    local log = fs.readfile("/tmp/banner_update.log") or ""
+    fs.writefile("/tmp/banner_update.log", 
+        log .. "\n[" .. os.date("%Y-%m-%d %H:%M:%S") .. "] 🔄 已恢复默认配置")
+    
+    luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/settings"))
+end
 CONTROLLER
+
 
 # 全局样式 - 修复版（使用 /tmp/banner_cache 路径）
 cat > "$PKG_DIR/root/usr/lib/lua/luci/view/banner/global_style.htm" <<'GLOBALSTYLE'
@@ -1400,6 +1569,16 @@ cat > "$PKG_DIR/root/usr/lib/lua/luci/view/banner/settings.htm" <<'SETTINGSVIEW'
                 <p style="color:#aaa;font-size:12px">🔄 不受24小时限制，立即执行</p>
             </div>
         </div>
+<div class="cbi-value">
+            <label class="cbi-value-title">恢复默认配置</label>
+            <div class="cbi-value-field">
+                <form method="post" action="<%=luci.dispatcher.build_url('admin/status/banner/do_reset_defaults')%>" onsubmit="return confirm('⚠️ 确定要恢复默认配置吗？\n\n这将清除所有自定义设置和缓存图片！')">
+                    <input type="hidden" name="token" value="<%=token%>" />
+                    <input type="submit" class="cbi-button cbi-button-reset" value="恢复默认值" style="background:rgba(217,83,79,0.9) !important" />
+                </form>
+                <p style="color:#ff6b6b;font-size:12px">⚠️ 将清除所有配置并恢复出厂设置</p>
+            </div>
+        </div>
         <h3 style="color:white">更新日志 (最近20条)</h3>
         <div style="background:rgba(0,0,0,0.5);padding:12px;border-radius:8px;max-height:250px;overflow-y:auto;font-family:monospace;font-size:12px;color:#0f0;white-space:pre-wrap;border:1px solid rgba(255,255,255,0.1)"><%=pcdata(log)%></div>
     </div></div>
@@ -1553,11 +1732,31 @@ cat > "$PKG_DIR/root/usr/lib/lua/luci/view/banner/background.htm" <<'BGVIEW'
 <div class="cbi-value">
     <label class="cbi-value-title">从本地上传背景图</label>
     <div class="cbi-value-field">
-        <form method="post" action="<%=luci.dispatcher.build_url('admin/status/banner/do_upload_bg')%>" enctype="multipart/form-data">
-            <input type="hidden" name="token" value="<%=token%>" />
-            <input type="file" name="bg_file" accept="image/jpeg" />
-            <input type="submit" class="cbi-button cbi-button-apply" value="上传并应用" />
-        </form>
+        <form method="post" action="<%=luci.dispatcher.build_url('admin/status/banner/do_upload_bg')%>" enctype="multipart/form-data" id="uploadForm">
+    <input type="hidden" name="token" value="<%=token%>" />
+    <input type="file" name="bg_file" accept="image/jpeg,image/jpg" id="bgFileInput" required />
+    <input type="submit" class="cbi-button cbi-button-apply" value="上传并应用" />
+</form>
+<script>
+document.getElementById('uploadForm').addEventListener('submit', function(e) {
+    var file = document.getElementById('bgFileInput').files[0];
+    if (!file) {
+        e.preventDefault();
+        alert('⚠️ 请选择文件');
+        return;
+    }
+    if (file.size > 5242880) {
+        e.preventDefault();
+        alert('⚠️ 文件大小不能超过 5MB\n当前: ' + (file.size / 1048576).toFixed(2) + ' MB');
+        return;
+    }
+    if (!file.type.match('image/jp(e)?g')) {
+        e.preventDefault();
+        alert('⚠️ 仅支持 JPG/JPEG 格式\n当前: ' + file.type);
+        return;
+    }
+});
+</script>
         <p style="color:#aaa;font-size:12px">📤 仅支持 JPG，上传后覆盖 bg0.jpg</p>
     </div>
 </div>

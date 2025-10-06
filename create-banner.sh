@@ -253,7 +253,7 @@ log "[√] Removed files older than 3 days"
 CLEANER
 
 # Manual update script
-cat > "$PKG_DIR/root/usr/bin/banner_manual_update.sh" <<MANUALUPDATE
+cat > "$PKG_DIR/root/usr/bin/banner_manual_update.sh" <<'MANUALUPDATE'
 #!/bin/sh
 LOG="/tmp/banner_update.log"
 CACHE="/tmp/banner_cache"
@@ -846,7 +846,7 @@ function action_do_apply_url()
     local url = luci.http.formvalue("custom_bg_url")
 
     -- 簡單的後端格式驗證
-    if not url or not url:match("^https://.*%.jpe?g$") then
+    if not url or not url:match("^https://.*%%.jpe?g$") then
         -- 對於格式明顯錯誤的請求，可以直接忽略或返回錯誤，這裡選擇靜默忽略並跳轉
         luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/display" ))
         return

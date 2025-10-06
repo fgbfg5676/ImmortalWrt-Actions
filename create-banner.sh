@@ -259,7 +259,7 @@ fi
 
 LAST=$(uci -q get banner.banner.last_update || echo 0)
 NOW=$(date +%s)
-INTERVAL=86400
+INTERVAL=10800
 
 [ $((NOW - LAST)) -lt $INTERVAL ] && exit 0
 

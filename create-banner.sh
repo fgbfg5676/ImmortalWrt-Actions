@@ -2065,4 +2065,3 @@ input:checked + .toggle-slider:before {
                 </script>
                 <p style="color:#aaa;font-size:12px"></p>
 				BGVIEW
-

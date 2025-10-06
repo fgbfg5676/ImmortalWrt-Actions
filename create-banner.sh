@@ -106,47 +106,29 @@ define Package/luci-app-banner/install
 endef
 
 define Package/luci-app-banner/postinst
-
 #!/bin/sh
-# 僅在非構建環境中運行
-[ -n "$${IPKG_INSTROOT}" ] && exit 0
-
-# 確保 uci 命令存在
-command -v uci >/dev/null 2>&1 || exit 0
-
-# 創建必要的目錄，抑制錯誤輸出
-mkdir -p /tmp/banner_cache /overlay/banner /www/luci-static/banner 2>/dev/null
-
-# --- 健壯的預設文件複製邏輯 ---
-# 1. 找到插件的安裝路徑
-PKG_INFO_FILE="/usr/lib/ipkg/info/luci-app-banner.list"
-if [ -f "\$PKG_INFO_FILE" ]; then
-    # 從文件列表中安全地提取基礎路徑
-    BASE_DIR=\$(grep -oE '/default/bg_default.jpg$' "\$PKG_INFO_FILE" | sed 's|/default/bg_default.jpg||' | head -n 1)
-    
-    if [ -n "\$BASE_DIR" ]; then
-        DEFAULT_BG="\$BASE_DIR/default/bg_default.jpg"
-        DEST_BG="/www/luci-static/banner/default_bg.jpg"
-        
-        # 2. 僅在源文件存在且目標文件不存在時複製，並檢查複製結果
-        if [ -f "\$DEFAULT_BG" ] && [ ! -f "\$DEST_BG" ]; then
-            cp "\$DEFAULT_BG" "\$DEST_BG" 2>/dev/null
+[ -n "$${IPKG_INSTROOT}" ] || {
+    command -v uci >/dev/null 2>&1 || exit 0
+    mkdir -p /tmp/banner_cache /overlay/banner /www/luci-static/banner 2>/dev/null
+    PKG_INFO_FILE="/usr/lib/ipkg/info/luci-app-banner.list"
+    if [ -f "\$PKG_INFO_FILE" ]; then
+        BASE_DIR=\$(grep -oE '/default/bg_default.jpg$' "\$PKG_INFO_FILE" | sed 's|/default/bg_default.jpg||' | head -n 1)
+        if [ -n "\$BASE_DIR" ]; then
+            DEFAULT_BG="\$BASE_DIR/default/bg_default.jpg"
+            DEST_BG="/www/luci-static/banner/default_bg.jpg"
+            if [ -f "\$DEFAULT_BG" ] && [ ! -f "\$DEST_BG" ]; then
+                cp "\$DEFAULT_BG" "\$DEST_BG" 2>/dev/null
+            fi
         fi
     fi
-fi
-# --- 預設文件複製結束 ---
-
-# 啟用服務並觸發首次更新
-/etc/init.d/banner enable
-/etc/init.d/banner start >/dev/null 2>&1 &
-
-# 平滑重啟 web 服務器
-( sleep 10 && /etc/init.d/nginx restart 2>/dev/null ) &
-( sleep 10 && /etc/init.d/uhttpd restart 2>/dev/null  ) &
-
+    /etc/init.d/banner enable
+    /etc/init.d/banner start >/dev/null 2>&1 &
+    ( sleep 10 && /etc/init.d/nginx restart 2>/dev/null ) &
+    ( sleep 10 && /etc/init.d/uhttpd restart 2>/dev/null  ) &
+}
 exit 0
-
 endef
+
 
 $(eval $(call BuildPackage,luci-app-banner))
 MAKEFILE
@@ -353,13 +335,15 @@ if ! jq empty "\$CACHE/banner_new.json" >/dev/null 2>&1; then
     # 使用一個更強大的 jq 命令來提取所有關鍵字段，並保留其結構
     # 如果某個字段不存在或無效，jq 的 `//` 操作符會提供一個安全的預設值（如空數組 `[]` 或空對象 `{}`）
     # `jq .` 會格式化輸出，確保最終文件是有效的 JSON
-    jq '{
-        text: .text // "內容加載失敗",
-        color: .color // "white",
-        banner_texts: .banner_texts // [],
-        nav_tabs: .nav_tabs // [],
-        contact_info: .contact_info // {}
-    }' "\$CACHE/banner_new.json" > "\$CACHE/banner_partial.json"
+   # --- 用這段新程式碼替換上面的舊程式碼塊 ---
+jq '{
+    text: .text \/\/ "內容加載失敗",
+    color: .color \/\/ "white",
+    banner_texts: .banner_texts \/\/ \[],
+    nav_tabs: .nav_tabs \/\/ \[],
+    contact_info: .contact_info \/\/ {}
+}' "\$CACHE/banner_new.json" > "\$CACHE/banner_partial.json"
+
 
     # 檢查恢復後的文件是否有效且非空
     if [ -s "\$CACHE/banner_partial.json" ] && jq empty "\$CACHE/banner_partial.json" >/dev/null 2>&1; then

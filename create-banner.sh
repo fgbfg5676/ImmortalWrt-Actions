@@ -652,6 +652,7 @@ status() {
 }
 INIT
 
+# --- 用這段新程式碼替換舊的、被截斷的 controller/banner.lua 區塊 ---
 # LuCI Controller
 cat > "$PKG_DIR/root/usr/lib/lua/luci/controller/banner.lua" <<'CONTROLLER'
 module("luci.controller.banner", package.seeall)
@@ -785,18 +786,9 @@ function action_do_load_group()
     luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/background" ))
 end
 
-好的，這是最後一部分。將這三部分拼接後，您將得到一個完整的、未經修改的、可讀性強的 v2.7 最終優化版腳本。
-
----
-
-### **第三部分 (共三部分)**
-
-```bash
-# (This is Part 3 of 3. Please concatenate with Part 1 and 2)
-
 function action_do_upload_bg()
     local fs = require("nixio.fs")
-    local http = require("luci.http")
+    local http = require("luci.http" )
     local uci = require("uci").cursor()
     local sys = require("luci.sys")
     
@@ -807,7 +799,7 @@ function action_do_upload_bg()
     local tmp_file = dest_dir .. "/bg0.tmp"
     local final_file = dest_dir .. "/bg0.jpg"
 
-    http.setfilehandler(function(meta, chunk, eof)
+    http.setfilehandler(function(meta, chunk, eof )
         if not meta or meta.name ~= "bg_file" then return end
         
         if chunk then
@@ -817,10 +809,10 @@ function action_do_upload_bg()
 
         if eof then
             local max_size = tonumber(uci:get("banner", "banner", "max_file_size") or "3145728")
-if fs.stat(tmp_file) and fs.stat(tmp_file).size > max_size then
-    fs.remove(tmp_file)
-    return
-end
+            if fs.stat(tmp_file) and fs.stat(tmp_file).size > max_size then
+                fs.remove(tmp_file)
+                return
+            end
             if sys.call("file '" .. tmp_file .. "' | grep -qiE 'JPEG|JPG'") == 0 then
                 fs.rename(tmp_file, final_file)
                 sys.call("chmod 644 '" .. final_file .. "'")
@@ -835,19 +827,16 @@ end
             end
         end
     end)
-    http.redirect(luci.dispatcher.build_url("admin/status/banner/display"))
+    http.redirect(luci.dispatcher.build_url("admin/status/banner/display" ))
 end
 
--- --- 用這個新函數替換上面的舊函數 ---
 function action_do_apply_url()
     local uci = require("uci").cursor()
     local fs = require("nixio.fs")
     local sys = require("luci.sys")
-    local url = luci.http.formvalue("custom_bg_url")
+    local url = luci.http.formvalue("custom_bg_url" )
 
-    -- 簡單的後端格式驗證
-    if not url or not url:match("^https://.*%%.jpe?g$") then
-        -- 對於格式明顯錯誤的請求，可以直接忽略或返回錯誤，這裡選擇靜默忽略並跳轉
+    if not url or not url:match("^https://.*%.jpe?g$" ) then
         luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/display" ))
         return
     end
@@ -859,29 +848,18 @@ function action_do_apply_url()
     local tmp_file = dest_dir .. "/bg0.tmp"
     local final_file = dest_dir .. "/bg0.jpg"
     
-    -- 統一文件大小限制
     local max_size = uci:get("banner", "banner", "max_file_size") or "3145728"
     local curl_cmd = string.format("curl -fsSL --max-time 20 --max-filesize %s '%s' -o '%s'", max_size, url, tmp_file)
 
-    -- 執行下載
     if os.execute(curl_cmd) == 0 and fs.stat(tmp_file) then
-        -- 下載後進行嚴格的內容驗證
-        -- 1. 檢查文件魔數 (Magic Number)
         local magic_ok = false
         local f = io.open(tmp_file, "rb")
         if f then
-            local magic = f:read(2)
+            if f:read(2) == "\255\216" then magic_ok = true end
             f:close()
-            if magic and magic == "\255\216" then -- 0xFFD8
-                magic_ok = true
-            end
         end
 
-        -- 2. 作為備用，使用 file 命令再次確認
-        local file_cmd_ok = (sys.call("file '" .. tmp_file .. "' | grep -qiE 'JPEG|JPG'") == 0)
-
-        if magic_ok or file_cmd_ok then
-            -- 驗證通過，應用圖片
+        if magic_ok or (sys.call("file '" .. tmp_file .. "' | grep -qiE 'JPEG|JPG'") == 0) then
             fs.rename(tmp_file, final_file)
             if persistent == "1" then
                 sys.call("cp '" .. final_file .. "' /www/luci-static/banner/bg0.jpg 2>/dev/null")
@@ -890,54 +868,51 @@ function action_do_apply_url()
             uci:set("banner", "banner", "current_bg", "0")
             uci:commit("banner")
         else
-            -- 內容驗證失敗，刪除臨時文件
             fs.remove(tmp_file)
         end
     else
-        -- 下載失敗或文件為空，清理臨時文件
         fs.remove(tmp_file)
     end
     
     luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/display" ))
 end
 
-
 function action_do_set_opacity()
     local uci = require("uci").cursor()
-    local opacity = luci.http.formvalue("opacity")
+    local opacity = luci.http.formvalue("opacity" )
     if opacity and tonumber(opacity) and tonumber(opacity) >= 0 and tonumber(opacity) <= 100 then
         uci:set("banner", "banner", "opacity", opacity)
         uci:commit("banner")
     end
-    luci.http.status(200)
+    luci.http.status(200 )
 end
 
 function action_do_set_carousel_interval()
     local uci = require("uci").cursor()
-    local interval = luci.http.formvalue("carousel_interval")
+    local interval = luci.http.formvalue("carousel_interval" )
     if interval and tonumber(interval) and tonumber(interval) >= 1000 and tonumber(interval) <= 30000 then
         uci:set("banner", "banner", "carousel_interval", interval)
         uci:commit("banner")
     else
-        luci.http.status(400)
+        luci.http.status(400 )
         return
     end
-    luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/settings"))
+    luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/settings" ))
 end
 
 function action_do_set_update_url()
     local uci = require("uci").cursor()
-    local selected_url = luci.http.formvalue("selected_url")
-    if selected_url and selected_url:match("^https?://") then
+    local selected_url = luci.http.formvalue("selected_url" )
+    if selected_url and selected_url:match("^https?://" ) then
         uci:set("banner", "banner", "selected_url", selected_url)
         uci:commit("banner")
     end
-    luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/settings"))
+    luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/settings" ))
 end
 
 function action_do_set_persistent_storage()
     local uci = require("uci").cursor()
-    local persistent = luci.http.formvalue("persistent_storage")
+    local persistent = luci.http.formvalue("persistent_storage" )
     if persistent and persistent:match("^[0-1]$") then
         uci:set("banner", "banner", "persistent_storage", persistent)
         uci:commit("banner")
@@ -947,14 +922,14 @@ function action_do_set_persistent_storage()
             luci.sys.call("cp /overlay/banner/bg*.jpg /www/luci-static/banner/ 2>/dev/null")
         end
     end
-    luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/settings"))
+    luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/settings" ))
 end
 
 function action_check_bg_complete()
     if require("nixio.fs").access("/tmp/banner_cache/bg_complete") then
-        luci.http.write("complete")
+        luci.http.write("complete" )
     else
-        luci.http.write("pending")
+        luci.http.write("pending" )
     end
 end
 
@@ -972,9 +947,11 @@ function action_do_reset_defaults()
     uci:set("banner", "banner", "last_update", "0")
     uci:commit("banner")
     luci.sys.call("rm -f /tmp/banner_cache/* /overlay/banner/bg*.jpg /www/luci-static/banner/bg*.jpg")
-    luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/settings"))
+    luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/settings" ))
 end
 CONTROLLER
+# --- 替換結束 ---
+
 
 # Global style view
 cat > "$PKG_DIR/root/usr/lib/lua/luci/view/banner/global_style.htm" <<'GLOBALSTYLE'

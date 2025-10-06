@@ -32,7 +32,7 @@ if [ -z "$PKG_DIR" ]; then
 fi
 
 # 將路徑轉換為絕對路徑以進行標準化比較
-ABS_PKG_DIR=$(readlink -f "$PKG_DIR")
+ABS_PKG_DIR=$(readlink -m "$PKG_DIR")
 
 # 檢查是否指向根目錄、home 目錄或 /etc 等關鍵系統目錄
 case "$ABS_PKG_DIR" in

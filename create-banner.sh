@@ -843,9 +843,9 @@ function action_do_apply_url()
     local uci = require("uci").cursor()
     local fs = require("nixio.fs")
     local sys = require("luci.sys")
-    local url = luci.http.formvalue("custom_bg_url" )
+    local url = luci.http.formvalue("custom_bg_url")
 
-    -- 簡單的後端格式預檢測
+    -- 簡單的後端格式驗證
     if not url or not url:match("^https://.*%.jpe?g$") then
         -- 對於格式明顯錯誤的請求，可以直接忽略或返回錯誤，這裡選擇靜默忽略並跳轉
         luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/display" ))

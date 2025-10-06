@@ -25,7 +25,6 @@ rm -rf "$PKG_DIR"
 mkdir -p "$PKG_DIR"/root/{etc/{config,init.d,cron.d},usr/{bin,lib/lua/luci/{controller,view/banner}},www/luci-static/banner,overlay/banner}
 
 echo "[1.5/3] Skipping default background creation..."
-
 # Create Makefile
 echo "[2/3] Creating Makefile..."
 cat > "$PKG_DIR/Makefile" <<'MAKEFILE'
@@ -517,7 +516,7 @@ status() {
 }
 INIT
 
-# LuCI Controller - FIXED: Update URL display
+# LuCI 控制器 - 修复版（使用 require("uci") 而非 luci.model.uci）
 cat > "$PKG_DIR/root/usr/lib/lua/luci/controller/banner.lua" <<'CONTROLLER'
 module("luci.controller.banner", package.seeall)
 
@@ -540,20 +539,18 @@ function index()
     entry({"admin", "status", "banner", "do_reset_defaults"}, post("action_do_reset_defaults")).leaf = true
 end
 
-function action_display()
+       function action_display()
     local uci = require("uci").cursor()
     local fs = require("nixio.fs")
-    local jsonc = require("luci.jsonc")
-    
+    local jsonc = require("luci.jsonc")  
+    -- 优先检查远程禁用状态
     local bg_enabled = uci:get("banner", "banner", "bg_enabled") or "1"
-    
-    -- FIXED: Check remote disable status first
     if bg_enabled == "0" then
         local remote_msg = uci:get("banner", "banner", "remote_message") or "服务已被远程禁用"
         luci.template.render("banner/display", {
             text = "",
             color = "rainbow",
-            opacity = uci:get("banner", "banner", "opacity") or "90",
+            opacity = uci:get("banner", "banner", "opacity") or "50",
             carousel_interval = "5000",
             current_bg = "0",
             bg_enabled = "0",
@@ -574,13 +571,19 @@ function action_display()
         if success and parsed and parsed.nav_tabs then
             for i, tab in ipairs(parsed.nav_tabs) do
                 for j, link in ipairs(tab.links) do
-                    if not link.url:match("^https?://") then
+                    if not link.url:match("^https?://(raw%.githubusercontent%.com|gitee%.com)/") then
                         parsed.nav_tabs[i].links[j].url = "#"
                     end
                 end
             end
             nav_data = parsed
+        else
+            local log = fs.readfile("/tmp/banner_update.log") or ""
+            fs.writefile("/tmp/banner_update.log", log .. "\n[" .. os.date("%Y-%m-%d %H:%M:%S") .. "] JSON 解析失败")
         end
+    else
+        local log = fs.readfile("/tmp/banner_update.log") or ""
+        fs.writefile("/tmp/banner_update.log", log .. "\n[" .. os.date("%Y-%m-%d %H:%M:%S") .. "] nav_data.json 文件不存在")
     end
     
     local banner_texts = uci:get("banner", "banner", "banner_texts") or ""
@@ -590,7 +593,7 @@ function action_display()
     luci.template.render("banner/display", {
         text = uci:get("banner", "banner", "text") or "欢迎访问福利导航",
         color = uci:get("banner", "banner", "color") or "rainbow",
-        opacity = uci:get("banner", "banner", "opacity") or "90",
+        opacity = uci:get("banner", "banner", "opacity") or "50",
         carousel_interval = uci:get("banner", "banner", "carousel_interval") or "5000",
         current_bg = uci:get("banner", "banner", "current_bg") or "0",
         bg_enabled = bg_enabled,
@@ -606,30 +609,25 @@ end
 function action_settings()
     local uci = require("uci").cursor()
     local fs = require("nixio.fs")
-    
-    -- FIXED: Proper URL display with names
-    local update_urls = uci:get("banner", "banner", "update_urls") or {}
+    local update_urls = uci:get("banner", "banner", "update_urls") or { "https://raw.githubusercontent.com/fgbfg5676/openwrt-banner/main/banner.json" }
     if type(update_urls) ~= "table" then
         update_urls = { update_urls }
     end
-    
     local display_urls = {}
     for _, url in ipairs(update_urls) do
         local display = url
-        if url:match("githubusercontent") then
+        if url:match("github.com") then
             display = "GitHub"
-        elseif url:match("gitee") then
+        elseif url:match("gitee.com") then
             display = "Gitee"
         end
         table.insert(display_urls, {value = url, display = display})
     end
-    
     local persistent = uci:get("banner", "banner", "persistent_storage") or "0"
     local bg_path = (persistent == "1") and "/overlay/banner" or "/www/luci-static/banner"
-    
     luci.template.render("banner/settings", {
         text = uci:get("banner", "banner", "text") or "",
-        opacity = uci:get("banner", "banner", "opacity") or "90",
+        opacity = uci:get("banner", "banner", "opacity") or "50",
         carousel_interval = uci:get("banner", "banner", "carousel_interval") or "5000",
         persistent_storage = persistent,
         last_update = uci:get("banner", "banner", "last_update") or "0",
@@ -649,7 +647,7 @@ function action_background()
     local bg_path = (persistent == "1") and "/overlay/banner" or "/www/luci-static/banner"
     luci.template.render("banner/background", {
         bg_group = uci:get("banner", "banner", "bg_group") or "1",
-        opacity = uci:get("banner", "banner", "opacity") or "90",
+        opacity = uci:get("banner", "banner", "opacity") or "50",
         current_bg = uci:get("banner", "banner", "current_bg") or "0",
         persistent_storage = persistent,
         bg_path = bg_path,
@@ -680,12 +678,16 @@ function action_do_set_bg()
 end
 
 function action_do_clear_cache()
+    -- 只清理运行时和持久缓存，不动固件自带背景
     luci.sys.call("rm -f /tmp/banner_cache/bg*.jpg /overlay/banner/bg*.jpg")
+
     local fs = require("nixio.fs")
     local log = fs.readfile("/tmp/banner_bg.log") or ""
     fs.writefile("/tmp/banner_bg.log", log .. "\n[" .. os.date("%Y-%m-%d %H:%M:%S") .. "] 🗑️ 已清理缓存图片")
+
     luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/background"))
 end
+
 
 function action_do_load_group()
     local uci = require("uci").cursor()
@@ -707,6 +709,7 @@ function action_do_upload_bg()
     local persistent = uci:get("banner", "banner", "persistent_storage") or "0"
     local dest = (persistent == "1") and "/overlay/banner" or "/www/luci-static/banner"
 
+    -- 确保目录存在且可写
     if not fs.stat(dest) then
         local ok = sys.call("mkdir -p '" .. dest .. "' && chmod 755 '" .. dest .. "'")
         if ok ~= 0 then
@@ -730,6 +733,7 @@ function action_do_upload_bg()
             if chunk then
                 filesize = filesize + #chunk
                 
+                -- 文件大小限制 5MB
                 if filesize > 5242880 then
                     upload_failed = true
                     fail_reason = "文件超过 5MB"
@@ -764,12 +768,15 @@ function action_do_upload_bg()
                     return
                 end
 
+                -- 多种方式验证 JPEG
                 local is_jpg = false
                 
+                -- 方法1: 使用 file 命令
                 if sys.call("command -v file >/dev/null 2>&1") == 0 then
                     is_jpg = sys.call("file '" .. tmpfile .. "' | grep -qiE '(JPEG|JPG)'") == 0
                 end
                 
+                -- 方法2: 检查文件头魔数 (FF D8 FF)
                 if not is_jpg then
                     local fp = io.open(tmpfile, "rb")
                     if fp then
@@ -786,10 +793,12 @@ function action_do_upload_bg()
                     fs.rename(tmpfile, finalfile)
                     sys.call("chmod 644 '" .. finalfile .. "'")
                     
+                    -- 同步到另一个位置
                     if persistent == "1" then
                         sys.call("cp '" .. finalfile .. "' /www/luci-static/banner/bg0.jpg 2>/dev/null")
                     end
                     
+                    -- 更新当前背景
                     sys.call("cp '" .. finalfile .. "' /tmp/banner_cache/current_bg.jpg 2>/dev/null")
                     
                     uci:set("banner", "banner", "current_bg", "0")
@@ -824,6 +833,7 @@ function action_do_apply_url()
     local persistent = uci:get("banner", "banner", "persistent_storage") or "0"
     local dest = (persistent == "1") and "/overlay/banner" or "/www/luci-static/banner"
 
+-- 确保目录存在
     luci.sys.call("mkdir -p '" .. dest .. "' && chmod 755 '" .. dest .. "'")
     
     if url and url:match("^https://(raw%.githubusercontent%.com|gitee%.com)/.*%.(jpg|jpeg)$") then
@@ -831,42 +841,43 @@ function action_do_apply_url()
         local finalfile = dest .. "/bg0.jpg"
         local ok = os.execute(string.format("curl -fsSL --max-time 20 --max-filesize 3145728 '%s' -o '%s'", url, tmpfile))
 
-        if ok == 0 and fs.stat(tmpfile) then
-            local is_jpg = luci.sys.call("file " .. tmpfile .. " | grep -q 'JPEG'") == 0
-            if is_jpg then
-                fs.rename(tmpfile, finalfile)
-                if persistent == "1" then
-                    luci.sys.call(string.format("cp '%s' /www/luci-static/banner/bg0.jpg", finalfile))
-                end
-                luci.sys.call(string.format("cp '%s' /tmp/banner_cache/current_bg.jpg", finalfile))
-                uci:set("banner", "banner", "current_bg", "0")
-                uci:commit("banner")
-
-                local log = fs.readfile("/tmp/banner_bg.log") or ""
-                fs.writefile("/tmp/banner_bg.log",
-                    log .. "\n[" .. os.date("%Y-%m-%d %H:%M:%S") ..
-                    "] ✅ 下载成功 (JPG): " .. url:match("^https?://[^/]+") .. "/...")
-            else
-                fs.remove(tmpfile)
-                local log = fs.readfile("/tmp/banner_bg.log") or ""
-                fs.writefile("/tmp/banner_bg.log",
-                    log .. "\n[" .. os.date("%Y-%m-%d %H:%M:%S") ..
-                    "] ❌ 下载失败: 仅支持 JPG 格式")
-            end
-        else
-            fs.remove(tmpfile)
-            local log = fs.readfile("/tmp/banner_bg.log") or ""
-            fs.writefile("/tmp/banner_bg.log",
-                log .. "\n[" .. os.date("%Y-%m-%d %H:%M:%S") ..
-                "] ❌ 下载失败: " .. url:match("^https?://[^/]+") .. "/...")
+       if ok == 0 and fs.stat(tmpfile) then
+    local is_jpg = luci.sys.call("file " .. tmpfile .. " | grep -q 'JPEG'") == 0
+    if is_jpg then
+        fs.rename(tmpfile, finalfile)
+        if persistent == "1" then
+            luci.sys.call(string.format("cp '%s' /www/luci-static/banner/bg0.jpg", finalfile))
         end
+        uci:set("banner", "banner", "current_bg", "0")
+        uci:commit("banner")
+
+        local log = fs.readfile("/tmp/banner_bg.log") or ""
+        fs.writefile("/tmp/banner_bg.log",
+            log .. "\n[" .. os.date("%Y-%m-%d %H:%M:%S") ..
+            "] ✅ 下载成功 (JPG): " .. url:match("^https?://[^/]+") .. "/...")
+    else
+        fs.remove(tmpfile)
+        local log = fs.readfile("/tmp/banner_bg.log") or ""
+        fs.writefile("/tmp/banner_bg.log",
+            log .. "\n[" .. os.date("%Y-%m-%d %H:%M:%S") ..
+            "] ❌ 下载失败: 仅支持 JPG 格式")
+    end
+else
+    fs.remove(tmpfile)
+    local log = fs.readfile("/tmp/banner_bg.log") or ""
+    fs.writefile("/tmp/banner_bg.log",
+        log .. "\n[" .. os.date("%Y-%m-%d %H:%M:%S") ..
+        "] ❌ 下载失败: " .. url:match("^https?://[^/]+") .. "/...")
+end
+
     else
         local log = fs.readfile("/tmp/banner_bg.log") or ""
-        fs.writefile("/tmp/banner_bg.log", log .. "\n[" .. os.date("%Y-%m-%d %H:%M:%S") .. "] ⚠️ 非法URL或域: " .. tostring(url:match("^https?://[^/]+") or url))
+        fs.writefile("/tmp/banner_bg.log", log .. "\n[" .. os.date("%Y-%m-%d %H:%M:%S") .. "] ⚠️ 非法URL或域名: " .. tostring(url:match("^https?://[^/]+") or url))
     end
 
     luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/display"))
 end
+
 
 function action_do_set_opacity()
     local uci = require("uci").cursor()
@@ -927,9 +938,10 @@ function action_do_reset_defaults()
     local uci = require("uci").cursor()
     local fs = require("nixio.fs")
     
+    -- 恢复默认配置
     uci:set("banner", "banner", "text", "🎉 新春特惠 · 技术支持24/7 · 已服务500+用户 · 安全稳定运行")
     uci:set("banner", "banner", "color", "rainbow")
-    uci:set("banner", "banner", "opacity", "90")
+    uci:set("banner", "banner", "opacity", "50")
     uci:set("banner", "banner", "carousel_interval", "5000")
     uci:set("banner", "banner", "bg_group", "1")
     uci:set("banner", "banner", "current_bg", "0")
@@ -939,9 +951,11 @@ function action_do_reset_defaults()
     uci:set("banner", "banner", "last_update", "0")
     uci:commit("banner")
     
+    -- 清理缓存
     luci.sys.call("rm -f /tmp/banner_cache/*.json /tmp/banner_cache/*.jpg")
     luci.sys.call("rm -f /overlay/banner/*.jpg")
     
+    -- 记录日志
     local log = fs.readfile("/tmp/banner_update.log") or ""
     fs.writefile("/tmp/banner_update.log", 
         log .. "\n[" .. os.date("%Y-%m-%d %H:%M:%S") .. "] 🔄 已恢复默认配置")

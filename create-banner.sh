@@ -24,11 +24,7 @@ echo "[1/3] Creating directory structure..."
 rm -rf "$PKG_DIR"
 mkdir -p "$PKG_DIR"/root/{etc/{config,init.d,cron.d},usr/{bin,lib/lua/luci/{controller,view/banner}},www/luci-static/banner,overlay/banner}
 
-# Create default background placeholder
-echo "[1.5/3] Creating default background..."
-cat > "$PKG_DIR/root/www/luci-static/banner/default_bg.jpg" <<'EOF'
-# Placeholder - will be replaced on first boot
-EOF
+echo "[1.5/3] Skipping default background creation..."
 
 # Create Makefile
 echo "[2/3] Creating Makefile..."

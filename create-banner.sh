@@ -24,17 +24,11 @@ echo "[1/3] Creating directory structure..."
 rm -rf "$PKG_DIR"
 mkdir -p "$PKG_DIR"/root/{etc/{config,init.d,cron.d},usr/{bin,lib/lua/luci/{controller,view/banner}},www/luci-static/banner,overlay/banner}
 
-# Create default background (1x1 transparent pixel as base64)
+# Create default background placeholder
 echo "[1.5/3] Creating default background..."
-cat > "$PKG_DIR/root/www/luci-static/banner/default_bg.jpg" <<'DEFAULTBG'
-/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0a
-HBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIy
-MjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAABAAEDASIA
-AhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAv/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFQEB
-AQAAAAAAAAAAAAAAAAAAAAX/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIRAxEAPwCwABmQ
-//Z
-DEFAULTBG
-base64 -d "$PKG_DIR/root/www/luci-static/banner/default_bg.jpg" > "$PKG_DIR/root/www/luci-static/banner/default_bg.jpg.tmp" 2>/dev/null || echo "" > "$PKG_DIR/root/www/luci-static/banner/default_bg.jpg"
+cat > "$PKG_DIR/root/www/luci-static/banner/default_bg.jpg" <<'EOF'
+# Placeholder - will be replaced on first boot
+EOF
 
 # Create Makefile
 echo "[2/3] Creating Makefile..."

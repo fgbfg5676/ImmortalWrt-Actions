@@ -31,8 +31,17 @@ if [ -z "$PKG_DIR" ]; then
     exit 1
 fi
 
-# 將路徑轉換為絕對路徑以進行標準化比較
-ABS_PKG_DIR=$(readlink -m "$PKG_DIR")
+# --- 用這段新程式碼替換舊的 readlink 行 ---
+# 兼容性優化：優先使用 realpath，因為 buildroot 環境可能不包含 readlink
+if command -v realpath >/dev/null 2>&1; then
+    # 使用 -m 選項確保即使路徑不存在也能正常工作
+    ABS_PKG_DIR=$(realpath -m "$PKG_DIR")
+else
+    # 作為最終備用方案，如果連 realpath 都沒有，我們就手動處理
+    echo "警告：系統中未找到 realpath 命令，路徑安全檢查可能不夠完備。"
+    ABS_PKG_DIR="$PKG_DIR" # 直接使用，並依賴後續檢查
+fi
+
 
 # 檢查是否指向根目錄、home 目錄或 /etc 等關鍵系統目錄
 case "$ABS_PKG_DIR" in
@@ -176,8 +185,9 @@ cat > "$PKG_DIR/default/banner_default.json" <<'DEFAULTJSON'
 }
 DEFAULTJSON
 
-# 創建一個 1x1 像素的透明 JPG 作為預設背景圖的佔位符
-printf '\xff\xd8\xff\xe0\x00\x10\x4a\x46\x49\x46\x00\x01\x01\x01\x00\x48\x00\x48\x00\x00\xff\xdb\x00\x43\x00\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\xff\xc0\x00\x11\x08\x00\x01\x00\x01\x03\x01\x22\x00\x02\x11\x01\x03\x11\x01\xff\xc4\x00\x1b\x00\x00\x01\x05\x01\x01\x01\x01\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\xff\xda\x00\x0c\x03\x01\x00\x02\x11\x03\x11\x00\x3f\x00\xf7\xb1\xff\xd9' > "$PKG_DIR/default/bg_default.jpg"
+# 創建一個 10x10 的灰色 JPG 作為預設背景圖，兼容性更好
+convert -size 10x10 xc:grey "$PKG_DIR/default/bg_default.jpg" 2>/dev/null || \
+printf '\xff\xd8\xff\xe0\x00\x10\x4a\x46\x49\x46\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00\xff\xdb\x00\x43\x00\x08\x06\x06\x07\x06\x05\x08\x07\x07\x07\x09\x09\x08\x0a\x0c\x14\x0d\x0c\x0b\x0b\x0c\x19\x12\x13\x0f\x14\x1d\x1a\x1f\x1e\x1d\x1a\x1c\x1c\x20\x24\x2e\x27\x20\x22\x2c\x23\x1c\x1c\x28\x37\x29\x2c\x30\x31\x34\x34\x34\x1f\x27\x39\x3d\x38\x32\x3c\x2e\x33\x34\x32\xff\xc0\x00\x11\x08\x00\x0a\x00\x0a\x03\x01\x22\x00\x02\x11\x01\x03\x11\x01\xff\xc4\x00\x1f\x00\x00\x01\x05\x01\x01\x01\x01\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\xff\xda\x00\x0c\x03\x01\x00\x02\x11\x03\x11\x00\x3f\x00\xd2\x8a\x01\xff\xd9' > "$PKG_DIR/default/bg_default.jpg"
 
 # 創建一個全局配置文件，用於存儲可配置的變數
 mkdir -p "$PKG_DIR/root/usr/share/banner"
@@ -200,15 +210,26 @@ PERSISTENT_BG_PATH="/overlay/banner"
 CONFIGSH
 
 # Cache cleaner script
-cat > "$PKG_DIR/root/usr/bin/banner_cache_cleaner.sh" <<CLEANER
+cat > "$PKG_DIR/root/usr/bin/banner_cache_cleaner.sh" <<'CLEANER'
 #!/bin/sh
 LOG="/tmp/banner_update.log"
-$LOG_FUNCTION
+
+log() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" >> "$LOG"
+    if [ -s "$LOG" ] && [ $(wc -c < "$LOG") -gt 51200 ]; then
+        mv "$LOG" "$LOG.bak"; tail -n 50 "$LOG.bak" > "$LOG"; rm -f "$LOG.bak"
+    fi
+}
 
 log "========== Cache Cleanup Started =========="
+if [ ! -d "/tmp/banner_cache" ]; then
+    log "[!] Cache directory /tmp/banner_cache not found, skipping cleanup."
+    exit 0
+fi
 find /tmp/banner_cache -type f -mtime +3 -delete
 log "[√] Removed files older than 3 days"
 CLEANER
+
 
 # --- 用這段新程式碼替換舊的 banner_manual_update.sh 區塊 ---
 cat > "$PKG_DIR/root/usr/bin/banner_manual_update.sh" <<'MANUALUPDATE'
@@ -216,34 +237,29 @@ cat > "$PKG_DIR/root/usr/bin/banner_manual_update.sh" <<'MANUALUPDATE'
 LOG="/tmp/banner_update.log"
 CACHE="/tmp/banner_cache"
 
-# --- 函數定義直接寫入腳本 ---
 log() {
-    local msg="$1"
-    msg=$(echo "$msg" | sed -E 's|https?://[^[:space:]]+|[URL Redacted]|g' | sed -E 's|[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|[IP Redacted]|g' )
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $msg" >> "$LOG"
+    local msg="$1"; msg=$(echo "$msg" | sed -E 's|https?://[^[:space:]]+|[URL Redacted]|g' | sed -E 's|[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|[IP Redacted]|g' );
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $msg" >> "$LOG";
     if [ -s "$LOG" ] && [ $(wc -c < "$LOG") -gt 51200 ]; then
-        mv "$LOG" "$LOG.bak"; tail -n 50 "$LOG.bak" > "$LOG"; rm -f "$LOG.bak"
+        mv "$LOG" "$LOG.bak"; tail -n 50 "$LOG.bak" > "$LOG"; rm -f "$LOG.bak";
     fi
 }
 check_lock() {
-    local lock_file="$1"; local max_age="$2"
+    local lock_file="$1"; local max_age="$2";
     if [ -f "$lock_file" ]; then
-        local lock_time=$(stat -c %Y "$lock_file" 2>/dev/null || date +%s)
-        local current_time=$(date +%s); local age=$((current_time - lock_time))
+        local lock_time=$(stat -c %Y "$lock_file" 2>/dev/null || date +%s); local current_time=$(date +%s); local age=$((current_time - lock_time));
         if [ $age -gt $max_age ]; then
-            log "Clearing stale lock (age: ${age}s): $lock_file"; rm -f "$lock_file"
+            log "Clearing stale lock (age: ${age}s): $lock_file"; rm -f "$lock_file";
         else
-            log "Task blocked by lock (age: ${age}s): $lock_file"; return 1
+            log "Task blocked by lock (age: ${age}s): $lock_file"; return 1;
         fi
-    fi
-    touch "$lock_file"; return 0
+    fi;
+    touch "$lock_file"; return 0;
 }
-# --- 函數定義結束 ---
 
 mkdir -p "$CACHE"
-
 if ! command -v uci >/dev/null 2>&1; then
-    log "Skipping UCI operations in build environment"
+    log "[×] UCI command not found. This script requires UCI to function. Exiting."
     exit 0
 fi
 
@@ -367,36 +383,33 @@ fi
 MANUALUPDATE
 
 
-# --- 用這段新程式碼替換舊的 banner_auto_update.sh 區塊 ---
+# --- 用這段新程式碼替換舊的 auto_update 腳本 ---
 cat > "$PKG_DIR/root/usr/bin/banner_auto_update.sh" <<'AUTOUPDATE'
 #!/bin/sh
 LOG="/tmp/banner_update.log"
 
-# --- 函數定義直接寫入腳本 ---
 log() {
-    local msg="$1"
-    msg=$(echo "$msg" | sed -E 's|https?://[^[:space:]]+|[URL Redacted]|g' | sed -E 's|[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|[IP Redacted]|g' )
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $msg" >> "$LOG"
+    local msg="$1"; msg=$(echo "$msg" | sed -E 's|https?://[^[:space:]]+|[URL Redacted]|g' | sed -E 's|[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|[IP Redacted]|g' );
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $msg" >> "$LOG";
     if [ -s "$LOG" ] && [ $(wc -c < "$LOG") -gt 51200 ]; then
-        mv "$LOG" "$LOG.bak"; tail -n 50 "$LOG.bak" > "$LOG"; rm -f "$LOG.bak"
+        mv "$LOG" "$LOG.bak"; tail -n 50 "$LOG.bak" > "$LOG"; rm -f "$LOG.bak";
     fi
 }
 check_lock() {
-    local lock_file="$1"; local max_age="$2"
+    local lock_file="$1"; local max_age="$2";
     if [ -f "$lock_file" ]; then
-        local lock_time=$(stat -c %Y "$lock_file" 2>/dev/null || date +%s)
-        local current_time=$(date +%s); local age=$((current_time - lock_time))
+        local lock_time=$(stat -c %Y "$lock_file" 2>/dev/null || date +%s); local current_time=$(date +%s); local age=$((current_time - lock_time));
         if [ $age -gt $max_age ]; then
-            log "Clearing stale lock (age: ${age}s): $lock_file"; rm -f "$lock_file"
+            log "Clearing stale lock (age: ${age}s): $lock_file"; rm -f "$lock_file";
         else
-            log "Task blocked by lock (age: ${age}s): $lock_file"; return 1
+            log "Task blocked by lock (age: ${age}s): $lock_file"; return 1;
         fi
-    fi
-    touch "$lock_file"; return 0
+    fi;
+    touch "$lock_file"; return 0;
 }
-# --- 函數定義結束 ---
 
 if ! command -v uci >/dev/null 2>&1; then
+    log "[×] UCI command not found in auto_update script. Exiting."
     exit 0
 fi
 
@@ -417,6 +430,7 @@ fi
 log "========== Auto Update Started =========="
 /usr/bin/banner_manual_update.sh
 AUTOUPDATE
+
 
 cat > "$PKG_DIR/root/usr/bin/banner_bg_loader.sh" <<'BGLOADER'
 # --- 用這段新程式碼替換舊的 banner_bg_loader.sh 整個內容 ---
@@ -457,10 +471,15 @@ while [ ! -f "$JSON" ] && [ $WAIT_COUNT -lt 5 ]; do
     sleep 1; WAIT_COUNT=$((WAIT_COUNT + 1))
 done
 
+# --- 用這段新程式碼替換舊的 JSON 檢查 ---
 if [ ! -f "$JSON" ]; then
-    log "[×] nav_data.json not found after 10 seconds. Aborting background load."
+    log "[!] nav_data.json not found, using default background as fallback."
+    if [ -f "$WEB/default_bg.jpg" ]; then
+        cp "$WEB/default_bg.jpg" "$CACHE/current_bg.jpg" 2>/dev/null
+    fi
     exit 1
 fi
+
 
 # 使用統一的文件鎖
 LOCK_FILE="/tmp/banner_bg_loader.lock"
@@ -507,8 +526,17 @@ for i in 0 1 2; do
         log "  Downloading image for bg${i}.jpg..."
         TMPFILE="$DEST/bg$i.tmp"
         
-        # 在 curl 命令中使用 $MAX_SIZE 變數
-        curl -sL --max-time 20 --max-filesize "$MAX_SIZE" "$URL" -o "$TMPFILE" 2>/dev/null
+       # --- 用這段新程式碼替換舊的 curl 命令 ---
+if curl --help | grep -q -- --max-filesize; then
+    curl -sL --max-time 20 --max-filesize "$MAX_SIZE" "$URL" -o "$TMPFILE" 2>/dev/null
+else
+    curl -sL --max-time 20 "$URL" -o "$TMPFILE" 2>/dev/null
+    if [ -s "$TMPFILE" ] && [ $(stat -c %s "$TMPFILE") -gt "$MAX_SIZE" ]; then
+        log "[×] File size of $URL exceeds limit ($MAX_SIZE bytes). Fallback check."
+        rm -f "$TMPFILE"
+    fi
+fi
+
         
         if validate_jpeg "$TMPFILE"; then
             mv "$TMPFILE" "$DEST/bg$i.jpg"
@@ -560,7 +588,7 @@ cat > "$PKG_DIR/root/etc/cron.d/banner" <<'CRON'
 0 0 * * * root /usr/bin/banner_cache_cleaner.sh
 CRON
 
-# Init script
+# --- 用這段新程式碼替換舊的 init 腳本 ---
 cat > "$PKG_DIR/root/etc/init.d/banner" <<'INIT'
 #!/bin/sh /etc/rc.common
 START=99
@@ -568,55 +596,46 @@ USE_PROCD=1
 
 start() {
     if ! command -v uci >/dev/null 2>&1; then
-        return 0
+        echo "[$(date)] Error: UCI command not found, cannot start banner service." >> /tmp/banner_init.log
+        return 1
     fi
     
-# OPTIMIZATION: Enhanced network detection for maximum compatibility
-get_active_interface() {
-    # 1. Try the standard 'lan' interface via UCI
-    local iface=$(uci -q get network.lan.ifname)
-    [ -n "$iface" ] && ubus call network.interface."$iface" status 2>/dev/null | grep -q '"up": true' && echo "$iface" && return
+    get_active_interface() {
+        local iface
+        for iface in $(ubus list network.interface.* | cut -d. -f3); do
+            if ubus call network.interface."$iface" status 2>/dev/null | grep -q '"up": true'; then
+                echo "$iface"
+                return
+            fi
+        done
+        echo "lan"
+    }
 
-    # 2. If not found, find the first active bridge interface (like br-lan)
-    iface=$(brctl show | awk 'NR>1 && NF>1 {print $1}' | head -n1)
-    [ -n "$iface" ] && ubus call network.interface."$iface" status 2>/dev/null | grep -q '"up": true' && echo "$iface" && return
+    INTERFACE=$(get_active_interface)
+    log_msg() {
+        echo "[$(date)] $1" >> /tmp/banner_update.log
+    }
 
-    # 3. As a last resort, find the first "UP" non-loopback interface from 'ip link'
-    iface=$(ip link | grep 'state UP' | grep -v 'LOOPBACK' | awk '{print $2}' | tr -d ':' | head -n1)
-    [ -n "$iface" ] && echo "$iface" && return
-    
-    # Fallback to 'lan' if all else fails
-    echo "lan"
-}
-
-INTERFACE=$(get_active_interface)
-log_msg() {
-    echo "[$(date)] $1" >> /tmp/banner_update.log
-}
-
-log_msg "Network detection: Using interface '$INTERFACE'."
-WAIT=0
-while ! ubus call network.interface.$INTERFACE status 2>/dev/null | grep -q '"up": true'; do
-    sleep 2
-    WAIT=$((WAIT + 2))
-    if [ $WAIT -ge 60 ]; then
-        log_msg "Network interface '$INTERFACE' not up after 60 seconds. Proceeding anyway."
-        break
-    fi
-done
-
+    log_msg "Network detection: Using interface '$INTERFACE'."
+    WAIT=0
+    while ! ubus call network.interface.$INTERFACE status 2>/dev/null | grep -q '"up": true'; do
+        sleep 2
+        WAIT=$((WAIT + 2))
+        if [ $WAIT -ge 30 ]; then # 等待時間縮短為 30 秒
+            log_msg "Network interface '$INTERFACE' not up after 30 seconds. Proceeding anyway."
+            break
+        fi
+    done
     
     mkdir -p /tmp/banner_cache /www/luci-static/banner /overlay/banner
     
     if [ ! -s /tmp/banner_cache/current_bg.jpg ]; then
-        # Find the best available source for the initial background
         SRC_BG=$(find /overlay/banner /www/luci-static/banner -name 'bg0.jpg' -o -name 'default_bg.jpg' 2>/dev/null | head -n1)
         if [ -n "$SRC_BG" ] && [ -s "$SRC_BG" ]; then
             cp "$SRC_BG" /tmp/banner_cache/current_bg.jpg 2>/dev/null
         fi
     fi
     
-    # Run initial updates in the background
     /usr/bin/banner_auto_update.sh >/dev/null 2>&1 &
     sleep 2
     BG_GROUP=$(uci -q get banner.banner.bg_group || echo 1)
@@ -668,6 +687,7 @@ function index()
     entry({"admin", "status", "banner", "do_reset_defaults"}, post("action_do_reset_defaults")).leaf = true
 end
 
+# --- 用這個新函數替換舊的 action_display ---
 function action_display()
     local uci = require("uci").cursor()
     local fs = require("nixio.fs")
@@ -688,20 +708,35 @@ function action_display()
     local persistent = uci:get("banner", "banner", "persistent_storage") or "0"
     local bg_path = (persistent == "1") and "/overlay/banner" or "/www/luci-static/banner"
 
+    -- --- 新增的驗證邏輯 ---
+    local text = uci:get("banner", "banner", "text") or "歡迎使用"
+    
+    local opacity = tonumber(uci:get("banner", "banner", "opacity") or "90")
+    if not opacity or opacity < 0 or opacity > 100 then
+        opacity = 90 -- 如果值無效 (非數字、小於0或大於100)，強制設為 90
+    end
+
+    local banner_texts = uci:get("banner", "banner", "banner_texts") or ""
+    if banner_texts == "" then
+        banner_texts = text -- 如果輪播文本為空，使用主橫幅文本作為備用
+    end
+    -- --- 驗證邏輯結束 ---
+
     luci.template.render("banner/display", {
-        text = uci:get("banner", "banner", "text"),
+        text = text,
         color = uci:get("banner", "banner", "color"),
-        opacity = uci:get("banner", "banner", "opacity"),
+        opacity = opacity, -- 使用驗證後的值
         carousel_interval = uci:get("banner", "banner", "carousel_interval"),
         current_bg = uci:get("banner", "banner", "current_bg"),
         bg_enabled = "1",
-        banner_texts = uci:get("banner", "banner", "banner_texts") or "",
+        banner_texts = banner_texts, -- 使用驗證後的值
         nav_data = nav_data,
         persistent = persistent,
         bg_path = bg_path,
         token = luci.dispatcher.context.authsession
     })
 end
+
 
 function action_settings()
     local uci = require("uci").cursor()

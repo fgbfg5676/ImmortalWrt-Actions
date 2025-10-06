@@ -31,8 +31,14 @@ if [ -z "$PKG_DIR" ]; then
     exit 1
 fi
 
-# 將路徑轉換為絕對路徑以進行標準化比較
-ABS_PKG_DIR=$(readlink -m "$PKG_DIR")
+# 兼容性優化：使用 realpath -m 替代 readlink -m，因為 buildroot 環境可能不包含 readlink
+# -m 選項確保即使路徑不存在也能正常工作
+if command -v realpath >/dev/null 2>&1; then
+    ABS_PKG_DIR=$(realpath -m "$PKG_DIR")
+else
+    echo "警告：系統中未找到 realpath 命令，路徑安全檢查可能不夠完備。"
+    ABS_PKG_DIR="$PKG_DIR" # 假設路徑是安全的
+fi
 
 # 檢查是否指向根目錄、home 目錄或 /etc 等關鍵系統目錄
 case "$ABS_PKG_DIR" in
@@ -114,10 +120,10 @@ define Package/luci-app-banner/postinst
 
     # 健壯地複製預設背景圖
     PKG_INFO_FILE="/usr/lib/ipkg/info/luci-app-banner.list"
-    if [ -f "\$PKG_INFO_FILE" ]; then
-        BASE_DIR=\$(grep '/default/bg_default.jpg' "\$PKG_INFO_FILE" | sed 's|/default/bg_default.jpg||' | head -n 1)
-        if [ -n "\$BASE_DIR" ] && [ -f "\$BASE_DIR/default/bg_default.jpg" ]; then
-            cp "\$BASE_DIR/default/bg_default.jpg" /www/luci-static/banner/default_bg.jpg 2>/dev/null
+    if [ -f "$PKG_INFO_FILE" ]; then
+        BASE_DIR=$(grep '/default/bg_default.jpg' "$PKG_INFO_FILE" | sed 's|/default/bg_default.jpg||' | head -n 1)
+        if [ -n "$BASE_DIR" ] && [ -f "$BASE_DIR/default/bg_default.jpg" ]; then
+            cp "$BASE_DIR/default/bg_default.jpg" /www/luci-static/banner/default_bg.jpg 2>/dev/null
         fi
     fi
 

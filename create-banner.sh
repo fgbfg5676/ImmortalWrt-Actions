@@ -337,11 +337,11 @@ if ! jq empty "\$CACHE/banner_new.json" >/dev/null 2>&1; then
     # `jq .` 會格式化輸出，確保最終文件是有效的 JSON
    # --- 用這段新程式碼替換上面的舊程式碼塊 ---
 jq '{
-    text: .text \/\/ "內容加載失敗",
-    color: .color \/\/ "white",
-    banner_texts: .banner_texts \/\/ \[],
-    nav_tabs: .nav_tabs \/\/ \[],
-    contact_info: .contact_info \/\/ {}
+    text: .text // "內容加載失敗",
+    color: .color // "white",
+    banner_texts: .banner_texts // [],
+    nav_tabs: .nav_tabs // [],
+    contact_info: .contact_info // {}
 }' "\$CACHE/banner_new.json" > "\$CACHE/banner_partial.json"
 
 
@@ -846,7 +846,7 @@ function action_do_apply_url()
     local url = luci.http.formvalue("custom_bg_url" )
 
     -- 簡單的後端格式預檢測
-    if not url or not url:match("^https://.*%.jpe?g$" ) then
+    if not url or not url:match("^https://.*%.jpe?g$") then
         -- 對於格式明顯錯誤的請求，可以直接忽略或返回錯誤，這裡選擇靜默忽略並跳轉
         luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/display" ))
         return

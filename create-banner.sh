@@ -24,18 +24,39 @@ echo "Package directory: $PKG_DIR"
 
 # Clean and create directory structure
 echo "[1/3] Creating directory structure..."
-# --- 替換開始 (優化 1：rm -rf 安全防護) ---
-PKG_DIR=$(readlink -f "$PKG_DIR")
-if [ -z "$PKG_DIR" ] || [ "$PKG_DIR" = "/" ] || [ "$PKG_DIR" = "$HOME" ]; then
-    echo "❌ 錯誤：目標目錄為空或危險路徑 ('$PKG_DIR')，已終止操作。"
+
+# 安全性檢查：確保 PKG_DIR 是一個有效且安全的路徑
+if [ -z "$PKG_DIR" ]; then
+    echo "❌ 錯誤：目標目錄變數為空，已終止操作。"
     exit 1
 fi
-# 確保路徑至少有兩層深度，防止誤刪 /tmp, /root 等
-if [ $(echo "$PKG_DIR" | grep -o "/" | wc -l) -lt 2 ]; then
-    echo "❌ 錯誤：目標目錄路徑過於簡單 ('$PKG_DIR')，可能不安全，已終止操作。"
+
+# 將路徑轉換為絕對路徑以進行標準化比較
+ABS_PKG_DIR=$(readlink -f "$PKG_DIR")
+
+# 檢查是否指向根目錄、home 目錄或 /etc 等關鍵系統目錄
+case "$ABS_PKG_DIR" in
+    "/"|"/root"|"/root/"|"$HOME"|"$HOME/"|"/etc"|"/etc/"|"/usr"|"/usr/")
+        echo "❌ 錯誤：目標目錄指向了危險的系統路徑 ('$ABS_PKG_DIR')，已終止操作。"
+        exit 1
+        ;;
+esac
+
+# 檢查路徑是否包含 '..'，這可能導致路徑穿越
+if echo "$PKG_DIR" | grep -q '/\.\./'; then
+    echo "❌ 錯誤：目標目錄包含非法的路徑穿越符 '..' ('$PKG_DIR')，已終止操作。"
     exit 1
 fi
+
+# 最終確認：路徑必須包含 'luci-app-banner' 這個關鍵字，這是最後一道防線
+if ! echo "$PKG_DIR" | grep -q 'luci-app-banner'; then
+    echo "❌ 錯誤：目標目錄路徑未包含 'luci-app-banner' 關鍵字 ('$PKG_DIR')，為安全起見已終止操作。"
+    exit 1
+fi
+
+# 安全檢查通過，執行刪除
 rm -rf "$PKG_DIR"
+
 
 mkdir -p "$PKG_DIR"/root/{etc/{config,init.d,cron.d},usr/{bin,lib/lua/luci/{controller,view/banner}},www/luci-static/banner,overlay/banner}
 mkdir -p "$PKG_DIR/default"
@@ -85,7 +106,7 @@ define Package/luci-app-banner/install
 endef
 
 define Package/luci-app-banner/postinst
-# --- 用這段新程式碼替換上面的舊程式碼塊 ---
+
 #!/bin/sh
 # 僅在非構建環境中運行
 [ -n "$${IPKG_INSTROOT}" ] && exit 0
@@ -1385,3 +1406,6 @@ echo ""
 echo "Compilation command:"
 echo "  make package/custom/luci-app-banner/compile V=s"
 echo "=========================================="
+
+
+`

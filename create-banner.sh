@@ -2062,6 +2062,126 @@ input:checked + .toggle-slider:before {
                         alert('⚠️ 仅支持 HTTPS 链接、JPG 格式和 GitHub/Gitee 域名,请输入正确 URL');
                     }
                 });
+</script>
+                <p style="color:#aaa;font-size:12px">📌 仅支持 HTTPS 链接(JPG,GitHub/Gitee),应用后覆盖 bg0.jpg</p>
+            </div>
+        </div>
+        
+        <div class="cbi-value">
+            <label class="cbi-value-title">从本地上传背景图</label>
+            <div class="cbi-value-field">
+                <form method="post" action="<%=luci.dispatcher.build_url('admin/status/banner/do_upload_bg')%>" enctype="multipart/form-data" id="uploadForm">
+                    <input type="hidden" name="token" value="<%=token%>" />
+                    <input type="file" name="bg_file" accept="image/jpeg,image/jpg" id="bgFileInput" required />
+                    <input type="submit" class="cbi-button cbi-button-apply" value="上传并应用" />
+                </form>
+                <script>
+                document.getElementById('uploadForm').addEventListener('submit', function(e) {
+                    var file = document.getElementById('bgFileInput').files[0];
+                    if (!file) {
+                        e.preventDefault();
+                        alert('⚠️ 请选择文件');
+                        return;
+                    }
+                    if (file.size > 5242880) {
+                        e.preventDefault();
+                        alert('⚠️ 文件大小不能超过 5MB\n当前: ' + (file.size / 1048576).toFixed(2) + ' MB');
+                        return;
+                    }
+                    if (!file.type.match('image/jp(e)?g')) {
+                        e.preventDefault();
+                        alert('⚠️ 仅支持 JPG/JPEG 格式\n当前: ' + file.type);
+                        return;
+                    }
+                });
                 </script>
-                <p style="color:#aaa;font-size:12px"></p>
-				BGVIEW
+                <p style="color:#aaa;font-size:12px">📤 仅支持 JPG,上传后覆盖 bg0.jpg</p>
+            </div>
+        </div>
+        
+        <div class="cbi-value">
+            <label class="cbi-value-title">删除缓存图片</label>
+            <div class="cbi-value-field">
+                <form method="post" action="<%=luci.dispatcher.build_url('admin/status/banner/do_clear_cache')%>">
+                    <input type="hidden" name="token" value="<%=token%>" />
+                    <input type="submit" class="cbi-button cbi-button-remove" value="删除缓存" />
+                </form>
+                <p style="color:#aaa;font-size:12px">🗑️ 清空所有 bg*.jpg 缓存</p>
+            </div>
+        </div>
+        
+        <h3 style="color:white">背景日志 (最近20条)</h3>
+        <div style="background:rgba(0,0,0,0.5);padding:12px;border-radius:8px;max-height:250px;overflow-y:auto;font-family:monospace;font-size:12px;color:#0f0;white-space:pre-wrap;border:1px solid rgba(255,255,255,0.1)"><%=pcdata(log)%></div>
+    </div></div>
+</div>
+
+<div class="bg-selector">
+    <div class="bg-circle" style="background-image:url(<%=bg_path%>/bg0.jpg?t=<%=os.time()%>)" onclick="changeBg(0)"></div>
+    <div class="bg-circle" style="background-image:url(<%=bg_path%>/bg1.jpg?t=<%=os.time()%>)" onclick="changeBg(1)"></div>
+    <div class="bg-circle" style="background-image:url(<%=bg_path%>/bg2.jpg?t=<%=os.time()%>)" onclick="changeBg(2)"></div>
+</div>
+
+<script>
+document.getElementById('loadGroupForm').addEventListener('submit', function(e) {
+    e.preventDefault();
+    document.getElementById('loadingOverlay').classList.add('active');
+    var form = this;
+    var formData = new FormData(form);
+    var xhr = new XMLHttpRequest();
+    xhr.open('POST', form.action, true);
+    xhr.onload = function() {
+        setTimeout(function() {
+            window.location.reload();
+        }, 8000);
+    };
+    xhr.send(formData);
+});
+
+function togglePersistent(enabled) {
+    var xhr = new XMLHttpRequest();
+    xhr.open('POST', '<%=luci.dispatcher.build_url("admin/status/banner/do_set_persistent_storage")%>', true);
+    xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+    xhr.onload = function() {
+        window.location.reload();
+    };
+    xhr.send('token=<%=token%>&persistent_storage=' + (enabled ? '1' : '0'));
+}
+
+function changeBg(n) {
+    var f = document.createElement('form');
+    f.method = 'POST';
+    f.action = '<%=luci.dispatcher.build_url("admin/status/banner/do_set_bg")%>';
+    f.innerHTML = '<input type="hidden" name="token" value="<%=token%>"><input type="hidden" name="bg" value="' + n + '">';
+    document.body.appendChild(f);
+    f.submit();
+}
+</script>
+<%+footer%>
+BGVIEW
+
+# Make scripts executable
+chmod +x "$PKG_DIR"/root/usr/bin/*.sh
+chmod +x "$PKG_DIR"/root/etc/init.d/banner
+
+echo "=========================================="
+echo "✓ Package luci-app-banner v2.5 Ready!"
+echo "=========================================="
+echo "Package directory: $PKG_DIR"
+echo ""
+echo "Key Fixes:"
+echo "  ✓ Fixed background display: Better JPEG validation"
+echo "  ✓ Fixed mobile compatibility: Added rel='noopener noreferrer'"
+echo "  ✓ Fixed update source display: Shows 'GitHub' or 'Gitee'"
+echo "  ✓ Fixed persistent storage: Toggle switch can be disabled"
+echo "  ✓ Fixed default opacity: Changed to 90%"
+echo "  ✓ Fixed layout: Vertical contact cards, better spacing"
+echo "  ✓ Fixed CSS priority: Added !important to all backgrounds"
+echo "  ✓ Fixed enabled=false: Properly checks remote disable status"
+echo "  ✓ Fixed image paths: Uses /tmp/banner_cache consistently"
+echo "  ✓ Added fallback: Default background if downloads fail"
+echo ""
+echo "Compilation command:"
+echo "  make package/custom/luci-app-banner/compile V=s"
+echo ""
+echo "All issues from logs have been addressed!"
+echo "=========================================="

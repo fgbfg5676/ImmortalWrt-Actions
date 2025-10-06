@@ -105,30 +105,32 @@ define Package/luci-app-banner/install
 	chmod +x $(1)/etc/init.d/*
 endef
 
+# --- 用這段新程式碼替換舊的 postinst 區塊 ---
 define Package/luci-app-banner/postinst
 #!/bin/sh
 [ -n "$${IPKG_INSTROOT}" ] || {
-    command -v uci >/dev/null 2>&1 || exit 0
+    # 創建必要的目錄
     mkdir -p /tmp/banner_cache /overlay/banner /www/luci-static/banner 2>/dev/null
+
+    # 健壯地複製預設背景圖
     PKG_INFO_FILE="/usr/lib/ipkg/info/luci-app-banner.list"
     if [ -f "\$PKG_INFO_FILE" ]; then
-        BASE_DIR=\$(grep -oE '/default/bg_default.jpg$' "\$PKG_INFO_FILE" | sed 's|/default/bg_default.jpg||' | head -n 1)
-        if [ -n "\$BASE_DIR" ]; then
-            DEFAULT_BG="\$BASE_DIR/default/bg_default.jpg"
-            DEST_BG="/www/luci-static/banner/default_bg.jpg"
-            if [ -f "\$DEFAULT_BG" ] && [ ! -f "\$DEST_BG" ]; then
-                cp "\$DEFAULT_BG" "\$DEST_BG" 2>/dev/null
-            fi
+        BASE_DIR=\$(grep '/default/bg_default.jpg' "\$PKG_INFO_FILE" | sed 's|/default/bg_default.jpg||' | head -n 1)
+        if [ -n "\$BASE_DIR" ] && [ -f "\$BASE_DIR/default/bg_default.jpg" ]; then
+            cp "\$BASE_DIR/default/bg_default.jpg" /www/luci-static/banner/default_bg.jpg 2>/dev/null
         fi
     fi
+
+    # 啟用並啟動服務
     /etc/init.d/banner enable
     /etc/init.d/banner start >/dev/null 2>&1 &
-    ( sleep 10 && /etc/init.d/nginx restart 2>/dev/null ) &
-    ( sleep 10 && /etc/init.d/uhttpd restart 2>/dev/null  ) &
+
+    # 延遲重啟 web 服務器，避免阻塞安裝過程
+    ( sleep 15 && /etc/init.d/nginx restart 2>/dev/null ) &
+    ( sleep 15 && /etc/init.d/uhttpd restart 2>/dev/null  ) &
 }
 exit 0
 endef
-
 
 $(eval $(call BuildPackage,luci-app-banner))
 MAKEFILE
@@ -197,50 +199,6 @@ DEFAULT_BG_PATH="/www/luci-static/banner"
 PERSISTENT_BG_PATH="/overlay/banner"
 CONFIGSH
 
-# Generic log function for all scripts
-# --- 替換開始 (優化 1：日誌脫敏) ---
-LOG_FUNCTION=$(cat <<'LOGFUNC'
-log() {
-    local msg="$1"
-    # 使用 sed 過濾掉 URL 和 IP 地址
-    msg=$(echo "$msg" | sed -E 's|https?://[^[:space:]]+|[URL Redacted]|g' | sed -E 's|[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|[IP Redacted]|g' )
-    
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $msg" >> "$LOG"
-    if [ -s "$LOG" ] && [ $(wc -c < "$LOG") -gt 51200 ]; then
-        mv "$LOG" "$LOG.bak"
-        tail -n 50 "$LOG.bak" > "$LOG" # 同時將日誌行數統一到 50，提供更多上下文
-        rm -f "$LOG.bak"
-    fi
-}
-LOGFUNC
-)
-
-# Generic lock function for all scripts
-LOCK_FUNCTION=$(cat <<'LOCKFUNC'
-# OPTIMIZATION 2.2: Unified file-based lock management function
-check_lock() {
-    local LOCK="$1"
-    local MAX_AGE="$2"
-    if [ -f "$LOCK" ]; then
-        # Use date as fallback if stat is not available or fails
-        local lock_time=$(stat -c %Y "$LOCK" 2>/dev/null || date +%s)
-        local current_time=$(date +%s)
-        local AGE=$((current_time - lock_time))
-        
-        if [ $AGE -gt $MAX_AGE ]; then
-            log "Clearing stale lock (age: ${AGE}s): $LOCK"
-            rm -f "$LOCK"
-        else
-            log "Task is already running, blocked by lock (age: ${AGE}s): $LOCK"
-            return 1
-        fi
-    fi
-    touch "$LOCK"
-    return 0
-}
-LOCKFUNC
-)
-
 # Cache cleaner script
 cat > "$PKG_DIR/root/usr/bin/banner_cache_cleaner.sh" <<CLEANER
 #!/bin/sh
@@ -252,15 +210,37 @@ find /tmp/banner_cache -type f -mtime +3 -delete
 log "[√] Removed files older than 3 days"
 CLEANER
 
-# Manual update script
+# --- 用這段新程式碼替換舊的 banner_manual_update.sh 區塊 ---
 cat > "$PKG_DIR/root/usr/bin/banner_manual_update.sh" <<'MANUALUPDATE'
 #!/bin/sh
 LOG="/tmp/banner_update.log"
 CACHE="/tmp/banner_cache"
-mkdir -p "\$CACHE"
 
-$LOG_FUNCTION
-$LOCK_FUNCTION
+# --- 函數定義直接寫入腳本 ---
+log() {
+    local msg="$1"
+    msg=$(echo "$msg" | sed -E 's|https?://[^[:space:]]+|[URL Redacted]|g' | sed -E 's|[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|[IP Redacted]|g' )
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $msg" >> "$LOG"
+    if [ -s "$LOG" ] && [ $(wc -c < "$LOG") -gt 51200 ]; then
+        mv "$LOG" "$LOG.bak"; tail -n 50 "$LOG.bak" > "$LOG"; rm -f "$LOG.bak"
+    fi
+}
+check_lock() {
+    local lock_file="$1"; local max_age="$2"
+    if [ -f "$lock_file" ]; then
+        local lock_time=$(stat -c %Y "$lock_file" 2>/dev/null || date +%s)
+        local current_time=$(date +%s); local age=$((current_time - lock_time))
+        if [ $age -gt $max_age ]; then
+            log "Clearing stale lock (age: ${age}s): $lock_file"; rm -f "$lock_file"
+        else
+            log "Task blocked by lock (age: ${age}s): $lock_file"; return 1
+        fi
+    fi
+    touch "$lock_file"; return 0
+}
+# --- 函數定義結束 ---
+
+mkdir -p "$CACHE"
 
 if ! command -v uci >/dev/null 2>&1; then
     log "Skipping UCI operations in build environment"
@@ -268,154 +248,169 @@ if ! command -v uci >/dev/null 2>&1; then
 fi
 
 MANUAL_LOCK="/tmp/banner_manual_update.lock"
-if ! check_lock "\$MANUAL_LOCK" 60; then
+if ! check_lock "$MANUAL_LOCK" 60; then
     exit 1
 fi
-trap "rm -f \$MANUAL_LOCK" EXIT
+trap "rm -f $MANUAL_LOCK" EXIT
 
 AUTO_LOCK="/tmp/banner_auto_update.lock"
-if [ -f "\$AUTO_LOCK" ]; then
+if [ -f "$AUTO_LOCK" ]; then
     log "Manual update overriding auto-update lock."
-    rm -f "\$AUTO_LOCK"
+    rm -f "$AUTO_LOCK"
 fi
 
 log "========== Manual Update Started =========="
 
 validate_url() {
-    case "\$1" in
-        http://*|https://*) return 0;;
-        *) log "[×] Invalid URL format: \$1"; return 1;;
+    case "$1" in
+        http://*|https://* ) return 0;;
+        *) log "[×] Invalid URL format: $1"; return 1;;
     esac
 }
 
-URLS=\$(uci -q get banner.banner.update_urls | tr ' ' '\n')
-SELECTED_URL=\$(uci -q get banner.banner.selected_url)
+URLS=$(uci -q get banner.banner.update_urls | tr ' ' '\n')
+SELECTED_URL=$(uci -q get banner.banner.selected_url)
 SUCCESS=0
 
-if [ -n "\$SELECTED_URL" ] && validate_url "\$SELECTED_URL"; then
+if [ -n "$SELECTED_URL" ] && validate_url "$SELECTED_URL"; then
     for i in 1 2 3; do
-        log "Attempt \$i/3 with selected URL: \$SELECTED_URL"
-        curl -sL --max-time 15 "\$SELECTED_URL" -o "\$CACHE/banner_new.json" 2>/dev/null
-        if [ -s "\$CACHE/banner_new.json" ] && jq empty "\$CACHE/banner_new.json" 2>/dev/null; then
+        log "Attempt $i/3 with selected URL: $SELECTED_URL"
+        curl -sL --max-time 15 "$SELECTED_URL" -o "$CACHE/banner_new.json" 2>/dev/null
+        if [ -s "$CACHE/banner_new.json" ]; then
             log "[√] Selected URL download successful."
             SUCCESS=1
             break
         fi
-        rm -f "\$CACHE/banner_new.json"
+        rm -f "$CACHE/banner_new.json"
         sleep 2
     done
 fi
 
-if [ \$SUCCESS -eq 0 ]; then
-    for url in \$URLS; do
-        if [ "\$url" != "\$SELECTED_URL" ] && validate_url "\$url"; then
+if [ $SUCCESS -eq 0 ]; then
+    for url in $URLS; do
+        if [ "$url" != "$SELECTED_URL" ] && validate_url "$url"; then
             for i in 1 2 3; do
-                log "Attempt \$i/3 with fallback URL: \$url"
-                curl -sL --max-time 15 "\$url" -o "\$CACHE/banner_new.json" 2>/dev/null
-                if [ -s "\$CACHE/banner_new.json" ] && jq empty "\$CACHE/banner_new.json" 2>/dev/null; then
+                log "Attempt $i/3 with fallback URL: $url"
+                curl -sL --max-time 15 "$url" -o "$CACHE/banner_new.json" 2>/dev/null
+                if [ -s "$CACHE/banner_new.json" ]; then
                     log "[√] Fallback URL download successful. Updating selected URL."
-                    uci set banner.banner.selected_url="\$url"
+                    uci set banner.banner.selected_url="$url"
                     uci commit banner
                     SUCCESS=1
                     break 2
                 fi
-                rm -f "\$CACHE/banner_new.json"
+                rm -f "$CACHE/banner_new.json"
                 sleep 2
             done
         fi
     done
 fi
 
-if [ \$SUCCESS -eq 1 ] && [ -s "\$CACHE/banner_new.json" ]; then
-# --- 用這段新程式碼替換上面的舊程式碼塊 ---
-# 預驗證 JSON，如果失敗，嘗試部分恢復
-if ! jq empty "\$CACHE/banner_new.json" >/dev/null 2>&1; then
-    log "[⚠️] Invalid JSON detected. Attempting to perform partial recovery."
-    
-    # 使用一個更強大的 jq 命令來提取所有關鍵字段，並保留其結構
-    # 如果某個字段不存在或無效，jq 的 `//` 操作符會提供一個安全的預設值（如空數組 `[]` 或空對象 `{}`）
-    # `jq .` 會格式化輸出，確保最終文件是有效的 JSON
-   # --- 用這段新程式碼替換上面的舊程式碼塊 ---
-jq '{
-    text: .text // "內容加載失敗",
-    color: .color // "white",
-    banner_texts: .banner_texts // [],
-    nav_tabs: .nav_tabs // [],
-    contact_info: .contact_info // {}
-}' "\$CACHE/banner_new.json" > "\$CACHE/banner_partial.json"
+if [ $SUCCESS -eq 1 ] && [ -s "$CACHE/banner_new.json" ]; then
+    if ! jq empty "$CACHE/banner_new.json" >/dev/null 2>&1; then
+        log "[⚠️] Invalid JSON detected. Attempting to perform partial recovery."
+        jq '{
+            text: .text // "內容加載失敗",
+            color: .color // "white",
+            banner_texts: .banner_texts // [],
+            nav_tabs: .nav_tabs // [],
+            contact_info: .contact_info // {}
+        }' "$CACHE/banner_new.json" > "$CACHE/banner_partial.json"
 
-
-    # 檢查恢復後的文件是否有效且非空
-    if [ -s "\$CACHE/banner_partial.json" ] && jq empty "\$CACHE/banner_partial.json" >/dev/null 2>&1; then
-        mv "\$CACHE/banner_partial.json" "\$CACHE/banner_new.json"
-        log "[✓] Partial data recovery successful. Key fields have been restored."
-    else
-        log "[×] Partial data recovery failed. Discarding invalid JSON."
-        rm -f "\$CACHE/banner_new.json" "\$CACHE/banner_partial.json"
-        SUCCESS=0 # 將狀態重置為失敗
+        if [ -s "$CACHE/banner_partial.json" ] && jq empty "$CACHE/banner_partial.json" >/dev/null 2>&1; then
+            mv "$CACHE/banner_partial.json" "$CACHE/banner_new.json"
+            log "[✓] Partial data recovery successful. Key fields have been restored."
+        else
+            log "[×] Partial data recovery failed. Discarding invalid JSON."
+            rm -f "$CACHE/banner_new.json" "$CACHE/banner_partial.json"
+            SUCCESS=0
+        fi
     fi
 fi
 
-    ENABLED=\$(jq -r '.enabled // "true"' "\$CACHE/banner_new.json")
-    if [ "\$ENABLED" = "false" ] || [ "\$ENABLED" = "0" ]; then
-        MSG=\$(jq -r '.disable_message // "服务已被管理员远程关闭"' "\$CACHE/banner_new.json")
+if [ $SUCCESS -eq 1 ] && [ -s "$CACHE/banner_new.json" ]; then
+    ENABLED=$(jq -r '.enabled // "true"' "$CACHE/banner_new.json")
+    if [ "$ENABLED" = "false" ] || [ "$ENABLED" = "0" ]; then
+        MSG=$(jq -r '.disable_message // "服务已被管理员远程关闭"' "$CACHE/banner_new.json")
         uci set banner.banner.bg_enabled='0'
-        uci set banner.banner.remote_message="\$MSG"
+        uci set banner.banner.remote_message="$MSG"
         uci commit banner
-        log "[!] Service remotely disabled. Reason: \$MSG"
-        rm -f "\$CACHE/banner_new.json"
+        log "[!] Service remotely disabled. Reason: $MSG"
+        rm -f "$CACHE/banner_new.json"
     else
-        TEXT=\$(jsonfilter -i "\$CACHE/banner_new.json" -e '@.text' 2>/dev/null)
-        if [ -n "\$TEXT" ]; then
-            cp "\$CACHE/banner_new.json" "\$CACHE/nav_data.json"
-            uci set banner.banner.text="\$TEXT"
-            uci set banner.banner.color="\$(jsonfilter -i "\$CACHE/banner_new.json" -e '@.color' 2>/dev/null || echo 'rainbow')"
-            uci set banner.banner.banner_texts="\$(jsonfilter -i "\$CACHE/banner_new.json" -e '@.banner_texts[*]' 2>/dev/null | tr '\n' '|')"
+        TEXT=$(jsonfilter -i "$CACHE/banner_new.json" -e '@.text' 2>/dev/null)
+        if [ -n "$TEXT" ]; then
+            cp "$CACHE/banner_new.json" "$CACHE/nav_data.json"
+            uci set banner.banner.text="$TEXT"
+            uci set banner.banner.color="$(jsonfilter -i "$CACHE/banner_new.json" -e '@.color' 2>/dev/null || echo 'rainbow')"
+            uci set banner.banner.banner_texts="$(jsonfilter -i "$CACHE/banner_new.json" -e '@.banner_texts[*]' 2>/dev/null | tr '\n' '|')"
             uci set banner.banner.bg_enabled='1'
             uci delete banner.banner.remote_message >/dev/null 2>&1
-            uci set banner.banner.last_update=\$(date +%s)
+            uci set banner.banner.last_update=$(date +%s)
             uci commit banner
             log "[√] Manual update applied successfully."
         else
             log "[×] Update failed: Invalid JSON content (missing 'text' field)."
-            rm -f "\$CACHE/banner_new.json"
+            rm -f "$CACHE/banner_new.json"
         fi
     fi
 else
     log "[×] Update failed: All sources are unreachable or provided invalid data."
-    # 如果連本地緩存都沒有，就使用打包的預設文件
-    if [ ! -f "\$CACHE/nav_data.json" ]; then
+    if [ ! -f "$CACHE/nav_data.json" ]; then
         log "[!] No local cache found. Using built-in default JSON data."
-        DEFAULT_JSON_PATH=\$(grep -oE '/default/banner_default.json' /usr/lib/ipkg/info/luci-app-banner.list | sed 's|/default/banner_default.json||' | head -n1)/default/banner_default.json
-        if [ -f "\$DEFAULT_JSON_PATH" ]; then
-            cp "\$DEFAULT_JSON_PATH" "\$CACHE/nav_data.json"
+        DEFAULT_JSON_PATH=$(grep -oE '/default/banner_default.json' /usr/lib/ipkg/info/luci-app-banner.list | sed 's|/default/banner_default.json||' | head -n1)/default/banner_default.json
+        if [ -f "$DEFAULT_JSON_PATH" ]; then
+            cp "$DEFAULT_JSON_PATH" "$CACHE/nav_data.json"
         fi
     fi
 fi
 MANUALUPDATE
 
-# Auto update script
-cat > "$PKG_DIR/root/usr/bin/banner_auto_update.sh" <<AUTOUPDATE
+
+# --- 用這段新程式碼替換舊的 banner_auto_update.sh 區塊 ---
+cat > "$PKG_DIR/root/usr/bin/banner_auto_update.sh" <<'AUTOUPDATE'
 #!/bin/sh
 LOG="/tmp/banner_update.log"
-$LOG_FUNCTION
-$LOCK_FUNCTION
+
+# --- 函數定義直接寫入腳本 ---
+log() {
+    local msg="$1"
+    msg=$(echo "$msg" | sed -E 's|https?://[^[:space:]]+|[URL Redacted]|g' | sed -E 's|[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|[IP Redacted]|g' )
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $msg" >> "$LOG"
+    if [ -s "$LOG" ] && [ $(wc -c < "$LOG") -gt 51200 ]; then
+        mv "$LOG" "$LOG.bak"; tail -n 50 "$LOG.bak" > "$LOG"; rm -f "$LOG.bak"
+    fi
+}
+check_lock() {
+    local lock_file="$1"; local max_age="$2"
+    if [ -f "$lock_file" ]; then
+        local lock_time=$(stat -c %Y "$lock_file" 2>/dev/null || date +%s)
+        local current_time=$(date +%s); local age=$((current_time - lock_time))
+        if [ $age -gt $max_age ]; then
+            log "Clearing stale lock (age: ${age}s): $lock_file"; rm -f "$lock_file"
+        else
+            log "Task blocked by lock (age: ${age}s): $lock_file"; return 1
+        fi
+    fi
+    touch "$lock_file"; return 0
+}
+# --- 函數定義結束 ---
 
 if ! command -v uci >/dev/null 2>&1; then
     exit 0
 fi
 
 LOCK="/tmp/banner_auto_update.lock"
-if ! check_lock "\$LOCK" 60; then
+if ! check_lock "$LOCK" 60; then
     exit 1
 fi
-trap "rm -f \$LOCK" EXIT
+trap "rm -f $LOCK" EXIT
 
-LAST_UPDATE=\$(uci -q get banner.banner.last_update || echo 0)
-CURRENT_TIME=\$(date +%s)
+LAST_UPDATE=$(uci -q get banner.banner.last_update || echo 0)
+CURRENT_TIME=$(date +%s)
 INTERVAL=10800
 
-if [ \$((CURRENT_TIME - LAST_UPDATE)) -lt \$INTERVAL ]; then
+if [ $((CURRENT_TIME - LAST_UPDATE)) -lt $INTERVAL ]; then
     exit 0
 fi
 
@@ -423,9 +418,6 @@ log "========== Auto Update Started =========="
 /usr/bin/banner_manual_update.sh
 AUTOUPDATE
 
-# (This is Part 2 of 3. Please concatenate with Part 1)
-
-# Background loader script
 cat > "$PKG_DIR/root/usr/bin/banner_bg_loader.sh" <<'BGLOADER'
 # --- 用這段新程式碼替換舊的 banner_bg_loader.sh 整個內容 ---
 #!/bin/sh
@@ -950,8 +942,6 @@ function action_do_reset_defaults()
     luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/settings" ))
 end
 CONTROLLER
-# --- 替換結束 ---
-
 
 # Global style view
 cat > "$PKG_DIR/root/usr/lib/lua/luci/view/banner/global_style.htm" <<'GLOBALSTYLE'
@@ -1367,6 +1357,3 @@ echo ""
 echo "Compilation command:"
 echo "  make package/custom/luci-app-banner/compile V=s"
 echo "=========================================="
-
-
-`

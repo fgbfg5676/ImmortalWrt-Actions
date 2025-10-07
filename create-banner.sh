@@ -3,7 +3,6 @@
 # OpenWrt Banner Plugin - Final Optimized Version v2.7
 # All potential issues addressed for maximum reliability and compatibility.
 # This script is provided in three parts for completeness. Please concatenate them.
-# PART 1 of 3
 
 set -e
 
@@ -52,11 +51,6 @@ if echo "$PKG_DIR" | grep -q '/\.\./'; then
     exit 1
 fi
 
-if ! echo "$PKG_DIR" | grep -q 'luci-app-banner'; then
-    echo "❌ 錯誤：目標目錄路徑未包含 'luci-app-banner' 關鍵字 ('$PKG_DIR')，為安全起見已終止操作。"
-    exit 1
-fi
-
 # 安全檢查通過，執行刪除
 rm -rf "$PKG_DIR"
 
@@ -82,7 +76,7 @@ define Package/luci-app-banner
   CATEGORY:=LuCI
   SUBMENU:=3. Applications
   TITLE:=LuCI Support for Banner Navigation
-  DEPENDS:=+curl +jsonfilter +luci-base +jq
+  DEPENDS:=+curl +jsonfilter +luci-base +jq +file +imagemagick
   PKGARCH:=all
 endef
 
@@ -116,12 +110,8 @@ define Package/luci-app-banner/postinst
     mkdir -p /tmp/banner_cache /overlay/banner /www/luci-static/banner 2>/dev/null
 
     # 健壯地複製預設背景圖
-    PKG_INFO_FILE="/usr/lib/ipkg/info/luci-app-banner.list"
-    if [ -f "$$PKG_INFO_FILE" ]; then
-        BASE_DIR=$$(grep '/default/bg_default.jpg' "$$PKG_INFO_FILE" | sed 's|/default/bg_default.jpg||' | head -n 1)
-        if [ -n "$$BASE_DIR" ] && [ -f "$$BASE_DIR/default/bg_default.jpg" ]; then
-            cp "$$BASE_DIR/default/bg_default.jpg" /www/luci-static/banner/default_bg.jpg 2>/dev/null
-        fi
+    if [ -f "/default/bg_default.jpg" ]; then
+        cp "/default/bg_default.jpg" /www/luci-static/banner/default_bg.jpg 2>/dev/null
     fi
 
     # 啟用並啟動服務
@@ -129,8 +119,9 @@ define Package/luci-app-banner/postinst
     /etc/init.d/banner start >/dev/null 2>&1 &
 
     # 延遲重啟 web 服務器，避免阻塞安裝過程
-    ( sleep 15 && /etc/init.d/nginx restart 2>/dev/null ) &
-    ( sleep 15 && /etc/init.d/uhttpd restart 2>/dev/null  ) &
+    RESTART_DELAY=$(uci -q get banner.banner.restart_delay || echo 15)
+    ( sleep "$RESTART_DELAY" && /etc/init.d/nginx restart 2>/dev/null ) &
+    ( sleep "$RESTART_DELAY" && /etc/init.d/uhttpd restart 2>/dev/null ) &
 }
 exit 0
 endef
@@ -145,19 +136,26 @@ cat > "$PKG_DIR/root/etc/config/banner" <<'UCICONF'
 config banner 'banner'
 	option text '🎉 新春特惠 · 技术支持24/7 · 已服务500+用户 · 安全稳定运行'
 	option color 'rainbow'
-	option opacity '90'
-	option carousel_interval '5000'
-	option bg_group '1'
-	option bg_enabled '1'
-	option persistent_storage '0'
-	option current_bg '0'
+	option opacity '90' # 0-100
+	option carousel_interval '5000' # 1000-30000 (ms)
+	option bg_group '1' # 1-4
+	option bg_enabled '1' # 0 or 1
+	option persistent_storage '0' # 0 or 1
+	option current_bg '0' # 0-2
 	list update_urls 'https://raw.githubusercontent.com/fgbfg5676/openwrt-banner/main/banner.json'
 	list update_urls 'https://gitee.com/fgbfg5676/openwrt-banner/raw/main/banner.json'
 	option selected_url 'https://raw.githubusercontent.com/fgbfg5676/openwrt-banner/main/banner.json'
-	option update_interval '10800'
+	option update_interval '10800' # seconds
 	option last_update '0'
 	option banner_texts ''
 	option remote_message ''
+	option cache_dir '/tmp/banner_cache' # Cache directory
+	option web_dir '/www/luci-static/banner' # Web directory
+	option persistent_dir '/overlay/banner' # Persistent storage directory
+	option curl_timeout '15' # seconds
+	option wait_timeout '5' # seconds
+	option cleanup_age '3' # days
+	option restart_delay '15' # seconds
 UCICONF
 # 創建 default 目錄用於存放離線備份文件
 mkdir -p "$PKG_DIR/default"
@@ -180,8 +178,15 @@ cat > "$PKG_DIR/default/banner_default.json" <<'DEFAULTJSON'
 DEFAULTJSON
 
 # 創建一個 10x10 的灰色 JPG 作為預設背景圖，兼容性更好
-convert -size 10x10 xc:grey "$PKG_DIR/default/bg_default.jpg" 2>/dev/null || \
-printf '\xff\xd8\xff\xe0\x00\x10\x4a\x46\x49\x46\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00\xff\xdb\x00\x43\x00\x08\x06\x06\x07\x06\x05\x08\x07\x07\x07\x09\x09\x08\x0a\x0c\x14\x0d\x0c\x0b\x0b\x0c\x19\x12\x13\x0f\x14\x1d\x1a\x1f\x1e\x1d\x1a\x1c\x1c\x20\x24\x2e\x27\x20\x22\x2c\x23\x1c\x1c\x28\x37\x29\x2c\x30\x31\x34\x34\x34\x1f\x27\x39\x3d\x38\x32\x3c\x2e\x33\x34\x32\xff\xc0\x00\x11\x08\x00\x0a\x00\x0a\x03\x01\x22\x00\x02\x11\x01\x03\x11\x01\xff\xc4\x00\x1f\x00\x00\x01\x05\x01\x01\x01\x01\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\xff\xda\x00\x0c\x03\x01\x00\x02\x11\x03\x11\x00\x3f\x00\xd2\x8a\x01\xff\xd9' > "$PKG_DIR/default/bg_default.jpg"
+if ! command -v convert >/dev/null 2>&1; then
+    echo "警告：未找到 ImageMagick 的 convert 命令，將使用預定義的 JPEG 文件"
+    printf '\xff\xd8\xff\xe0\x00\x10\x4a\x46\x49\x46\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00\xff\xdb\x00\x43\x00\x08\x06\x06\x07\x06\x05\x08\x07\x07\x07\x09\x09\x08\x0a\x0c\x14\x0d\x0c\x0b\x0b\x0c\x19\x12\x13\x0f\x14\x1d\x1a\x1f\x1e\x1d\x1a\x1c\x1c\x20\x24\x2e\x27\x20\x22\x2c\x23\x1c\x1c\x28\x37\x29\x2c\x30\x31\x34\x34\x34\x1f\x27\x39\x3d\x38\x32\x3c\x2e\x33\x34\x32\xff\xc0\x00\x11\x08\x00\x0a\x00\x0a\x03\x01\x22\x00\x02\x11\x01\x03\x11\x01\xff\xc4\x00\x1f\x00\x00\x01\x05\x01\x01\x01\x01\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\xff\xda\x00\x0c\x03\x01\x00\x02\x11\x03\x11\x00\x3f\x00\xd2\x8a\x01\xff\xd9' > "$PKG_DIR/default/bg_default.jpg"
+else
+    convert -size 10x10 xc:grey "$PKG_DIR/default/bg_default.jpg" 2>/dev/null || {
+        echo "錯誤：convert 命令執行失敗，將使用預定義的 JPEG 文件"
+        printf '\xff\xd8\xff\xe0\x00\x10\x4a\x46\x49\x46\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00\xff\xdb\x00\x43\x00\x08\x06\x06\x07\x06\x05\x08\x07\x07\x07\x09\x09\x08\x0a\x0c\x14\x0d\x0c\x0b\x0b\x0c\x19\x12\x13\x0f\x14\x1d\x1a\x1f\x1e\x1d\x1a\x1c\x1c\x20\x24\x2e\x27\x20\x22\x2c\x23\x1c\x1c\x28\x37\x29\x2c\x30\x31\x34\x34\x34\x1f\x27\x39\x3d\x38\x32\x3c\x2e\x33\x34\x32\xff\xc0\x00\x11\x08\x00\x0a\x00\x0a\x03\x01\x22\x00\x02\x11\x01\x03\x11\x01\xff\xc4\x00\x1f\x00\x00\x01\x05\x01\x01\x01\x01\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\xff\xda\x00\x0c\x03\x01\x00\x02\x11\x03\x11\x00\x3f\x00\xd2\x8a\x01\xff\xd9' > "$PKG_DIR/default/bg_default.jpg"
+    }
+if [ $(wc -c < "$PKG_DIR/default/bg_default.jpg") -ne 200 ]; then echo "錯誤：默認 JPG 生成失敗"; exit 1; fi
 
 # 創建一個全局配置文件，用於存儲可配置的變數
 mkdir -p "$PKG_DIR/root/usr/share/banner"
@@ -196,11 +201,11 @@ MAX_FILE_SIZE=3145728
 LOG_FILE="/tmp/banner_update.log"
 
 # 預設快取目錄
-CACHE_DIR="/tmp/banner_cache"
+CACHE_DIR=$(uci -q get banner.banner.cache_dir || echo "/tmp/banner_cache")
 
 # 預設背景圖存儲路徑
-DEFAULT_BG_PATH="/www/luci-static/banner"
-PERSISTENT_BG_PATH="/overlay/banner"
+DEFAULT_BG_PATH=$(uci -q get banner.banner.web_dir || echo "/www/luci-static/banner")
+PERSISTENT_BG_PATH=$(uci -q get banner.banner.persistent_dir || echo "/overlay/banner")
 CONFIGSH
 
 # Cache cleaner script
@@ -216,12 +221,14 @@ log() {
 }
 
 log "========== Cache Cleanup Started =========="
-if [ ! -d "/tmp/banner_cache" ]; then
-    log "[!] Cache directory /tmp/banner_cache not found, skipping cleanup."
+CACHE_DIR=$(uci -q get banner.banner.cache_dir || echo "/tmp/banner_cache")
+CLEANUP_AGE=$(uci -q get banner.banner.cleanup_age || echo 3)
+if [ ! -d "$CACHE_DIR" ]; then
+    log "[!] Cache directory $CACHE_DIR not found, skipping cleanup."
     exit 0
 fi
-find /tmp/banner_cache -type f -mtime +3 -delete
-log "[√] Removed files older than 3 days"
+find "$CACHE_DIR" -type f -name '*.jpg' -mtime +"$CLEANUP_AGE" -delete
+log "[√] Removed JPEG files older than $CLEANUP_AGE days from $CACHE_DIR"
 CLEANER
 
 
@@ -229,13 +236,19 @@ CLEANER
 cat > "$PKG_DIR/root/usr/bin/banner_manual_update.sh" <<'MANUALUPDATE'
 #!/bin/sh
 LOG="/tmp/banner_update.log"
-CACHE="/tmp/banner_cache"
+CACHE=$(uci -q get banner.banner.cache_dir || echo "/tmp/banner_cache")
 
 log() {
     local msg="$1"; msg=$(echo "$msg" | sed -E 's|https?://[^[:space:]]+|[URL Redacted]|g' | sed -E 's|[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|[IP Redacted]|g' );
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $msg" >> "$LOG";
-    if [ -s "$LOG" ] && [ $(wc -c < "$LOG") -gt 51200 ]; then
-        mv "$LOG" "$LOG.bak"; tail -n 50 "$LOG.bak" > "$LOG"; rm -f "$LOG.bak";
+    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+    local log_file="/tmp/banner_update.log"
+    echo "[$timestamp] $msg" >> "$log_file"
+    # 检查日志文件大小，超过 50KB (51200 字节) 时保留最后 50 行
+    if [ -s "$log_file" ] && [ $(wc -c < "$log_file") -gt 51200 ]; then
+        mv "$log_file" "$log_file.bak"
+        tail -n 50 "$log_file.bak" > "$log_file"
+        rm -f "$log_file.bak"
+        echo "[$timestamp] 日志文件 $log_file 已清理，保留最后 50 行" >> "$log_file"
     fi
 }
 check_lock() {
@@ -250,6 +263,28 @@ check_lock() {
     fi;
     touch "$lock_file"; return 0;
 }
+
+if [ ! -f "/etc/config/banner" ]; then
+    log "[×] UCI 配置文件 /etc/config/banner 不存在，创建默认配置"
+    cat > /etc/config/banner <<'EOF'
+config banner 'banner'
+    option text '默认横幅文本'
+    option color 'white'
+    option opacity '90'
+    option carousel_interval '5000'
+    option bg_group '1'
+    option bg_enabled '1'
+    option persistent_storage '0'
+    option current_bg '0'
+    list update_urls 'https://raw.githubusercontent.com/fgbfg5676/openwrt-banner/main/banner.json'
+    list update_urls 'https://gitee.com/fgbfg5676/openwrt-banner/raw/main/banner.json'
+    option selected_url 'https://raw.githubusercontent.com/fgbfg5676/openwrt-banner/main/banner.json'
+    option update_interval '10800'
+    option last_update '0'
+    option banner_texts ''
+    option remote_message ''
+EOF
+fi
 
 mkdir -p "$CACHE"
 if ! command -v uci >/dev/null 2>&1; then
@@ -281,11 +316,12 @@ validate_url() {
 URLS=$(uci -q get banner.banner.update_urls | tr ' ' '\n')
 SELECTED_URL=$(uci -q get banner.banner.selected_url)
 SUCCESS=0
+CURL_TIMEOUT=$(uci -q get banner.banner.curl_timeout || echo 15)
 
 if [ -n "$SELECTED_URL" ] && validate_url "$SELECTED_URL"; then
     for i in 1 2 3; do
         log "Attempt $i/3 with selected URL: $SELECTED_URL"
-        curl -sL --max-time 15 "$SELECTED_URL" -o "$CACHE/banner_new.json" 2>/dev/null
+        curl -sL --max-time "$CURL_TIMEOUT" "$SELECTED_URL" -o "$CACHE/banner_new.json" 2>/dev/null
         if [ -s "$CACHE/banner_new.json" ]; then
             log "[√] Selected URL download successful."
             SUCCESS=1
@@ -301,7 +337,7 @@ if [ $SUCCESS -eq 0 ]; then
         if [ "$url" != "$SELECTED_URL" ] && validate_url "$url"; then
             for i in 1 2 3; do
                 log "Attempt $i/3 with fallback URL: $url"
-                curl -sL --max-time 15 "$url" -o "$CACHE/banner_new.json" 2>/dev/null
+                curl -sL --max-time "$CURL_TIMEOUT" "$url" -o "$CACHE/banner_new.json" 2>/dev/null
                 if [ -s "$CACHE/banner_new.json" ]; then
                     log "[√] Fallback URL download successful. Updating selected URL."
                     uci set banner.banner.selected_url="$url"
@@ -315,17 +351,21 @@ if [ $SUCCESS -eq 0 ]; then
         fi
     done
 fi
-
+if ! command -v jq >/dev/null 2>&1; then
+    log "[×] jq not found, skipping JSON parsing."
+    exit 0
+fi
 if [ $SUCCESS -eq 1 ] && [ -s "$CACHE/banner_new.json" ]; then
     if ! jq empty "$CACHE/banner_new.json" >/dev/null 2>&1; then
         log "[⚠️] Invalid JSON detected. Attempting to perform partial recovery."
-        jq '{
+        jq "{
             text: .text // "內容加載失敗",
             color: .color // "white",
             banner_texts: .banner_texts // [],
             nav_tabs: .nav_tabs // [],
-            contact_info: .contact_info // {}
-        }' "$CACHE/banner_new.json" > "$CACHE/banner_partial.json"
+            contact_info: .contact_info // {},
+            enabled: .enabled // "true"
+        }" "$CACHE/banner_new.json" > "$CACHE/banner_partial.json"
 
         if [ -s "$CACHE/banner_partial.json" ] && jq empty "$CACHE/banner_partial.json" >/dev/null 2>&1; then
             mv "$CACHE/banner_partial.json" "$CACHE/banner_new.json"
@@ -383,10 +423,16 @@ cat > "$PKG_DIR/root/usr/bin/banner_auto_update.sh" <<'AUTOUPDATE'
 LOG="/tmp/banner_update.log"
 
 log() {
-    local msg="$1"; msg=$(echo "$msg" | sed -E 's|https?://[^[:space:]]+|[URL Redacted]|g' | sed -E 's|[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|[IP Redacted]|g' );
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $msg" >> "$LOG";
-    if [ -s "$LOG" ] && [ $(wc -c < "$LOG") -gt 51200 ]; then
-        mv "$LOG" "$LOG.bak"; tail -n 50 "$LOG.bak" > "$LOG"; rm -f "$LOG.bak";
+    local msg="$1"
+    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+    local log_file="$LOG"  # "$LOG" 已定义为 "/tmp/banner_update.log"
+    msg=$(echo "$msg" | sed -E 's|https?://[^[:space:]]+|[URL Redacted]|g' | sed -E 's|[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|[IP Redacted]|g')
+    echo "[$timestamp] $msg" >> "$log_file"
+    if [ -s "$log_file" ] && [ $(wc -c < "$log_file") -gt 51200 ]; then
+        mv "$log_file" "$log_file.bak"
+        tail -n 50 "$log_file.bak" > "$log_file"
+        rm -f "$log_file.bak"
+        echo "[$timestamp] 日志文件 $log_file 已清理，保留最后 50 行" >> "$log_file"
     fi
 }
 check_lock() {
@@ -415,14 +461,18 @@ trap "rm -f $LOCK" EXIT
 
 LAST_UPDATE=$(uci -q get banner.banner.last_update || echo 0)
 CURRENT_TIME=$(date +%s)
-INTERVAL=10800
+INTERVAL=$(uci -q get banner.banner.update_interval || echo 10800)
 
-if [ $((CURRENT_TIME - LAST_UPDATE)) -lt $INTERVAL ]; then
+if [ $((CURRENT_TIME - LAST_UPDATE)) -lt "$INTERVAL" ]; then
+    log "[√] 未到更新时间，跳过自动更新"
     exit 0
 fi
 
 log "========== Auto Update Started =========="
 /usr/bin/banner_manual_update.sh
+if [ $? -ne 0 ]; then
+    log "[×] 自动更新失败，查看 /tmp/banner_update.log 获取详情"
+fi
 AUTOUPDATE
 
 cat > "$PKG_DIR/root/usr/bin/banner_bg_loader.sh" <<'BGLOADER'
@@ -449,11 +499,14 @@ PERSISTENT="$PERSISTENT_BG_PATH"
 # 添加日志函数
 log() {
     local msg="$1"
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $msg" >> "$LOG"
-    if [ -s "$LOG" ] && [ $(wc -c < "$LOG") -gt 51200 ]; then
-        mv "$LOG" "$LOG.bak"
-        tail -n 50 "$LOG.bak" > "$LOG"
-        rm -f "$LOG.bak"
+    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+    local log_file="$LOG"  # "$LOG" 已定义为 "/tmp/banner_bg.log"
+    echo "[$timestamp] $msg" >> "$log_file"
+    if [ -s "$log_file" ] && [ $(wc -c < "$log_file") -gt 51200 ]; then
+        mv "$log_file" "$log_file.bak"
+        tail -n 50 "$log_file.bak" > "$log_file"
+        rm -f "$log_file.bak"
+        echo "[$timestamp] 日志文件 $log_file 已清理，保留最后 50 行" >> "$log_file"
     fi
 }
 
@@ -550,10 +603,11 @@ if curl --help | grep -q -- --max-filesize; then
     curl -sL --max-time 20 --max-filesize "$MAX_SIZE" "$URL" -o "$TMPFILE" 2>/dev/null
 else
     curl -sL --max-time 20 "$URL" -o "$TMPFILE" 2>/dev/null
-    if [ -s "$TMPFILE" ] && [ $(stat -c %s "$TMPFILE") -gt "$MAX_SIZE" ]; then
-        log "[×] File size of $URL exceeds limit ($MAX_SIZE bytes). Fallback check."
-        rm -f "$TMPFILE"
-    fi
+FILE_SIZE=$(stat -c %s "$TMPFILE" 2>/dev/null || stat -f %z "$TMPFILE" 2>/dev/null)
+if [ -s "$TMPFILE" ] && [ "$FILE_SIZE" -gt "$MAX_SIZE" ]; then
+    log "[×] File size of $URL exceeds limit ($MAX_SIZE bytes). Fallback check."
+    rm -f "$TMPFILE"
+fi
 fi
 
         
@@ -603,8 +657,8 @@ BGLOADER
 
 # Cron jobs
 cat > "$PKG_DIR/root/etc/cron.d/banner" <<'CRON'
-0 * * * * root /usr/bin/banner_auto_update.sh
-0 0 * * * root /usr/bin/banner_cache_cleaner.sh
+0 * * * * /usr/bin/banner_auto_update.sh
+0 0 * * * /usr/bin/banner_cache_cleaner.sh
 CRON
 
 # --- 用這段新程式碼替換舊的 init 腳本 ---
@@ -724,35 +778,32 @@ function action_display()
     local persistent = uci:get("banner", "banner", "persistent_storage") or "0"
     local bg_path = (persistent == "1") and "/overlay/banner" or "/www/luci-static/banner"
 
-    -- --- 新增的驗證邏輯 ---
-    local text = uci:get("banner", "banner", "text") or "歡迎使用"
+    local text = uci:get("banner", "banner", "text") or "欢迎使用"
     
     local opacity = tonumber(uci:get("banner", "banner", "opacity") or "90")
     if not opacity or opacity < 0 or opacity > 100 then
-        opacity = 90 -- 如果值無效 (非數字、小於0或大於100)，強制設為 90
+        opacity = 90
     end
 
     local banner_texts = uci:get("banner", "banner", "banner_texts") or ""
     if banner_texts == "" then
-        banner_texts = text -- 如果輪播文本為空，使用主橫幅文本作為備用
+        banner_texts = text
     end
-    -- --- 驗證邏輯結束 ---
 
     luci.template.render("banner/display", {
         text = text,
         color = uci:get("banner", "banner", "color"),
-        opacity = opacity, -- 使用驗證後的值
+        opacity = opacity,
         carousel_interval = uci:get("banner", "banner", "carousel_interval"),
         current_bg = uci:get("banner", "banner", "current_bg"),
         bg_enabled = "1",
-        banner_texts = banner_texts, -- 使用驗證後的值
+        banner_texts = banner_texts,
         nav_data = nav_data,
         persistent = persistent,
         bg_path = bg_path,
         token = luci.dispatcher.context.authsession
     })
 end
-
 
 function action_settings()
     local uci = require("uci").cursor()
@@ -769,6 +820,9 @@ function action_settings()
         table.insert(display_urls, { value = url, display = name })
     end
     
+    local log = luci.sys.exec("tail -c 5000 /tmp/banner_update.log 2>/dev/null") or "暫無日誌"
+    if log == "" then log = "暫無日誌" end
+    
     luci.template.render("banner/settings", {
         text = uci:get("banner", "banner", "text"),
         opacity = uci:get("banner", "banner", "opacity"),
@@ -779,70 +833,81 @@ function action_settings()
         display_urls = display_urls,
         selected_url = uci:get("banner", "banner", "selected_url"),
         token = luci.dispatcher.context.authsession,
-        log = require("nixio.fs").readfile("/tmp/banner_update.log") or "暂无日志"
+        log = log
     })
 end
 
 function action_background()
     local uci = require("uci").cursor()
+   local log = luci.sys.exec("tail -c 5000 /tmp/banner_bg.log 2>/dev/null") or "暫無日誌"
+if log == "" then log = "暫無日誌" end
+    
     luci.template.render("banner/background", {
         bg_group = uci:get("banner", "banner", "bg_group"),
         opacity = uci:get("banner", "banner", "opacity"),
         current_bg = uci:get("banner", "banner", "current_bg"),
         persistent_storage = uci:get("banner", "banner", "persistent_storage"),
         token = luci.dispatcher.context.authsession,
-        log = require("nixio.fs").readfile("/tmp/banner_bg.log") or "暂无日志"
+        log = log
     })
 end
 
 function action_do_update()
     luci.sys.call("/usr/bin/banner_manual_update.sh >/dev/null 2>&1 &")
-    luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/settings" ))
+    luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/settings"))
 end
 
 function action_do_set_bg()
     local uci = require("uci").cursor()
-    local bg = luci.http.formvalue("bg" )
+    local bg = luci.http.formvalue("bg")
     if bg and bg:match("^[0-2]$") then
         uci:set("banner", "banner", "current_bg", bg)
         uci:commit("banner")
         local persistent = uci:get("banner", "banner", "persistent_storage") or "0"
         local src_path = (persistent == "1") and "/overlay/banner" or "/www/luci-static/banner"
+        if not (src_path == "/overlay/banner" or src_path == "/www/luci-static/banner") then
+            luci.http.status(400, "Invalid source directory")
+            return
+        end
         luci.sys.call(string.format("cp %s/bg%s.jpg /tmp/banner_cache/current_bg.jpg 2>/dev/null", src_path, bg))
     end
-    luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/display" ))
+    luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/display"))
 end
 
 function action_do_clear_cache()
     luci.sys.call("rm -f /tmp/banner_cache/bg*.jpg /overlay/banner/bg*.jpg /www/luci-static/banner/bg*.jpg")
-    luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/background" ))
+    luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/background"))
 end
 
 function action_do_load_group()
     local uci = require("uci").cursor()
-    local group = luci.http.formvalue("group" )
+    local group = luci.http.formvalue("group")
     if group and group:match("^[1-4]$") then
         uci:set("banner", "banner", "bg_group", group)
         uci:commit("banner")
         luci.sys.call(string.format("/usr/bin/banner_bg_loader.sh %s >/dev/null 2>&1 &", group))
     end
-    luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/background" ))
+    luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/background"))
 end
 
 function action_do_upload_bg()
     local fs = require("nixio.fs")
-    local http = require("luci.http" )
+    local http = require("luci.http")
     local uci = require("uci").cursor()
     local sys = require("luci.sys")
     
     local persistent = uci:get("banner", "banner", "persistent_storage") or "0"
     local dest_dir = (persistent == "1") and "/overlay/banner" or "/www/luci-static/banner"
+    if not (dest_dir == "/overlay/banner" or dest_dir == "/www/luci-static/banner") then
+        luci.http.status(400, "Invalid destination directory")
+        return
+    end
     sys.call("mkdir -p '" .. dest_dir .. "'")
 
     local tmp_file = dest_dir .. "/bg0.tmp"
     local final_file = dest_dir .. "/bg0.jpg"
 
-    http.setfilehandler(function(meta, chunk, eof )
+    http.setfilehandler(function(meta, chunk, eof)
         if not meta or meta.name ~= "bg_file" then return end
         
         if chunk then
@@ -854,6 +919,7 @@ function action_do_upload_bg()
             local max_size = tonumber(uci:get("banner", "banner", "max_file_size") or "3145728")
             if fs.stat(tmp_file) and fs.stat(tmp_file).size > max_size then
                 fs.remove(tmp_file)
+                luci.http.status(400, "File size exceeds 3MB")
                 return
             end
             if sys.call("file '" .. tmp_file .. "' | grep -qiE 'JPEG|JPG'") == 0 then
@@ -867,25 +933,31 @@ function action_do_upload_bg()
                 uci:commit("banner")
             else
                 fs.remove(tmp_file)
+                luci.http.status(400, "Invalid JPEG file")
             end
         end
     end)
-    http.redirect(luci.dispatcher.build_url("admin/status/banner/display" ))
+    luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/display"))
 end
 
 function action_do_apply_url()
     local uci = require("uci").cursor()
     local fs = require("nixio.fs")
     local sys = require("luci.sys")
-    local url = luci.http.formvalue("custom_bg_url" )
+    local url = luci.http.formvalue("custom_bg_url")
 
-    if not url or not url:match("^https://.*%.jpe?g$" ) then
-        luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/display" ))
+    if not url or not url:match("^https://.*%.jpe?g$") then
+        luci.http.status(400, "Invalid URL format")
+        luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/display"))
         return
     end
 
     local persistent = uci:get("banner", "banner", "persistent_storage") or "0"
     local dest_dir = (persistent == "1") and "/overlay/banner" or "/www/luci-static/banner"
+    if not (dest_dir == "/overlay/banner" or dest_dir == "/www/luci-static/banner") then
+        luci.http.status(400, "Invalid destination directory")
+        return
+    end
     sys.call("mkdir -p '" .. dest_dir .. "'")
     
     local tmp_file = dest_dir .. "/bg0.tmp"
@@ -912,50 +984,55 @@ function action_do_apply_url()
             uci:commit("banner")
         else
             fs.remove(tmp_file)
+            luci.http.status(400, "Invalid JPEG file")
         end
     else
         fs.remove(tmp_file)
+        luci.http.status(400, "Failed to download file")
     end
     
-    luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/display" ))
+    luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/display"))
 end
 
 function action_do_set_opacity()
     local uci = require("uci").cursor()
-    local opacity = luci.http.formvalue("opacity" )
+    local opacity = luci.http.formvalue("opacity")
     if opacity and tonumber(opacity) and tonumber(opacity) >= 0 and tonumber(opacity) <= 100 then
         uci:set("banner", "banner", "opacity", opacity)
         uci:commit("banner")
+        luci.http.status(200)
+    else
+        luci.http.status(400, "Invalid opacity value (must be 0-100)")
     end
-    luci.http.status(200 )
 end
 
 function action_do_set_carousel_interval()
     local uci = require("uci").cursor()
-    local interval = luci.http.formvalue("carousel_interval" )
+    local interval = luci.http.formvalue("carousel_interval")
     if interval and tonumber(interval) and tonumber(interval) >= 1000 and tonumber(interval) <= 30000 then
         uci:set("banner", "banner", "carousel_interval", interval)
         uci:commit("banner")
+        luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/settings"))
     else
-        luci.http.status(400 )
-        return
+        luci.http.status(400, "Invalid carousel interval (must be 1000-30000)")
     end
-    luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/settings" ))
 end
 
 function action_do_set_update_url()
     local uci = require("uci").cursor()
-    local selected_url = luci.http.formvalue("selected_url" )
-    if selected_url and selected_url:match("^https?://" ) then
+    local selected_url = luci.http.formvalue("selected_url")
+    if selected_url and selected_url:match("^https?://") then
         uci:set("banner", "banner", "selected_url", selected_url)
         uci:commit("banner")
+    else
+        luci.http.status(400, "Invalid URL format")
     end
-    luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/settings" ))
+    luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/settings"))
 end
 
 function action_do_set_persistent_storage()
     local uci = require("uci").cursor()
-    local persistent = luci.http.formvalue("persistent_storage" )
+    local persistent = luci.http.formvalue("persistent_storage")
     if persistent and persistent:match("^[0-1]$") then
         uci:set("banner", "banner", "persistent_storage", persistent)
         uci:commit("banner")
@@ -964,15 +1041,17 @@ function action_do_set_persistent_storage()
         else
             luci.sys.call("cp /overlay/banner/bg*.jpg /www/luci-static/banner/ 2>/dev/null")
         end
+    else
+        luci.http.status(400, "Invalid persistent storage value")
     end
-    luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/settings" ))
+    luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/settings"))
 end
 
 function action_check_bg_complete()
     if require("nixio.fs").access("/tmp/banner_cache/bg_complete") then
-        luci.http.write("complete" )
+        luci.http.write("complete")
     else
-        luci.http.write("pending" )
+        luci.http.write("pending")
     end
 end
 
@@ -990,10 +1069,9 @@ function action_do_reset_defaults()
     uci:set("banner", "banner", "last_update", "0")
     uci:commit("banner")
     luci.sys.call("rm -f /tmp/banner_cache/* /overlay/banner/bg*.jpg /www/luci-static/banner/bg*.jpg")
-    luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/settings" ))
+    luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/settings"))
 end
 CONTROLLER
-
 # Global style view
 cat > "$PKG_DIR/root/usr/lib/lua/luci/view/banner/global_style.htm" <<'GLOBALSTYLE'
 <%
@@ -1048,6 +1126,13 @@ input, textarea, select {
 }
 </style>
 <script type="text/javascript">
+// 新增防抖函数
+var debounceTimer;
+function debounce(func, delay) {
+    clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(func, delay);
+}
+
 document.addEventListener('input', function(e) {
     if (e.target.dataset.realtime === 'opacity') {
         var value = parseInt(e.target.value);
@@ -1058,10 +1143,13 @@ document.addEventListener('input', function(e) {
         var display = document.getElementById('opacity-display');
         if (display) display.textContent = value + '%';
         
-        var xhr = new XMLHttpRequest();
-        xhr.open('POST', '<%=luci.dispatcher.build_url("admin/status/banner/do_set_opacity")%>', true);
-        xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
-        xhr.send('token=<%=token%>&opacity=' + value);
+       // 使用防抖机制包装请求
+        debounce(function() {
+            var xhr = new XMLHttpRequest();
+            xhr.open('POST', '<%=luci.dispatcher.build_url("admin/status/banner/do_set_opacity")%>', true);
+            xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+            xhr.send('token=<%=token%>&opacity=' + value);
+        }, 300); // 延遲 300 毫秒
     }
 });
 </script>
@@ -1193,18 +1281,21 @@ function changeBg(n) {
 function copyText(text) {
     navigator.clipboard ? navigator.clipboard.writeText(text).then(function() { showMsg('已复制'); }) : showMsg('复制失败');
 }
-// --- 新增開始 (優化 3：加載超時提示) ---
+
+// 新增开始 (优化 3：加载超时提示)
 setTimeout(function() {
-    // 檢查核心的 banner-text 元素是否存在
-    if (!document.getElementById('banner-text')) {
-        // 確保 showMsg 函數存在
-        if (typeof showMsg === 'function') {
-            showMsg('⚠️ 頁面數據加載超時，內容可能不完整或顯示預設值。');
-        } else {
-            alert('⚠️ 頁面數據加載超時，內容可能不完整或顯示預設值。');
+    var xhr = new XMLHttpRequest();
+    xhr.open('GET', '/tmp/banner_cache/nav_data.json', true);
+    xhr.onload = function() {
+        if (xhr.status !== 200) {
+            showMsg('⚠️ 数据加载失败，可能显示默认内容');
         }
-    }
-}, 5000); // 5秒後檢查
+    };
+    xhr.onerror = function() {
+        showMsg('⚠️ 数据加载失败，可能显示默认内容');
+    };
+    xhr.send();
+}, 5000);
 </script>
 <%+footer%>
 DISPLAYVIEW
@@ -1349,21 +1440,15 @@ cat > "$PKG_DIR/root/usr/lib/lua/luci/view/banner/background.htm" <<'BGVIEW'
             </form>
         </div></div>
         <h3>背景日志</h3>
-        <div style="background:rgba(0,0,0,.5);padding:12px;border-radius:8px;max-height:250px;overflow-y:auto;font-family:monospace;font-size:12px;color:#0f0;white-space:pre-wrap"><%=pcdata(log)%></div>
-    </div>
+<div style="background:rgba(0,0,0,.5);padding:12px;border-radius:8px;max-height:250px;overflow-y:auto;font-family:monospace;font-size:12px;color:#0f0;white-space:pre-wrap"><%=pcdata(log)%></div>
 </div>
+</div>
+<script>
+function showMsg(msg) {
+    alert(msg);
+}
+</script>
 <script type="text/javascript">
-document.getElementById('loadGroupForm').addEventListener('submit', function(e) {
-    e.preventDefault();
-    document.getElementById('loadingOverlay').classList.add('active');
-    var form = this;
-    var xhr = new XMLHttpRequest();
-    xhr.open('POST', form.action, true);
-    xhr.onload = function() { setTimeout(function() { window.location.reload(); }, 8000); };
-    xhr.send(new FormData(form));
-});
-
-// --- 用這段新程式碼替換上面的舊程式碼 ---
 document.getElementById('customBgForm').addEventListener('submit', function(e) {
     var url = this.custom_bg_url.value.trim();
     // 只驗證 HTTPS 和 .jpg/.jpeg 後綴，不再限制域名
@@ -1374,16 +1459,19 @@ document.getElementById('customBgForm').addEventListener('submit', function(e) {
     }
 });
 
-
 document.getElementById('uploadForm').addEventListener('submit', function(e) {
     var file = this.bg_file.files[0];
     if (!file) {
         e.preventDefault();
         showMsg('⚠️ 请选择文件');
-    } else if (file.size > 3145728) { // 3MB
+        return;
+    }
+    if (file.size > 3145728) {
         e.preventDefault();
         showMsg('⚠️ 文件大小不能超过 3MB');
-    } else if (!file.type.match('image/jpeg')) {
+        return;
+    }
+    if (!file.type.match('image/jpeg') && !file.name.match(/\.jpe?g$/i)) {
         e.preventDefault();
         showMsg('⚠️ 仅支持 JPG/JPEG 格式');
     }

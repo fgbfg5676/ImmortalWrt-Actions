@@ -65,19 +65,20 @@ include $(TOPDIR)/rules.mk
 PKG_NAME:=luci-app-banner
 PKG_VERSION:=2.7
 PKG_RELEASE:=1
+PKG_ARCH:=all
+PKG_FLAGS:=nonshared
 
 PKG_LICENSE:=Apache-2.0
 PKG_MAINTAINER:=OpenWrt Community
 
 include $(INCLUDE_DIR)/package.mk
-include $(INCLUDE_DIR)/host-build.mk
 
 define Package/luci-app-banner
   SECTION:=luci
   CATEGORY:=LuCI
   SUBMENU:=3. Applications
   TITLE:=LuCI Support for Banner Navigation
-  DEPENDS:=+curl +jsonfilter +luci-base +jq +file
+  DEPENDS:=+curl +jsonfilter +luci-base +jq
   PKGARCH:=all
 endef
 
@@ -86,15 +87,12 @@ define Package/luci-app-banner/description
 endef
 
 define Build/Prepare
-	true
+endef
+
+define Build/Configure
 endef
 
 define Build/Compile
-	@echo "No compilation needed for luci-app-banner."
-endef
-
-define Build/Clean
-	true
 endef
 
 define Package/luci-app-banner/install
@@ -113,20 +111,9 @@ endef
 
 define Package/luci-app-banner/postinst
 #!/bin/sh
-[ -n "${IPKG_INSTROOT}" ] || {
-	# Create necessary directories
-	mkdir -p /tmp/banner_cache /overlay/banner /www/luci-static/banner 2>/dev/null
-	# Robustly copy default background
-	if [ -f "/default/bg_default.jpg" ]; then
-		cp "/default/bg_default.jpg" /www/luci-static/banner/default_bg.jpg 2>/dev/null
-	fi
-	# Enable and start service
+[ -n "$${IPKG_INSTROOT}" ] || {
 	/etc/init.d/banner enable
-	/etc/init.d/banner start >/dev/null 2>&1 &
-	# Delayed restart of web servers to avoid blocking installation
-	RESTART_DELAY=$(uci -q get banner.banner.restart_delay || echo 15)
-	( sleep "$RESTART_DELAY" && /etc/init.d/nginx restart 2>/dev/null ) &
-	( sleep "$RESTART_DELAY" && /etc/init.d/uhttpd restart 2>/dev/null ) &
+	/etc/init.d/banner start
 }
 exit 0
 endef

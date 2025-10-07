@@ -65,7 +65,6 @@ include $(TOPDIR)/rules.mk
 PKG_NAME:=luci-app-banner
 PKG_VERSION:=2.7
 PKG_RELEASE:=1
-PKG_ARCH:=all
 PKG_FLAGS:=nonshared
 
 PKG_LICENSE:=Apache-2.0
@@ -104,7 +103,9 @@ define Package/luci-app-banner/install
 	$(INSTALL_DIR) $(1)/etc/cron.d
 	$(INSTALL_DIR) $(1)/etc/init.d
 	$(INSTALL_DIR) $(1)/overlay/banner
+	$(INSTALL_DIR) $(1)/default
 	$(CP) ./root/* $(1)/
+	$(CP) ./default/* $(1)/default/
 	chmod +x $(1)/usr/bin/*
 	chmod +x $(1)/etc/init.d/*
 endef
@@ -112,6 +113,8 @@ endef
 define Package/luci-app-banner/postinst
 #!/bin/sh
 [ -n "$${IPKG_INSTROOT}" ] || {
+	mkdir -p /www/luci-static/banner 2>/dev/null
+	[ -f /default/bg_default.jpg ] && cp /default/bg_default.jpg /www/luci-static/banner/default_bg.jpg 2>/dev/null
 	/etc/init.d/banner enable
 	/etc/init.d/banner start
 }

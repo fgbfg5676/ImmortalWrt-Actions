@@ -84,45 +84,55 @@ define Package/luci-app-banner/description
   A highly optimized LuCI web interface for OpenWrt banner navigation.
 endef
 
+define Build/Prepare
+	mkdir -p $(PKG_BUILD_DIR)
+	$(CP) ./root/* $(PKG_BUILD_DIR)/
+endef
+
 define Build/Compile
 endef
 
+define Build/Clean
+	rm -rf $(PKG_BUILD_DIR)
+endef
+
 define Package/luci-app-banner/install
-    $(INSTALL_DIR) $(1)/usr/lib/lua/luci/controller
-    $(INSTALL_DIR) $(1)/usr/lib/lua/luci/view/banner
-    $(INSTALL_DIR) $(1)/usr/bin
-    $(INSTALL_DIR) $(1)/www/luci-static/banner
-    $(INSTALL_DIR) $(1)/etc/config
-    $(INSTALL_DIR) $(1)/etc/cron.d
-    $(INSTALL_DIR) $(1)/etc/init.d
-    $(INSTALL_DIR) $(1)/overlay/banner
-    
-    $(CP) ./root/* $(1)/
-    chmod +x $(1)/usr/bin/*
-    chmod +x $(1)/etc/init.d/*
+	$(INSTALL_DIR) $(1)/usr/lib/lua/luci/controller
+	$(INSTALL_DIR) $(1)/usr/lib/lua/luci/view/banner
+	$(INSTALL_DIR) $(1)/usr/bin
+	$(INSTALL_DIR) $(1)/www/luci-static/banner
+	$(INSTALL_DIR) $(1)/etc/config
+	$(INSTALL_DIR) $(1)/etc/cron.d
+	$(INSTALL_DIR) $(1)/etc/init.d
+	$(INSTALL_DIR) $(1)/overlay/banner
+	$(CP) ./root/* $(1)/
+	chmod +x $(1)/usr/bin/*
+	chmod +x $(1)/etc/init.d/*
 endef
 
 define Package/luci-app-banner/postinst
 #!/bin/sh
-[ -n "$${IPKG_INSTROOT}" ] || {
-    # 创建必要的目录
-    mkdir -p /tmp/banner_cache /overlay/banner /www/luci-static/banner 2>/dev/null
-    # 启用并启动服务
-    /etc/init.d/banner enable
-    /etc/init.d/banner start >/dev/null 2>&1 &
-    # 延迟重启 web 服务器，避免阻塞安装过程
-    RESTART_DELAY=$(uci -q get banner.banner.restart_delay || echo 15)
-    ( sleep "$RESTART_DELAY" && /etc/init.d/nginx restart 2>/dev/null ) &
-    ( sleep "$RESTART_DELAY" && /etc/init.d/uhttpd restart 2>/dev/null ) &
+[ -n "${IPKG_INSTROOT}" ] || {
+	# Create necessary directories
+	mkdir -p /tmp/banner_cache /overlay/banner /www/luci-static/banner 2>/dev/null
+	# Robustly copy default background
+	if [ -f "/default/bg_default.jpg" ]; then
+		cp "/default/bg_default.jpg" /www/luci-static/banner/default_bg.jpg 2>/dev/null
+	fi
+	# Enable and start service
+	/etc/init.d/banner enable
+	/etc/init.d/banner start >/dev/null 2>&1 &
+	# Delayed restart of web servers to avoid blocking installation
+	RESTART_DELAY=$(uci -q get banner.banner.restart_delay || echo 15)
+	( sleep "$RESTART_DELAY" && /etc/init.d/nginx restart 2>/dev/null ) &
+	( sleep "$RESTART_DELAY" && /etc/init.d/uhttpd restart 2>/dev/null ) &
 }
 exit 0
 endef
 
 $(eval $(call BuildPackage,luci-app-banner))
 MAKEFILE
-
-echo "[3/3] Creating all package files with final optimizations..."
-
+echo "调试：Makefile 生成成功，大小 $(wc -c < "$PKG_DIR/Makefile") 字节"
 # UCI Configuration
 cat > "$PKG_DIR/root/etc/config/banner" <<'UCICONF'
 config banner 'banner'

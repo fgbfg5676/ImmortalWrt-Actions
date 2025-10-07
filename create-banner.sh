@@ -70,6 +70,7 @@ PKG_LICENSE:=Apache-2.0
 PKG_MAINTAINER:=OpenWrt Community
 
 include $(INCLUDE_DIR)/package.mk
+include $(INCLUDE_DIR)/host-build.mk
 
 define Package/luci-app-banner
   SECTION:=luci
@@ -85,15 +86,15 @@ define Package/luci-app-banner/description
 endef
 
 define Build/Prepare
-	mkdir -p $(PKG_BUILD_DIR)
-	$(CP) ./root/* $(PKG_BUILD_DIR)/
+	true
 endef
 
 define Build/Compile
+	@echo "No compilation needed for luci-app-banner."
 endef
 
 define Build/Clean
-	rm -rf $(PKG_BUILD_DIR)
+	true
 endef
 
 define Package/luci-app-banner/install

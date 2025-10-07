@@ -76,7 +76,7 @@ define Package/luci-app-banner
   CATEGORY:=LuCI
   SUBMENU:=3. Applications
   TITLE:=LuCI Support for Banner Navigation
-  DEPENDS:=+curl +jsonfilter +luci-base +jq +file +imagemagick +libjpeg-turbo +coreutils-printf
+  DEPENDS:=+curl +jsonfilter +luci-base +jq +file +coreutils-printf
   PKGARCH:=all
 endef
 

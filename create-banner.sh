@@ -199,10 +199,14 @@ else
     exit 1
 fi
 
-# 优先使用 printf 生成占位符 bg_default.jpg
-echo "调试：优先使用预定义 JPEG 数据生成 $PKG_DIR/default/bg_default.jpg"
-# 使用 printf %b 写入二进制数据，确保正确转义
-printf "%b" '\xff\xd8\xff\xe0\x00\x10\x4a\x46\x49\x46\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00\xff\xdb\x00\x43\x00\x08\x06\x06\x07\x06\x05\x08\x07\x07\x07\x09\x09\x08\x0a\x0c\x14\x0d\x0c\x0b\x0b\x0c\x19\x12\x13\x0f\x14\x1d\x1a\x1f\x1e\x1d\x1a\x1c\x1c\x20\x24\x2e\x27\x20\x22\x2c\x23\x1c\x1c\x28\x37\x29\x2c\x30\x31\x34\x34\x34\x1f\x27\x39\x3d\x38\x32\x3c\x2e\x33\x34\x32\xff\xc0\x00\x11\x08\x00\x0a\x00\x0a\x03\x01\x22\x00\x02\x11\x01\x03\x11\x01\xff\xc4\x00\x1f\x00\x00\x01\x05\x01\x01\x01\x01\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\xff\xda\x00\x0c\x03\x01\x00\x02\x11\x03\x11\x00\x3f\x00\xd2\x8a\x01\xff\xd9' > "$PKG_DIR/default/bg_default.jpg"
+# 优先使用 xxd 生成占位符 bg_default.jpg
+echo "调试：优先使用 xxd 生成 $PKG_DIR/default/bg_default.jpg"
+if command -v xxd >/dev/null 2>&1; then
+    echo 'ffd8ffe000104a46494600010100000100010000ffdb004300080606070605080707070909080a0c140d0c0b0b0c1912130f141d1a1f1e1d1a1c1c20242e2720222c231c1c2837292c30313434341f27393d38323c2e333432ffc0001108000a000a03012200021101031101ffc4001f0000010501010101010100000000000000000102030405060708090a0bffd9000c03010002110311003f00d28a01ffd9' | xxd -r -p > "$PKG_DIR/default/bg_default.jpg"
+else
+    echo "调试：xxd 不可用，尝试使用 printf 生成 $PKG_DIR/default/bg_default.jpg"
+    printf "%b" '\xff\xd8\xff\xe0\x00\x10\x4a\x46\x49\x46\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00\xff\xdb\x00\x43\x00\x08\x06\x06\x07\x06\x05\x08\x07\x07\x07\x09\x09\x08\x0a\x0c\x14\x0d\x0c\x0b\x0b\x0c\x19\x12\x13\x0f\x14\x1d\x1a\x1f\x1e\x1d\x1a\x1c\x1c\x20\x24\x2e\x27\x20\x22\x2c\x23\x1c\x1c\x28\x37\x29\x2c\x30\x31\x34\x34\x34\x1f\x27\x39\x3d\x38\x32\x3c\x2e\x33\x34\x32\xff\xc0\x00\x11\x08\x00\x0a\x00\x0a\x03\x01\x22\x00\x02\x11\x01\x03\x11\x01\xff\xc4\x00\x1f\x00\x00\x01\x05\x01\x01\x01\x01\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\xff\xda\x00\x0c\x03\x01\x00\x02\x11\x03\x11\x00\x3f\x00\xd2\x8a\x01\xff\xd9' > "$PKG_DIR/default/bg_default.jpg"
+fi
 # 调试：检查生成文件的大小和内容
 echo "调试：生成文件后检查"
 ls -l "$PKG_DIR/default/bg_default.jpg" 2>/dev/null || echo "调试：文件未生成"
@@ -211,23 +215,10 @@ ls -l "$PKG_DIR/default/bg_default.jpg" 2>/dev/null || echo "调试：文件未�
     echo "调试：文件前 3 字节 $(od -An -t x1 -N 3 "$PKG_DIR/default/bg_default.jpg" 2>/dev/null | tr -d ' \n' || echo '无法读取')"
 }
 validate_jpeg "$PKG_DIR/default/bg_default.jpg" || {
-    echo "错误：printf 生成失败，尝试备选方案"
-    # 备选方案：尝试使用 xxd 生成（如果可用）
-    if command -v xxd >/dev/null 2>&1; then
-        echo "调试：尝试使用 xxd 生成 $PKG_DIR/default/bg_default.jpg"
-        echo 'ffd8ffe000104a46494600010100000100010000ffdb004300080606070605080707070909080a0c140d0c0b0b0c1912130f141d1a1f1e1d1a1c1c20242e2720222c231c1c2837292c30313434341f27393d38323c2e333432ffc0001108000a000a03012200021101031101ffc4001f0000010501010101010100000000000000000102030405060708090a0bffd9000c03010002110311003f00d28a01ffd9' | xxd -r -p > "$PKG_DIR/default/bg_default.jpg"
-        validate_jpeg "$PKG_DIR/default/bg_default.jpg" || {
-            echo "错误：xxd 生成失败，生成空占位符文件"
-            touch "$PKG_DIR/default/bg_default.jpg"
-            echo "调试：生成空占位符文件 $PKG_DIR/default/bg_default.jpg"
-            exit 0
-        }
-    else
-        echo "调试：xxd 不可用，生成空占位符文件"
-        touch "$PKG_DIR/default/bg_default.jpg"
-        echo "调试：生成空占位符文件 $PKG_DIR/default/bg_default.jpg"
-        exit 0
-    fi
+    echo "错误：JPEG 生成失败，生成空占位符文件"
+    touch "$PKG_DIR/default/bg_default.jpg"
+    echo "调试：生成空占位符文件 $PKG_DIR/default/bg_default.jpg"
+    exit 0
 }
 # 創建一個全局配置文件，用於存儲可配置的變數
 mkdir -p "$PKG_DIR/root/usr/share/banner"

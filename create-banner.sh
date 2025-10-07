@@ -31,8 +31,6 @@ if [ -z "$PKG_DIR" ]; then
     exit 1
 fi
 
-# --- 用這段新程式碼替換舊的 readlink 行 ---
-# 兼容性優化：優先使用 realpath，因為 buildroot 環境可能不包含 readlink
 if command -v realpath >/dev/null 2>&1; then
     # 使用 -m 選項確保即使路徑不存在也能正常工作
     ABS_PKG_DIR=$(realpath -m "$PKG_DIR")
@@ -42,8 +40,6 @@ else
     ABS_PKG_DIR="$PKG_DIR" # 直接使用，並依賴後續檢查
 fi
 
-
-# 檢查是否指向根目錄、home 目錄或 /etc 等關鍵系統目錄
 case "$ABS_PKG_DIR" in
     "/"|"/root"|"/root/"|"$HOME"|"$HOME/"|"/etc"|"/etc/"|"/usr"|"/usr/")
         echo "❌ 錯誤：目標目錄指向了危險的系統路徑 ('$ABS_PKG_DIR')，已終止操作。"
@@ -51,13 +47,11 @@ case "$ABS_PKG_DIR" in
         ;;
 esac
 
-# 檢查路徑是否包含 '..'，這可能導致路徑穿越
 if echo "$PKG_DIR" | grep -q '/\.\./'; then
     echo "❌ 錯誤：目標目錄包含非法的路徑穿越符 '..' ('$PKG_DIR')，已終止操作。"
     exit 1
 fi
 
-# 最終確認：路徑必須包含 'luci-app-banner' 這個關鍵字，這是最後一道防線
 if ! echo "$PKG_DIR" | grep -q 'luci-app-banner'; then
     echo "❌ 錯誤：目標目錄路徑未包含 'luci-app-banner' 關鍵字 ('$PKG_DIR')，為安全起見已終止操作。"
     exit 1
@@ -114,7 +108,7 @@ define Package/luci-app-banner/install
 	chmod +x $(1)/etc/init.d/*
 endef
 
-# --- 用這段新程式碼替換舊的 postinst 區塊 ---
+#--- 用這段新程式碼替換舊的 postinst 區塊 ---
 define Package/luci-app-banner/postinst
 #!/bin/sh
 [ -n "$${IPKG_INSTROOT}" ] || {
@@ -231,7 +225,7 @@ log "[√] Removed files older than 3 days"
 CLEANER
 
 
-# --- 用這段新程式碼替換舊的 banner_manual_update.sh 區塊 ---
+#--- 用這段新程式碼替換舊的 banner_manual_update.sh 區塊 ---
 cat > "$PKG_DIR/root/usr/bin/banner_manual_update.sh" <<'MANUALUPDATE'
 #!/bin/sh
 LOG="/tmp/banner_update.log"
@@ -383,7 +377,7 @@ fi
 MANUALUPDATE
 
 
-# --- 用這段新程式碼替換舊的 auto_update 腳本 ---
+#--- 用這段新程式碼替換舊的 auto_update 腳本 ---
 cat > "$PKG_DIR/root/usr/bin/banner_auto_update.sh" <<'AUTOUPDATE'
 #!/bin/sh
 LOG="/tmp/banner_update.log"
@@ -431,14 +425,11 @@ log "========== Auto Update Started =========="
 /usr/bin/banner_manual_update.sh
 AUTOUPDATE
 
-
 cat > "$PKG_DIR/root/usr/bin/banner_bg_loader.sh" <<'BGLOADER'
-# --- 用這段新程式碼替換舊的 banner_bg_loader.sh 整個內容 ---
 #!/bin/sh
 BG_GROUP=${1:-1}
 
-# 引入全局配置
-# 如果配置文件不存在，則使用內置的預設值，增強容錯性
+# 首先加载配置文件（如果存在）
 if [ -f "/usr/share/banner/config.sh" ]; then
     . /usr/share/banner/config.sh
 else
@@ -449,13 +440,44 @@ else
     PERSISTENT_BG_PATH="/overlay/banner"
 fi
 
-# 使用配置文件中的變數
+# 定义变量
 LOG="/tmp/banner_bg.log"
 CACHE="$CACHE_DIR"
 WEB="$DEFAULT_BG_PATH"
 PERSISTENT="$PERSISTENT_BG_PATH"
 
-# 動態決定存儲路徑
+# 添加日志函数
+log() {
+    local msg="$1"
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $msg" >> "$LOG"
+    if [ -s "$LOG" ] && [ $(wc -c < "$LOG") -gt 51200 ]; then
+        mv "$LOG" "$LOG.bak"
+        tail -n 50 "$LOG.bak" > "$LOG"
+        rm -f "$LOG.bak"
+    fi
+}
+
+# 添加锁检查函数
+check_lock() {
+    local lock_file="$1"
+    local max_age="$2"
+    if [ -f "$lock_file" ]; then
+        local lock_time=$(stat -c %Y "$lock_file" 2>/dev/null || date +%s)
+        local current_time=$(date +%s)
+        local age=$((current_time - lock_time))
+        if [ $age -gt $max_age ]; then
+            log "Clearing stale lock (age: ${age}s): $lock_file"
+            rm -f "$lock_file"
+        else
+            log "Task blocked by lock (age: ${age}s): $lock_file"
+            return 1
+        fi
+    fi
+    touch "$lock_file"
+    return 0
+}
+
+# 动态决定存储路径
 if ! command -v uci >/dev/null 2>&1; then
     DEST="$WEB"
 else
@@ -470,8 +492,7 @@ while [ ! -f "$JSON" ] && [ $WAIT_COUNT -lt 5 ]; do
     log "Waiting for nav_data.json... ($WAIT_COUNT/5)"
     sleep 1; WAIT_COUNT=$((WAIT_COUNT + 1))
 done
-
-# --- 用這段新程式碼替換舊的 JSON 檢查 ---
+#--- 用這段新程式碼替換舊的 JSON 檢查 ---
 if [ ! -f "$JSON" ]; then
     log "[!] nav_data.json not found, using default background as fallback."
     if [ -f "$WEB/default_bg.jpg" ]; then
@@ -480,8 +501,6 @@ if [ ! -f "$JSON" ]; then
     exit 1
 fi
 
-
-# 使用統一的文件鎖
 LOCK_FILE="/tmp/banner_bg_loader.lock"
 if ! check_lock "$LOCK_FILE" 60; then
     exit 1
@@ -526,7 +545,7 @@ for i in 0 1 2; do
         log "  Downloading image for bg${i}.jpg..."
         TMPFILE="$DEST/bg$i.tmp"
         
-       # --- 用這段新程式碼替換舊的 curl 命令 ---
+    #--- 用這段新程式碼替換舊的 curl 命令 ---
 if curl --help | grep -q -- --max-filesize; then
     curl -sL --max-time 20 --max-filesize "$MAX_SIZE" "$URL" -o "$TMPFILE" 2>/dev/null
 else
@@ -663,8 +682,6 @@ status() {
 }
 INIT
 
-# --- 用這段新程式碼替換舊的、被截斷的 controller/banner.lua 區塊 ---
-# LuCI Controller
 cat > "$PKG_DIR/root/usr/lib/lua/luci/controller/banner.lua" <<'CONTROLLER'
 module("luci.controller.banner", package.seeall)
 
@@ -687,7 +704,6 @@ function index()
     entry({"admin", "status", "banner", "do_reset_defaults"}, post("action_do_reset_defaults")).leaf = true
 end
 
-# --- 用這個新函數替換舊的 action_display ---
 function action_display()
     local uci = require("uci").cursor()
     local fs = require("nixio.fs")

@@ -255,22 +255,6 @@ jobs:
         echo "LuCI packages enabled: $(grep -c "^CONFIG_PACKAGE_luci-.*=y" .config)"
         echo "Custom packages enabled: $(grep "^CONFIG_PACKAGE.*custom.*=y" .config | wc -l)"
 
-    - name: Compile luci-app-banner with verbose output
-      run: |
-        cd openwrt
-        echo "=== Compiling luci-app-banner with verbose output ==="
-        make package/custom/luci-app-banner/clean V=s || {
-          echo "=== Clean failed, capturing detailed logs ==="
-          find package/custom/luci-app-banner -ls
-          cat package/custom/luci-app-banner/Makefile
-          exit 1
-        }
-        make package/custom/luci-app-banner/compile V=s -j1 || {
-          echo "=== Compilation failed, capturing detailed logs ==="
-          find package/custom/luci-app-banner -ls
-          cat package/custom/luci-app-banner/Makefile
-          exit 1
-        }
 
     - name: Download packages with retry
       run: |

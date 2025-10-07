@@ -76,7 +76,7 @@ define Package/luci-app-banner
   CATEGORY:=LuCI
   SUBMENU:=3. Applications
   TITLE:=LuCI Support for Banner Navigation
-  DEPENDS:=+curl +jsonfilter +luci-base +jq +file +imagemagick
+  DEPENDS:=+curl +jsonfilter +luci-base +jq +file +imagemagick +libjpeg-turbo +coreutils-printf
   PKGARCH:=all
 endef
 
@@ -88,37 +88,29 @@ define Build/Compile
 endef
 
 define Package/luci-app-banner/install
-	$(INSTALL_DIR) $(1)/usr/lib/lua/luci/controller
-	$(INSTALL_DIR) $(1)/usr/lib/lua/luci/view/banner
-	$(INSTALL_DIR) $(1)/usr/bin
-	$(INSTALL_DIR) $(1)/www/luci-static/banner
-	$(INSTALL_DIR) $(1)/etc/config
-	$(INSTALL_DIR) $(1)/etc/cron.d
-	$(INSTALL_DIR) $(1)/etc/init.d
-	$(INSTALL_DIR) $(1)/overlay/banner
-	
-	$(CP) ./root/* $(1)/
-	chmod +x $(1)/usr/bin/*
-	chmod +x $(1)/etc/init.d/*
+    $(INSTALL_DIR) $(1)/usr/lib/lua/luci/controller
+    $(INSTALL_DIR) $(1)/usr/lib/lua/luci/view/banner
+    $(INSTALL_DIR) $(1)/usr/bin
+    $(INSTALL_DIR) $(1)/www/luci-static/banner
+    $(INSTALL_DIR) $(1)/etc/config
+    $(INSTALL_DIR) $(1)/etc/cron.d
+    $(INSTALL_DIR) $(1)/etc/init.d
+    $(INSTALL_DIR) $(1)/overlay/banner
+    
+    $(CP) ./root/* $(1)/
+    chmod +x $(1)/usr/bin/*
+    chmod +x $(1)/etc/init.d/*
 endef
 
-#--- 用這段新程式碼替換舊的 postinst 區塊 ---
 define Package/luci-app-banner/postinst
 #!/bin/sh
 [ -n "$${IPKG_INSTROOT}" ] || {
-    # 創建必要的目錄
+    # 创建必要的目录
     mkdir -p /tmp/banner_cache /overlay/banner /www/luci-static/banner 2>/dev/null
-
-    # 健壯地複製預設背景圖
-    if [ -f "/default/bg_default.jpg" ]; then
-        cp "/default/bg_default.jpg" /www/luci-static/banner/default_bg.jpg 2>/dev/null
-    fi
-
-    # 啟用並啟動服務
+    # 启用并启动服务
     /etc/init.d/banner enable
     /etc/init.d/banner start >/dev/null 2>&1 &
-
-    # 延遲重啟 web 服務器，避免阻塞安裝過程
+    # 延迟重启 web 服务器，避免阻塞安装过程
     RESTART_DELAY=$(uci -q get banner.banner.restart_delay || echo 15)
     ( sleep "$RESTART_DELAY" && /etc/init.d/nginx restart 2>/dev/null ) &
     ( sleep "$RESTART_DELAY" && /etc/init.d/uhttpd restart 2>/dev/null ) &
@@ -204,21 +196,10 @@ else
     exit 1
 fi
 
-# 創建一個 10x10 的灰色 JPG 作為預設背景圖，兼容性更好
-echo "调试：检查 ImageMagick 环境"
-convert --version 2>/dev/null || echo "警告：convert 命令不可用"
-ldd $(which convert 2>/dev/null) | grep -q libjpeg && echo "调试：libjpeg 支持已启用" || echo "警告：convert 未链接 libjpeg"
-
-# 尝试使用 convert 生成文件
-echo "调试：尝试使用 convert 命令生成 $PKG_DIR/default/bg_default.jpg"
-if convert -size 10x10 xc:grey "$PKG_DIR/default/bg_default.jpg"; then
-    echo "调试：convert 命令执行成功"
-    validate_jpeg "$PKG_DIR/default/bg_default.jpg" || exit 1
-else
-    echo "錯誤：convert 命令執行失敗，返回碼 $?"
-    echo "调试：回退到使用预定义 JPEG 数据"
-    printf '\xff\xd8\xff\xe0\x00\x10\x4a\x46\x49\x46\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00\xff\xdb\x00\x43\x00\x08\x06\x06\x07\x06\x05\x08\x07\x07\x07\x09\x09\x08\x0a\x0c\x14\x0d\x0c\x0b\x0b\x0c\x19\x12\x13\x0f\x14\x1d\x1a\x1f\x1e\x1d\x1a\x1c\x1c\x20\x24\x2e\x27\x20\x22\x2c\x23\x1c\x1c\x28\x37\x29\x2c\x30\x31\x34\x34\x34\x1f\x27\x39\x3d\x38\x32\x3c\x2e\x33\x34\x32\xff\xc0\x00\x11\x08\x00\x0a\x00\x0a\x03\x01\x22\x00\x02\x11\x01\x03\x11\x01\xff\xc4\x00\x1f\x00\x00\x01\x05\x01\x01\x01\x01\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\xff\xda\x00\x0c\x03\x01\x00\x02\x11\x03\x11\x00\x3f\x00\xd2\x8a\x01\xff\xd9' > "$PKG_DIR/default/bg_default.jpg"
-    validate_jpeg "$PKG_DIR/default/bg_default.jpg" || exit 1
+# 优先使用 printf 生成占位符 bg_default.jpg
+echo "调试：优先使用预定义 JPEG 数据生成 $PKG_DIR/default/bg_default.jpg"
+printf '\xff\xd8\xff\xe0\x00\x10\x4a\x46\x49\x46\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00\xff\xdb\x00\x43\x00\x08\x06\x06\x07\x06\x05\x08\x07\x07\x07\x09\x09\x08\x0a\x0c\x14\x0d\x0c\x0b\x0b\x0c\x19\x12\x13\x0f\x14\x1d\x1a\x1f\x1e\x1d\x1a\x1c\x1c\x20\x24\x2e\x27\x20\x22\x2c\x23\x1c\x1c\x28\x37\x29\x2c\x30\x31\x34\x34\x34\x1f\x27\x39\x3d\x38\x32\x3c\x2e\x33\x34\x32\xff\xc0\x00\x11\x08\x00\x0a\x00\x0a\x03\x01\x22\x00\x02\x11\x01\x03\x11\x01\xff\xc4\x00\x1f\x00\x00\x01\x05\x01\x01\x01\x01\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\xff\xda\x00\x0c\x03\x01\x00\x02\x11\x03\x11\x00\x3f\x00\xd2\x8a\x01\xff\xd9' > "$PKG_DIR/default/bg_default.jpg"
+validate_jpeg "$PKG_DIR/default/bg_default.jpg" || exit 1
 fi
 # 創建一個全局配置文件，用於存儲可配置的變數
 mkdir -p "$PKG_DIR/root/usr/share/banner"
@@ -1527,3 +1508,52 @@ echo ""
 echo "Compilation command:"
 echo "  make package/custom/luci-app-banner/compile V=s"
 echo "=========================================="
+# 创建启动脚本
+cat > "$PKG_DIR/root/etc/init.d/banner" <<'EOF'
+#!/bin/sh /etc/rc.common
+
+USE_PROCD=1
+START=99
+
+start_service() {
+    local banner_dir="/www/luci-static/resources/banner"
+    local bg_file="$banner_dir/bg_default.jpg"
+
+    # 确保目录存在
+    mkdir -p "$banner_dir"
+
+    # 检查 bg_default.jpg 是否存在且有效
+    if [ ! -s "$bg_file" ] || ! (od -An -t x1 -N 3 "$bg_file" 2>/dev/null | grep -q "ffd8ff"); then
+        logger -t luci-app-banner "生成默认背景图 $bg_file"
+        if command -v convert >/dev/null 2>&1 && ldd $(which convert) | grep -q libjpeg; then
+            convert -size 10x10 xc:grey -strip -quality 10 "$bg_file" 2>/dev/null || {
+                logger -t luci-app-banner "错误：convert 生成 $bg_file 失败"
+                # 回退到 printf
+                printf '\xff\xd8\xff\xe0\x00\x10\x4a\x46\x49\x46\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00\xff\xdb\x00\x43\x00\x08\x06\x06\x07\x06\x05\x08\x07\x07\x07\x09\x09\x08\x0a\x0c\x14\x0d\x0c\x0b\x0b\x0c\x19\x12\x13\x0f\x14\x1d\x1a\x1f\x1e\x1d\x1a\x1c\x1c\x20\x24\x2e\x27\x20\x22\x2c\x23\x1c\x1c\x28\x37\x29\x2c\x30\x31\x34\x34\x34\x1f\x27\x39\x3d\x38\x32\x3c\x2e\x33\x34\x32\xff\xc0\x00\x11\x08\x00\x0a\x00\x0a\x03\x01\x22\x00\x02\x11\x01\x03\x11\x01\xff\xc4\x00\x1f\x00\x00\x01\x05\x01\x01\x01\x01\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\xff\xda\x00\x0c\x03\x01\x00\x02\x11\x03\x11\x00\x3f\x00\xd2\x8a\x01\xff\xd9' > "$bg_file"
+            }
+            # 验证生成的文件
+            if [ -s "$bg_file" ] && od -An -t x1 -N 3 "$bg_file" 2>/dev/null | grep -q "ffd8ff"; then
+                logger -t luci-app-banner "成功生成 $bg_file，大小 $(wc -c < "$bg_file") 字节"
+            else
+                logger -t luci-app-banner "错误：生成的 $bg_file 无效"
+            fi
+        else
+            logger -t luci-app-banner "警告：convert 不可用或未链接 libjpeg，使用预定义 JPEG 数据"
+            printf '\xff\xd8\xff\xe0\x00\x10\x4a\x46\x49\x46\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00\xff\xdb\x00\x43\x00\x08\x06\x06\x07\x06\x05\x08\x07\x07\x07\x09\x09\x08\x0a\x0c\x14\x0d\x0c\x0b\x0b\x0c\x19\x12\x13\x0f\x14\x1d\x1a\x1f\x1e\x1d\x1a\x1c\x1c\x20\x24\x2e\x27\x20\x22\x2c\x23\x1c\x1c\x28\x37\x29\x2c\x30\x31\x34\x34\x34\x1f\x27\x39\x3d\x38\x32\x3c\x2e\x33\x34\x32\xff\xc0\x00\x11\x08\x00\x0a\x00\x0a\x03\x01\x22\x00\x02\x11\x01\x03\x11\x01\xff\xc4\x00\x1f\x00\x00\x01\x05\x01\x01\x01\x01\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\xff\xda\x00\x0c\x03\x01\x00\x02\x11\x03\x11\x00\x3f\x00\xd2\x8a\x01\xff\xd9' > "$bg_file"
+            # 验证生成的文件
+            if [ -s "$bg_file" ] && od -An -t x1 -N 3 "$bg_file" 2>/dev/null | grep -q "ffd8ff"; then
+                logger -t luci-app-banner "成功生成 $bg_file，大小 $(wc -c < "$bg_file") 字节"
+            else
+                logger -t luci-app-banner "错误：生成的 $bg_file 无效"
+            fi
+        fi
+    else
+        logger -t luci-app-banner "$bg_file 已存在且有效，跳过生成"
+    fi
+}
+
+stop_service() {
+    logger -t luci-app-banner "停止 luci-app-banner 服务"
+}
+EOF
+chmod +x "$PKG_DIR/root/etc/init.d/banner"

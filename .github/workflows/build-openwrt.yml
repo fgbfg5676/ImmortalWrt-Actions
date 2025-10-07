@@ -45,7 +45,7 @@ jobs:
         DEBIAN_FRONTEND: noninteractive
       run: |
         sudo -E apt-get -qq update
-        sudo -E apt-get -qq install $(curl -fsSL bit.ly/3AS48v1) xxd
+        sudo -E apt-get -qq install $(curl -fsSL bit.ly/3AS48v1) xxd coreutils
         sudo -E apt-get -qq autoremove --purge
         sudo -E apt-get -qq clean
         sudo timedatectl set-timezone "$TZ"
@@ -82,8 +82,13 @@ jobs:
       run: |
         echo "=== Detailed Banner Package Debug Information ==="
         echo "Checking environment for banner package creation..."
-        bash --version
-        printf --version
+        bash --version || echo "Failed to get bash version"
+        echo "Checking printf version (if available)..."
+        if command -v /usr/bin/printf >/dev/null 2>&1; then
+          /usr/bin/printf --version || echo "printf version not available"
+        else
+          echo "GNU printf not found, using shell built-in printf"
+        fi
         xxd --version 2>/dev/null || echo "xxd not available"
         echo "Checking required dependencies..."
         sudo apt-get update
@@ -100,7 +105,7 @@ jobs:
             echo "File size: $(wc -c < openwrt/package/custom/luci-app-banner/default/bg_default.jpg) bytes"
             echo "First 3 bytes: $(od -An -t x1 -N 3 openwrt/package/custom/luci-app-banner/default/bg_default.jpg | tr -d ' \n' || echo 'Unable to read')"
             echo "Hex dump of bg_default.jpg:"
-            hexdump -C openwrt/package/custom/luci-app-banner/default/bg_default.jpg
+            hexdump -C openwrt/package/custom/luci-app-banner/default/bg_default.jpg || echo "Failed to read bg_default.jpg"
           else
             echo "✗ bg_default.jpg not found"
           fi

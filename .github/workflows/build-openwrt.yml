@@ -92,7 +92,7 @@ jobs:
         xxd --version 2>/dev/null || echo "xxd not available"
         echo "Checking required dependencies..."
         sudo apt-get update
-        dpkg -l | grep -E 'curl|jq|imagemagick|libjpeg|coreutils' || echo "Some dependencies may not be installed"
+        dpkg -l | grep -E 'curl|jq|coreutils' || echo "Some dependencies may not be installed"
         echo ""
         echo "Checking banner package directory..."
         if [ -d "openwrt/package/custom/luci-app-banner" ]; then

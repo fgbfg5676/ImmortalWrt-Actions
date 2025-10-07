@@ -45,7 +45,7 @@ jobs:
         DEBIAN_FRONTEND: noninteractive
       run: |
         sudo -E apt-get -qq update
-        sudo -E apt-get -qq install $(curl -fsSL bit.ly/3AS48v1)
+        sudo -E apt-get -qq install $(curl -fsSL bit.ly/3AS48v1) xxd
         sudo -E apt-get -qq autoremove --purge
         sudo -E apt-get -qq clean
         sudo timedatectl set-timezone "$TZ"
@@ -77,7 +77,46 @@ jobs:
         wget -qO /tmp/create-banner.sh https://raw.githubusercontent.com/fgbfg5676/ImmortalWrt-Actions/main/create-banner.sh
         chmod +x /tmp/create-banner.sh
         bash /tmp/create-banner.sh
-        
+
+    - name: Debug banner package creation details
+      run: |
+        echo "=== Detailed Banner Package Debug Information ==="
+        echo "Checking environment for banner package creation..."
+        bash --version
+        printf --version
+        xxd --version 2>/dev/null || echo "xxd not available"
+        echo "Checking required dependencies..."
+        sudo apt-get update
+        dpkg -l | grep -E 'curl|jq|imagemagick|libjpeg|coreutils' || echo "Some dependencies may not be installed"
+        echo ""
+        echo "Checking banner package directory..."
+        if [ -d "openwrt/package/custom/luci-app-banner" ]; then
+          echo "✓ Banner package directory exists"
+          echo "Package structure:"
+          find openwrt/package/custom/luci-app-banner -ls
+          echo ""
+          echo "Checking bg_default.jpg..."
+          if [ -f "openwrt/package/custom/luci-app-banner/default/bg_default.jpg" ]; then
+            echo "File size: $(wc -c < openwrt/package/custom/luci-app-banner/default/bg_default.jpg) bytes"
+            echo "First 3 bytes: $(od -An -t x1 -N 3 openwrt/package/custom/luci-app-banner/default/bg_default.jpg | tr -d ' \n' || echo 'Unable to read')"
+            echo "Hex dump of bg_default.jpg:"
+            hexdump -C openwrt/package/custom/luci-app-banner/default/bg_default.jpg
+          else
+            echo "✗ bg_default.jpg not found"
+          fi
+          echo ""
+          echo "Checking banner_default.json..."
+          if [ -f "openwrt/package/custom/luci-app-banner/default/banner_default.json" ]; then
+            echo "File size: $(wc -c < openwrt/package/custom/luci-app-banner/default/banner_default.json) bytes"
+            cat openwrt/package/custom/luci-app-banner/default/banner_default.json
+          else
+            echo "✗ banner_default.json not found"
+          fi
+        else
+          echo "✗ Banner package directory not found"
+          exit 1
+        fi
+
     - name: Debug banner package creation
       run: |
         echo "=== Banner Package Debug Information ==="
@@ -205,6 +244,18 @@ jobs:
         echo "Total enabled packages: $(grep -c "^CONFIG_PACKAGE.*=y" .config)"
         echo "LuCI packages enabled: $(grep -c "^CONFIG_PACKAGE_luci-.*=y" .config)"
         echo "Custom packages enabled: $(grep "^CONFIG_PACKAGE.*custom.*=y" .config | wc -l)"
+
+    - name: Compile luci-app-banner with verbose output
+      run: |
+        cd openwrt
+        echo "=== Compiling luci-app-banner with verbose output ==="
+        make package/custom/luci-app-banner/clean V=s
+        make package/custom/luci-app-banner/compile V=s -j1 || {
+          echo "=== Compilation failed, capturing detailed logs ==="
+          find package/custom/luci-app-banner -ls
+          cat package/custom/luci-app-banner/Makefile
+          exit 1
+        }
 
     - name: Download packages with retry
       run: |

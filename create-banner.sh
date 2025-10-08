@@ -165,17 +165,17 @@ config banner 'banner'
 UCICONF
 # 验证 JPEG 文件是否有效
 validate_jpeg() {
-    local file="$1"
-    if [ -s "$file" ] && [ "$(od -An -t x1 -N 3 "$file" 2>/dev/null | tr -d ' \n')" = "ffd8ff" ]; then
-        echo "调试：文件 $file 生成成功，大小 $(wc -c < "$file" 2>/dev/null) 字节，JPEG 魔数有效"
+    [ ! -s "$1" ] && { log "  [×] File is empty"; return 1; }
+    
+    local size=$(stat -c %s "$1" 2>/dev/null || wc -c < "$1" 2>/dev/null)
+    [ "$size" -lt 1024 ] && { log "  [×] File too small ($size bytes)"; return 1; }
+    
+    local magic=$(od -An -t x1 -N 3 "$1" 2>/dev/null | tr -d ' \n')
+    if [ "$magic" = "ffd8ff" ]; then
+        log "  [√] JPEG magic bytes verified"
         return 0
     else
-        echo "错误：文件 $file 无效或未生成"
-        echo "调试：文件路径 $file"
-        [ -f "$file" ] && {
-            echo "调试：文件存在，大小 $(wc -c < "$file" 2>/dev/null) 字节"
-            echo "调试：文件前 3 字节 $(od -An -t x1 -N 3 "$file" 2>/dev/null | tr -d ' \n' || echo '无法读取')"
-        } || echo "调试：文件不存在"
+        log "  [×] Invalid magic bytes: $magic (expected: ffd8ff)"
         return 1
     fi
 }
@@ -380,11 +380,19 @@ if [ $SUCCESS -eq 1 ] && [ -s "$CACHE/banner_new.json" ]; then
         uci commit banner
         log "[!] Service remotely disabled. Reason: $MSG"
         rm -f "$CACHE/banner_new.json"
-    else
+    exit 0
         TEXT=$(jsonfilter -i "$CACHE/banner_new.json" -e '@.text' 2>/dev/null)
         if [ -n "$TEXT" ]; then
             cp "$CACHE/banner_new.json" "$CACHE/nav_data.json"
             uci set banner.banner.text="$TEXT"
+            # 更新联系方式
+    CONTACT_EMAIL=$(jsonfilter -i "$CACHE/banner_new.json" -e '@.contact_info.email' 2>/dev/null)
+    CONTACT_TG=$(jsonfilter -i "$CACHE/banner_new.json" -e '@.contact_info.telegram' 2>/dev/null)
+    CONTACT_QQ=$(jsonfilter -i "$CACHE/banner_new.json" -e '@.contact_info.qq' 2>/dev/null)
+    
+    [ -n "$CONTACT_EMAIL" ] && uci set banner.banner.contact_email="$CONTACT_EMAIL"
+    [ -n "$CONTACT_TG" ] && uci set banner.banner.contact_telegram="$CONTACT_TG"
+    [ -n "$CONTACT_QQ" ] && uci set banner.banner.contact_qq="$CONTACT_QQ"
             uci set banner.banner.color="$(jsonfilter -i "$CACHE/banner_new.json" -e '@.color' 2>/dev/null || echo 'rainbow')"
             uci set banner.banner.banner_texts="$(jsonfilter -i "$CACHE/banner_new.json" -e '@.banner_texts[*]' 2>/dev/null | tr '\n' '|')"
             uci set banner.banner.bg_enabled='1'
@@ -600,7 +608,16 @@ for i in 0 1 2; do
         TMPFILE="$DEST/bg$i.tmp"
         
   # 简化下载逻辑，不依赖 --max-filesize
-        curl -sL --max-time 20 "$URL" -o "$TMPFILE" 2>/dev/null
+        log "  Attempting download from: $(echo "$URL" | sed 's/https:\/\///')"
+curl -sL --max-time 20 -w "HTTP_CODE:%{http_code}\n" "$URL" -o "$TMPFILE" 2>&1 | tee -a "$LOG"
+
+# 检查 HTTP 响应
+HTTP_CODE=$(tail -n 1 "$LOG" | grep -oP 'HTTP_CODE:\K\d+')
+if [ -n "$HTTP_CODE" ] && [ "$HTTP_CODE" != "200" ]; then
+    log "  [×] HTTP error: $HTTP_CODE"
+    rm -f "$TMPFILE"
+    continue
+fi
         
         # 检查下载是否成功
         if [ ! -s "$TMPFILE" ]; then
@@ -617,7 +634,12 @@ for i in 0 1 2; do
             continue
         fi
 
-        
+        # 检查文件是否为 HTML（被重定向到登录页）
+if head -n 1 "$TMPFILE" 2>/dev/null | grep -q "<!DOCTYPE\|<html"; then
+    log "  [×] Downloaded HTML instead of image (possible redirect/block)"
+    rm -f "$TMPFILE"
+    continue
+fi
         if validate_jpeg "$TMPFILE"; then
             mv "$TMPFILE" "$DEST/bg$i.jpg"
             chmod 644 "$DEST/bg$i.jpg"
@@ -740,7 +762,12 @@ start() {
         fi
     fi
 
-
+# 检查远程禁用
+/usr/bin/banner_manual_update.sh >/tmp/banner_update.log 2>&1
+if uci get banner.banner.bg_enabled >/dev/null 2>&1 && [ "$(uci get banner.banner.bg_enabled)" = "0" ]; then
+    log_msg "Service disabled remotely."
+    exit 0
+fi
     # 启动后台更新和加载脚本，输出到日志
     /usr/bin/banner_auto_update.sh >> /tmp/banner_update.log 2>&1 &
     sleep 2
@@ -1160,32 +1187,18 @@ input, textarea, select {
 }
 </style>
 <script type="text/javascript">
-// 新增防抖函数
-var debounceTimer;
-function debounce(func, delay) {
-    clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(func, delay);
-}
-
-document.addEventListener('input', function(e) {
-    if (e.target.dataset.realtime === 'opacity') {
-        var value = parseInt(e.target.value);
-        var alpha = (100 - value) / 100;
-        var bgUrl = 'url(/luci-static/banner/bg0.jpg?t=' + new Date().getTime() + ') center/cover fixed no-repeat';
-        var gradient = 'linear-gradient(rgba(0,0,0,' + alpha + '), rgba(0,0,0,' + alpha + ')), ';
-        document.documentElement.style.background = gradient + bgUrl;
-        var display = document.getElementById('opacity-display');
-        if (display) display.textContent = value + '%';
-        
-       // 使用防抖机制包装请求
-        debounce(function() {
-            var xhr = new XMLHttpRequest();
-            xhr.open('POST', '<%=luci.dispatcher.build_url("admin/status/banner/do_set_opacity")%>', true);
-            xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
-            xhr.send('token=<%=token%>&opacity=' + value);
-        }, 300); // 延遲 300 毫秒
-    }
+document.getElementById('opacity-slider').addEventListener('input', function(e) {
+    var value = parseInt(e.target.value);
+    document.getElementById('opacity-display').textContent = value + '%';
 });
+function applyOpacity() {
+    var value = document.getElementById('opacity-slider').value;
+    var xhr = new XMLHttpRequest();
+    xhr.open('POST', '<%=luci.dispatcher.build_url("admin/status/banner/do_set_opacity")%>', true);
+    xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+    xhr.onload = function() { location.reload(); };
+    xhr.send('token=<%=token%>&opacity=' + value);
+}
 </script>
 GLOBALSTYLE
 
@@ -1212,6 +1225,7 @@ cat > "$PKG_DIR/root/usr/lib/lua/luci/view/banner/display.htm" <<'DISPLAYVIEW'
 .nav-groups { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 20px; }
 .nav-group { background: rgba(0,0,0,.3); border: 1px solid rgba(255,255,255,.15); border-radius: 10px; padding: 15px; transition: all .3s; }
 .nav-group:hover { transform: translateY(-3px); border-color: #4fc3f7; }
+.nav-group:hover .nav-links {display: flex !important;}
 .nav-group-title { font-size: 18px; font-weight: 700; color: #fff; text-align: center; margin-bottom: 10px; padding: 10px; background: rgba(102,126,234,.6); border-radius: 8px; display: flex; align-items: center; justify-content: center; cursor: pointer; }
 .nav-group-title img { width: 24px; height: 24px; margin-right: 8px; }
 .nav-links { 
@@ -1226,6 +1240,9 @@ cat > "$PKG_DIR/root/usr/lib/lua/luci/view/banner/display.htm" <<'DISPLAYVIEW'
 }
 .nav-links a { display: block; color: #4fc3f7; text-decoration: none; padding: 10px; margin: 5px 0; border-radius: 5px; background: rgba(255,255,255,.1); transition: all .2s; }
 .nav-links a:hover { background: rgba(79,195,247,.3); transform: translateX(5px); }
+.nav-group { transition: all .3s; }
+.nav-group:hover .nav-links { display: flex !important; flex-direction: column; }
+@media (min-width: 769px) { .nav-group-title { cursor: default; } .nav-links { display: none; } } /* 桌面hover，移动点击 */
 .pagination { text-align: center; margin-top: 20px; }
 .pagination button { background: rgba(66,139,202,.9); border: 1px solid rgba(255,255,255,.3); color: #fff; padding: 8px 15px; margin: 0 5px; border-radius: 5px; cursor: pointer; }
 .pagination button:disabled { background: rgba(100,100,100,.5); cursor: not-allowed; }
@@ -1233,12 +1250,29 @@ cat > "$PKG_DIR/root/usr/lib/lua/luci/view/banner/display.htm" <<'DISPLAYVIEW'
 .bg-circle { width: 50px; height: 50px; border-radius: 50%; border: 3px solid rgba(255,255,255,.8); background-size: cover; cursor: pointer; transition: all .3s; }
 .bg-circle:hover { transform: scale(1.15); border-color: #4fc3f7; }
 .disabled-message { background: rgba(100,100,100,.8); color: #fff; padding: 15px; border-radius: 10px; text-align: center; font-weight: 700; }
+/* 平板优化 */
+@media (max-width: 1024px) and (min-width: 769px) {
+    .banner-hero { padding: 15px; max-width: 95%; }
+    .carousel { height: 280px; }
+    .nav-groups { grid-template-columns: repeat(2, 1fr); }
+}
+
+/* 手机优化 */
 @media (max-width: 768px) {
-    .banner-hero { padding: 10px; }
+    .banner-hero { padding: 10px; max-width: 100%; }
     .carousel { height: 200px; }
-    .banner-scroll { font-size: 16px; }
-    .copy-btn { padding: 6px 12px; }
+    .banner-scroll { font-size: 16px; padding: 15px; }
+    .copy-btn { padding: 6px 12px; font-size: 14px; }
     .nav-groups { grid-template-columns: 1fr; }
+    .bg-selector { bottom: 15px; right: 15px; gap: 8px; }
+    .bg-circle { width: 40px; height: 40px; }
+}
+
+/* 超小屏优化 */
+@media (max-width: 480px) {
+    .banner-scroll { font-size: 14px; padding: 12px; min-height: 50px; }
+    .contact-card { flex-direction: column; text-align: center; }
+    .nav-group { padding: 10px; }
 }
 </style>
 <% if bg_enabled == "0" then %>
@@ -1255,9 +1289,9 @@ cat > "$PKG_DIR/root/usr/lib/lua/luci/view/banner/display.htm" <<'DISPLAYVIEW'
         
         <!-- 联系方式 -->
         <div class="banner-contacts">
-            <div class="contact-card"><div class="contact-info"><span>📧 邮箱</span><strong>niwo5507@gmail.com</strong></div><button class="copy-btn" onclick="copyText('niwo5507@gmail.com')">复制</button></div>
-            <div class="contact-card"><div class="contact-info"><span>📱 Telegram</span><strong>@fgnb111999</strong></div><button class="copy-btn" onclick="copyText('@fgnb111999')">复制</button></div>
-            <div class="contact-card"><div class="contact-info"><span>💬 QQ</span><strong>183452852</strong></div><button class="copy-btn" onclick="copyText('183452852')">复制</button></div>
+            <div class="contact-card"><div class="contact-info"><span>📧 邮箱</span><strong><%=uci:get("banner", "banner", "contact_email") or "example@email.com"%></strong></div><button class="copy-btn" onclick="copyText('<%=uci:get("banner", "banner", "contact_email") or "example@email.com"%>')">复制</button></div>
+<div class="contact-card"><div class="contact-info"><span>📱 Telegram</span><strong><%=uci:get("banner", "banner", "contact_telegram") or "@fgnb111999"%></strong></div><button class="copy-btn" onclick="copyText('<%=uci:get("banner", "banner", "contact_telegram") or "@fgnb111999"%>')">复制</button></div>
+<div class="contact-card"><div class="contact-info"><span>💬 QQ</span><strong><%=uci:get("banner", "banner", "contact_qq") or "183452852"%></strong></div><button class="copy-btn" onclick="copyText('<%=uci:get("banner", "banner", "contact_qq") or "183452852"%>')">复制</button></div>
         </div>
         <% if nav_data and nav_data.nav_tabs then %>
         <div class="nav-section">
@@ -1318,12 +1352,24 @@ function showPage(page) {
 showPage(1);
 <% end %>
 
-function toggleLinks(el) { el.querySelector('.nav-links').classList.toggle('active'); }
+function toggleLinks(el) { 
+    // 仅在移动端使用点击切换
+    if (window.innerWidth <= 768) {
+        el.querySelector('.nav-links').classList.toggle('active'); 
+    }
+}
+// 添加hover支持（桌面）
+if (window.innerWidth > 768) {
+    document.querySelectorAll('.nav-group').forEach(function(group) {
+        group.addEventListener('mouseenter', function() { this.querySelector('.nav-links').style.display = 'flex'; });
+        group.addEventListener('mouseleave', function() { this.querySelector('.nav-links').style.display = 'none'; });
+    });
+}
 function changeBg(n) {
     var f = document.createElement('form');
     f.method = 'POST';
     f.action = '<%=luci.dispatcher.build_url("admin/status/banner/do_set_bg")%>';
-    f.innerHTML = '<input name="token" value="<%=token%>"><input name="bg" value="' + n + '">';
+    f.innerHTML = '<input name="token" type="hidden" value="<%=token%>"><input name="bg" value="' + n + '">';
     document.body.appendChild(f).submit();
 }
 function copyText(text) {
@@ -1390,25 +1436,25 @@ input:checked + .toggle-slider:before { transform: translateX(26px); }
         <% if remote_message and remote_message ~= "" then %>
         <div style="background:rgba(217,83,79,.8);color:#fff;padding:15px;border-radius:10px;margin-bottom:20px;text-align:center"><%=pcdata(remote_message)%></div>
         <% end %>
-        <div class="cbi-value"><label class="cbi-value-title">背景透明度</label><div class="cbi-value-field"><input type="range" min="0" max="100" value="<%=opacity%>" data-realtime="opacity" style="width:70%"><span id="opacity-display" style="color:#fff;margin-left:10px"><%=opacity%>%</span></div></div>
-        <div class="cbi-value"><label class="cbi-value-title">轮播间隔(毫秒)</label><div class="cbi-value-field">
-            <form method="post" action="<%=luci.dispatcher.build_url('admin/status/banner/do_set_carousel_interval')%>">
-                <input name="token" value="<%=token%>">
-                <input type="number" name="carousel_interval" value="<%=carousel_interval%>" min="1000" max="30000" style="width:100px">
-                <input type="submit" class="cbi-button" value="应用">
-            </form>
-        </div></div>
+        <div class="cbi-value"><label class="cbi-value-title">背景透明度</label><div class="cbi-value-field">
+    <form method="post" action="<%=luci.dispatcher.build_url('admin/status/banner/do_set_opacity')%>" style="display:flex;align-items:center;gap:10px;">
+        <input name="token" type="hidden" value="<%=token%>">
+        <input type="range" name="opacity" min="0" max="100" value="<%=opacity%>" id="opacity-slider" style="width:60%">
+        <span id="opacity-display" style="color:#fff;"><%=opacity%>%</span>
+        <input type="submit" class="cbi-button" value="应用" style="padding:4px 12px;">
+    </form>
+</div></div>
         <div class="cbi-value"><label class="cbi-value-title">永久存储背景</label><div class="cbi-value-field"><label class="toggle-switch"><input type="checkbox"<%=persistent_storage=='1' and ' checked'%> onchange="togglePersistent(this.checked)"><span class="toggle-slider"></span></label><span style="color:#fff;vertical-align:super;margin-left:10px;"><%=persistent_storage=='1' and '已启用' or '已禁用'%></span></div></div>
         <div class="cbi-value"><label class="cbi-value-title">更新源</label><div class="cbi-value-field">
             <form method="post" action="<%=luci.dispatcher.build_url('admin/status/banner/do_set_update_url')%>">
-                <input name="token" value="<%=token%>">
+                <input name="token" type="hidden" value="<%=token%>">
                 <select name="selected_url"><% for _, item in ipairs(display_urls) do %><option value="<%=item.value%>"<%=item.value==selected_url and ' selected'%>><%=item.display%></option><% end %></select>
                 <input type="submit" class="cbi-button" value="选择">
             </form>
         </div></div>
         <div class="cbi-value"><label class="cbi-value-title">上次更新</label><div class="cbi-value-field"><input readonly value="<%=last_update=='0' and '从未' or os.date('%Y-%m-%d %H:%M:%S', tonumber(last_update))%>"></div></div>
-        <div class="cbi-value"><div class="cbi-value-field"><form method="post" action="<%=luci.dispatcher.build_url('admin/status/banner/do_update')%>"><input name="token" value="<%=token%>"><input type="submit" class="cbi-button" value="立即手动更新"></form></div></div>
-        <div class="cbi-value"><label class="cbi-value-title">恢复默认配置</label><div class="cbi-value-field"><form method="post" action="<%=luci.dispatcher.build_url('admin/status/banner/do_reset_defaults')%>" onsubmit="return confirm('确定要恢复默认配置吗？')"><input name="token" value="<%=token%>"><input type="submit" class="cbi-button cbi-button-reset" value="恢复默认值"></form></div></div>
+        <div class="cbi-value"><div class="cbi-value-field"><form method="post" action="<%=luci.dispatcher.build_url('admin/status/banner/do_update')%>"><input name="token" type="hidden" value="<%=token%>"><input type="submit" class="cbi-button" value="立即手动更新"></form></div></div>
+        <div class="cbi-value"><label class="cbi-value-title">恢复默认配置</label><div class="cbi-value-field"><form method="post" action="<%=luci.dispatcher.build_url('admin/status/banner/do_reset_defaults')%>" onsubmit="return confirm('确定要恢复默认配置吗？')"><input name="token" type="hidden" value="<%=token%>"><input type="submit" class="cbi-button cbi-button-reset" value="恢复默认值"></form></div></div>
         <h3>更新日志</h3><div style="background:rgba(0,0,0,.5);padding:12px;border-radius:8px;max-height:250px;overflow-y:auto;font-family:monospace;font-size:12px;color:#0f0;white-space:pre-wrap"><%=pcdata(log)%></div>
     </div>
 </div>
@@ -1481,7 +1527,7 @@ cat > "$PKG_DIR/root/usr/lib/lua/luci/view/banner/background.htm" <<'BGVIEW'
     <div class="cbi-section-node">
         <div class="cbi-value"><label class="cbi-value-title">选择背景图组</label><div class="cbi-value-field">
             <form method="post" action="<%=luci.dispatcher.build_url('admin/status/banner/do_load_group')%>" id="loadGroupForm">
-                <input name="token" value="<%=token%>">
+                <input name="token" type="hidden" value="<%=token%>">
                 <select name="group">
                     <% for i = 1, 4 do %><option value="<%=i%>"<%=bg_group==tostring(i) and ' selected'%>><%=i..'-'..i*3%></option><% end %>
                 </select>
@@ -1491,7 +1537,7 @@ cat > "$PKG_DIR/root/usr/lib/lua/luci/view/banner/background.htm" <<'BGVIEW'
         <div class="cbi-value"><label class="cbi-value-title">手动填写背景图链接</label><div class="cbi-value-field">
             <form id="customBgForm" method="post" action="<%=luci.dispatcher.build_url('admin/status/banner/do_apply_url')%>">
                 
-                <input name="token" value="<%=token%>">
+                <input name="token" type="hidden" value="<%=token%>">
                 <input type="text" name="custom_bg_url" placeholder="https://..." style="width:70%">
                 <input type="submit" class="cbi-button" value="应用链接">
             </form>
@@ -1499,7 +1545,7 @@ cat > "$PKG_DIR/root/usr/lib/lua/luci/view/banner/background.htm" <<'BGVIEW'
         </div></div>
         <div class="cbi-value"><label class="cbi-value-title">从本地上传背景图</label><div class="cbi-value-field">
             <form method="post" action="<%=luci.dispatcher.build_url('admin/status/banner/do_upload_bg')%>" enctype="multipart/form-data" id="uploadForm">
-                <input name="token" value="<%=token%>">
+                <input name="token" type="hidden" value="<%=token%>">
                 <input type="file" name="bg_file" accept="image/jpeg" required>
                 <input type="submit" class="cbi-button" value="上传并应用">
             </form>
@@ -1507,7 +1553,7 @@ cat > "$PKG_DIR/root/usr/lib/lua/luci/view/banner/background.htm" <<'BGVIEW'
         </div></div>
         <div class="cbi-value"><label class="cbi-value-title">删除缓存图片</label><div class="cbi-value-field">
             <form method="post" action="<%=luci.dispatcher.build_url('admin/status/banner/do_clear_cache')%>">
-                <input name="token" value="<%=token%>">
+                <input name="token" type="hidden" value="<%=token%>">
                 <input type="submit" class="cbi-button cbi-button-remove" value="删除缓存">
             </form>
         </div></div>

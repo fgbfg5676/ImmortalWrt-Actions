@@ -57,6 +57,18 @@ rm -rf "$PKG_DIR"
 
 mkdir -p "$PKG_DIR"/root/{etc/{config,init.d,cron.d},usr/{bin,lib/lua/luci/{controller,view/banner}},www/luci-static/banner,overlay/banner}
 
+# 下载离线背景图
+OFFLINE_BG="$PKG_DIR/root/www/luci-static/banner/bg0.jpg"
+mkdir -p "$(dirname "$OFFLINE_BG")"
+
+echo "Downloading offline background image..."
+if ! curl -fLsS https://github.com/fgbfg5676/ImmortalWrt-Actions/raw/main/bg0.jpg -o "$OFFLINE_BG"; then
+    echo "[ERROR] Failed to download offline background image!"
+    exit 1
+fi
+echo "Offline background image downloaded successfully."
+
+
 # Create Makefile
 echo "[2/3] Creating Makefile..."
 cat > "$PKG_DIR/Makefile" <<'MAKEFILE'
@@ -699,28 +711,17 @@ start() {
         BG_DIR="/www/luci-static/banner"
     fi
 
-    # 随机选择初始背景图，带回退和兜底
-    # 使用时间戳作为随机数种子
-    RANDOM_BG=$(( $(date +%s) % 3 ))
+        # 確定背景目錄
+    BG_DIR="/www/luci-static/banner"
+
+    # 如果缓存不存在，使用离线图片
     if [ ! -s /tmp/banner_cache/current_bg.jpg ]; then
-        FOUND_BG=0
-        # 先尝试随机选择的，再尝试所有的
-    TRIED_RANDOM=0
-    for i in 0 1 2; do
-    # 优先尝试随机选中的
-    if [ $i -eq $RANDOM_BG ] || [ $TRIED_RANDOM -eq 1 ]; then
-        if [ -f "$BG_DIR/bg${i}.jpg" ]; then
-            cp "$BG_DIR/bg${i}.jpg" /tmp/banner_cache/current_bg.jpg 2>/dev/null
-            log_msg "Using bg${i}.jpg as initial/fallback background"
-            FOUND_BG=1
-            break
+        if [ -f "$BG_DIR/bg0.jpg" ]; then
+            cp "$BG_DIR/bg0.jpg" /tmp/banner_cache/current_bg.jpg
+            log_msg "Using bg0.jpg as offline background"
         fi
-        [ $i -eq $RANDOM_BG ] && TRIED_RANDOM=1
     fi
-done
-        if [ $FOUND_BG -eq 0 ]; then
-    log_msg "No background images found, will wait for remote download"
-fi
+
 
     # 启动后台更新和加载脚本，输出到日志
     /usr/bin/banner_auto_update.sh >> /tmp/banner_update.log 2>&1 &

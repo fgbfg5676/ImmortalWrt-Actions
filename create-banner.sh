@@ -113,7 +113,7 @@ define Package/luci-app-banner/install
 	$(INSTALL_DIR) $(1)/usr/lib/lua/luci/controller
 	$(INSTALL_DIR) $(1)/usr/lib/lua/luci/view/banner
 	$(INSTALL_DIR) $(1)/usr/bin
-                $(INSTALL_DIR) $(1)/usr/share/banner 
+	$(INSTALL_DIR) $(1)/usr/share/banner
 	$(INSTALL_DIR) $(1)/www/luci-static/banner
 	$(INSTALL_DIR) $(1)/etc/config
 	$(INSTALL_DIR) $(1)/etc/cron.d

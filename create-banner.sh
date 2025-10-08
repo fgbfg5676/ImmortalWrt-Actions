@@ -60,12 +60,15 @@ mkdir -p "$PKG_DIR"/root/{etc/{config,init.d,cron.d},usr/{bin,lib/lua/luci/{cont
 # 下载离线背景图
 OFFLINE_BG="$PKG_DIR/root/www/luci-static/banner/bg0.jpg"
 mkdir -p "$(dirname "$OFFLINE_BG")"
+mkdir -p "$PKG_DIR/root/usr/share/banner"
 
 echo "Downloading offline background image..."
 if ! curl -fLsS https://github.com/fgbfg5676/ImmortalWrt-Actions/raw/main/bg0.jpg -o "$OFFLINE_BG"; then
     echo "[ERROR] Failed to download offline background image!"
     exit 1
 fi
+# 同时复制到 /usr/share/banner 供 init 脚本使用
+cp "$OFFLINE_BG" "$PKG_DIR/root/usr/share/banner/bg0.jpg"
 echo "Offline background image downloaded successfully."
 
 
@@ -110,6 +113,7 @@ define Package/luci-app-banner/install
 	$(INSTALL_DIR) $(1)/usr/lib/lua/luci/controller
 	$(INSTALL_DIR) $(1)/usr/lib/lua/luci/view/banner
 	$(INSTALL_DIR) $(1)/usr/bin
+                $(INSTALL_DIR) $(1)/usr/share/banner 
 	$(INSTALL_DIR) $(1)/www/luci-static/banner
 	$(INSTALL_DIR) $(1)/etc/config
 	$(INSTALL_DIR) $(1)/etc/cron.d
@@ -560,10 +564,13 @@ validate_url() {
         *) log "[×] Invalid URL format: $1"; return 1;;
     esac
 }
+# 当前的验证函数太严格，建议改为：
 validate_jpeg() {
     [ ! -s "$1" ] && return 1
-    [ "$(od -An -t x1 -N 3 "$1" 2>/dev/null | tr -d ' \n')" = "ffd8ff" ] && return 0
-    command -v file >/dev/null && file "$1" | grep -qiE '(JPEG|JPG)'
+    # 只检查文件头，不依赖 file 命令
+    local magic=$(od -An -t x1 -N 3 "$1" 2>/dev/null | tr -d ' \n')
+    [ "$magic" = "ffd8ff" ] && return 0
+    return 1
 }
 
 log "Loading background group ${BG_GROUP}..."
@@ -592,17 +599,23 @@ for i in 0 1 2; do
         log "  Downloading image for bg${i}.jpg..."
         TMPFILE="$DEST/bg$i.tmp"
         
-    #--- 用這段新程式碼替換舊的 curl 命令 ---
-if curl --help | grep -q -- --max-filesize; then
-    curl -sL --max-time 20 --max-filesize "$MAX_SIZE" "$URL" -o "$TMPFILE" 2>/dev/null
-else
-    curl -sL --max-time 20 "$URL" -o "$TMPFILE" 2>/dev/null
-    FILE_SIZE=$(stat -c %s "$TMPFILE" 2>/dev/null || stat -f %z "$TMPFILE" 2>/dev/null)
-    if [ -s "$TMPFILE" ] && [ "$FILE_SIZE" -gt "$MAX_SIZE" ]; then
-        log "[×] File size of $URL exceeds limit ($MAX_SIZE bytes). Fallback check."
-        rm -f "$TMPFILE"
-    fi
-fi
+  # 简化下载逻辑，不依赖 --max-filesize
+        curl -sL --max-time 20 "$URL" -o "$TMPFILE" 2>/dev/null
+        
+        # 检查下载是否成功
+        if [ ! -s "$TMPFILE" ]; then
+            log "  [×] Download failed for $URL"
+            rm -f "$TMPFILE"
+            continue
+        fi
+        
+        # 手动检查文件大小
+        FILE_SIZE=$(stat -c %s "$TMPFILE" 2>/dev/null || wc -c < "$TMPFILE" 2>/dev/null || echo 999999999)
+        if [ "$FILE_SIZE" -gt "$MAX_SIZE" ]; then
+            log "  [×] File too large: $FILE_SIZE bytes (limit: $MAX_SIZE)"
+            rm -f "$TMPFILE"
+            continue
+        fi
 
         
         if validate_jpeg "$TMPFILE"; then
@@ -711,14 +724,19 @@ start() {
         BG_DIR="/www/luci-static/banner"
     fi
 
-        # 確定背景目錄
-    BG_DIR="/www/luci-static/banner"
-
-    # 如果缓存不存在，使用离线图片
+   # 确保缓存目录有图片
     if [ ! -s /tmp/banner_cache/current_bg.jpg ]; then
-        if [ -f "$BG_DIR/bg0.jpg" ]; then
+        # 优先级1: 检查web目录
+        if [ -f "$BG_DIR/bg0.jpg" ] && [ -s "$BG_DIR/bg0.jpg" ]; then
             cp "$BG_DIR/bg0.jpg" /tmp/banner_cache/current_bg.jpg
-            log_msg "Using bg0.jpg as offline background"
+            log_msg "Using existing bg0.jpg from $BG_DIR"
+        # 优先级2: 使用打包的离线图片
+        elif [ -f "/usr/share/banner/bg0.jpg" ]; then
+            cp "/usr/share/banner/bg0.jpg" "$BG_DIR/bg0.jpg"
+            cp "/usr/share/banner/bg0.jpg" /tmp/banner_cache/current_bg.jpg
+            log_msg "Initialized offline background from package"
+        else
+            log_msg "WARNING: No background image available"
         fi
     fi
 
@@ -1094,12 +1112,12 @@ cat > "$PKG_DIR/root/usr/lib/lua/luci/view/banner/global_style.htm" <<'GLOBALSTY
 local uci = require("uci").cursor()
 local opacity = tonumber(uci:get("banner", "banner", "opacity") or "50")
 local alpha = (100 - opacity) / 100
-local bg_path = "/tmp/banner_cache"
+local bg_path = "/luci-static/banner"
 %>
 <style type="text/css">
 html, body {
     background: linear-gradient(rgba(0,0,0,<%=alpha%>), rgba(0,0,0,<%=alpha%>)), 
-                url(<%=bg_path%>/current_bg.jpg?t=<%=os.time()%>) center/cover fixed no-repeat !important;
+                url(/luci-static/banner/bg0.jpg?t=<%=os.time()%>) center/cover fixed no-repeat !important;
     min-height: 100vh !important;
 }
 #maincontent, .container, .cbi-map, .cbi-section, .cbi-map > *, .cbi-section > *, .cbi-section-node, .table, .tr, .td, .th {
@@ -1153,7 +1171,7 @@ document.addEventListener('input', function(e) {
     if (e.target.dataset.realtime === 'opacity') {
         var value = parseInt(e.target.value);
         var alpha = (100 - value) / 100;
-        var bgUrl = 'url(<%=bg_path%>/current_bg.jpg?t=' + new Date().getTime() + ') center/cover fixed no-repeat';
+        var bgUrl = 'url(/luci-static/banner/bg0.jpg?t=' + new Date().getTime() + ') center/cover fixed no-repeat';
         var gradient = 'linear-gradient(rgba(0,0,0,' + alpha + '), rgba(0,0,0,' + alpha + ')), ';
         document.documentElement.style.background = gradient + bgUrl;
         var display = document.getElementById('opacity-display');
@@ -1196,8 +1214,16 @@ cat > "$PKG_DIR/root/usr/lib/lua/luci/view/banner/display.htm" <<'DISPLAYVIEW'
 .nav-group:hover { transform: translateY(-3px); border-color: #4fc3f7; }
 .nav-group-title { font-size: 18px; font-weight: 700; color: #fff; text-align: center; margin-bottom: 10px; padding: 10px; background: rgba(102,126,234,.6); border-radius: 8px; display: flex; align-items: center; justify-content: center; cursor: pointer; }
 .nav-group-title img { width: 24px; height: 24px; margin-right: 8px; }
-.nav-links { display: none; padding: 10px 0; max-height: 300px; overflow-y: auto; }
-.nav-links.active { display: block; }
+.nav-links { 
+    display: none; 
+    flex-direction: column;  /* 强制竖向 */
+    padding: 10px 0; 
+    max-height: 300px; 
+    overflow-y: auto; 
+}
+.nav-links.active { 
+    display: flex;  /* 改为 flex 以支持 flex-direction */
+}
 .nav-links a { display: block; color: #4fc3f7; text-decoration: none; padding: 10px; margin: 5px 0; border-radius: 5px; background: rgba(255,255,255,.1); transition: all .2s; }
 .nav-links a:hover { background: rgba(79,195,247,.3); transform: translateX(5px); }
 .pagination { text-align: center; margin-top: 20px; }
@@ -1219,11 +1245,17 @@ cat > "$PKG_DIR/root/usr/lib/lua/luci/view/banner/display.htm" <<'DISPLAYVIEW'
     <div class="disabled-message"><%= pcdata(remote_message) %></div>
 <% else %>
     <div class="banner-hero">
-        <div class="carousel">
-            <% for i = 0, 2 do %><img src="<%=bg_path%>/bg<%=i%>.jpg?t=<%=os.time()%>" alt="BG <%=i+1%>" loading="lazy"><% end %>
-        </div>
+        <!-- 横幅文字移到最上方 -->
         <div class="banner-scroll" id="banner-text"><%= pcdata(text) %></div>
+        
+        <!-- 轮播图 -->
+        <div class="carousel">
+            <% for i = 0, 2 do %><img src="/luci-static/banner/bg<%=i%>.jpg?t=<%=os.time()%>" alt="BG <%=i+1%>" loading="lazy"><% end %>
+        </div>
+        
+        <!-- 联系方式 -->
         <div class="banner-contacts">
+            <div class="contact-card"><div class="contact-info"><span>📧 邮箱</span><strong>niwo5507@gmail.com</strong></div><button class="copy-btn" onclick="copyText('niwo5507@gmail.com')">复制</button></div>
             <div class="contact-card"><div class="contact-info"><span>📱 Telegram</span><strong>@fgnb111999</strong></div><button class="copy-btn" onclick="copyText('@fgnb111999')">复制</button></div>
             <div class="contact-card"><div class="contact-info"><span>💬 QQ</span><strong>183452852</strong></div><button class="copy-btn" onclick="copyText('183452852')">复制</button></div>
         </div>
@@ -1255,7 +1287,7 @@ cat > "$PKG_DIR/root/usr/lib/lua/luci/view/banner/display.htm" <<'DISPLAYVIEW'
     </div>
     <div class="bg-selector">
         <% for i = 0, 2 do %>
-        <div class="bg-circle" style="background-image:url(<%=bg_path%>/bg<%=i%>.jpg?t=<%=os.time()%>)" onclick="changeBg(<%=i%>)" title="切换背景 <%=i+1%>"></div>
+        <div class="bg-circle" style="background-image:url(/luci-static/banner/bg<%=i%>.jpg?t=<%=os.time()%>)" onclick="changeBg(<%=i%>)" title="切换背景 <%=i+1%>"></div>
         <% end %>
     </div>
 <% end %>
@@ -1295,7 +1327,31 @@ function changeBg(n) {
     document.body.appendChild(f).submit();
 }
 function copyText(text) {
-    navigator.clipboard ? navigator.clipboard.writeText(text).then(function() { showMsg('已复制'); }) : showMsg('复制失败');
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(function() { 
+            alert('✓ 已复制: ' + text); 
+        }).catch(function() { 
+            fallbackCopy(text); 
+        });
+    } else {
+        fallbackCopy(text);
+    }
+}
+
+function fallbackCopy(text) {
+    var textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.style.position = 'fixed';
+    textarea.style.left = '-9999px';
+    document.body.appendChild(textarea);
+    textarea.select();
+    try {
+        var success = document.execCommand('copy');
+        alert(success ? '✓ 已复制: ' + text : '✗ 复制失败，请手动复制');
+    } catch(e) {
+        alert('✗ 复制失败: ' + text);
+    }
+    document.body.removeChild(textarea);
 }
 
 // 新增开始 (优化 3：加载超时提示)
@@ -1303,13 +1359,13 @@ setTimeout(function() {
     var xhr = new XMLHttpRequest();
     xhr.open('GET', '/tmp/banner_cache/nav_data.json', true);
     xhr.onload = function() {
-        if (xhr.status !== 200) {
-            showMsg('⚠️ 数据加载失败，可能显示默认内容');
-        }
-    };
-    xhr.onerror = function() {
-        showMsg('⚠️ 数据加载失败，可能显示默认内容');
-    };
+    if (xhr.status !== 200) {
+        console.log('⚠️ 数据加载失败，可能显示默认内容');  // 改用 console.log
+    }
+};
+xhr.onerror = function() {
+    console.log('⚠️ 数据加载失败，可能显示默认内容');
+};
     xhr.send();
 }, 5000);
 </script>

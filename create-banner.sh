@@ -138,7 +138,7 @@ cat > "$PKG_DIR/root/etc/config/banner" <<'UCICONF'
 config banner 'banner'
 	option text '🎉 新春特惠 · 技术支持24/7 · 已服务500+用户 · 安全稳定运行'
 	option color 'rainbow'
-	option opacity '90' # 0-100
+	option opacity '50' # 0-100
 	option carousel_interval '5000' # 1000-30000 (ms)
 	option bg_group '1' # 1-4
 	option bg_enabled '1' # 0 or 1
@@ -259,7 +259,7 @@ if [ ! -f "/etc/config/banner" ]; then
 config banner 'banner'
     option text '默认横幅文本'
     option color 'white'
-    option opacity '90'
+    option opacity '50'
     option carousel_interval '5000'
     option bg_group '1'
     option bg_enabled '1'
@@ -796,9 +796,9 @@ function action_display()
 
     local text = uci:get("banner", "banner", "text") or "欢迎使用"
     
-    local opacity = tonumber(uci:get("banner", "banner", "opacity") or "90")
+    local opacity = tonumber(uci:get("banner", "banner", "opacity") or "50")
     if not opacity or opacity < 0 or opacity > 100 then
-        opacity = 90
+        opacity = 50
     end
 
     local banner_texts = uci:get("banner", "banner", "banner_texts") or ""
@@ -1075,7 +1075,7 @@ function action_do_reset_defaults()
     local uci = require("uci").cursor()
     uci:set("banner", "banner", "text", "🎉 新春特惠 · 技术支持24/7 · 已服务500+用户 · 安全稳定运行")
     uci:set("banner", "banner", "color", "rainbow")
-    uci:set("banner", "banner", "opacity", "90")
+    uci:set("banner", "banner", "opacity", "50")
     uci:set("banner", "banner", "carousel_interval", "5000")
     uci:set("banner", "banner", "bg_group", "1")
     uci:set("banner", "banner", "current_bg", "0")
@@ -1092,7 +1092,7 @@ CONTROLLER
 cat > "$PKG_DIR/root/usr/lib/lua/luci/view/banner/global_style.htm" <<'GLOBALSTYLE'
 <%
 local uci = require("uci").cursor()
-local opacity = tonumber(uci:get("banner", "banner", "opacity") or "90")
+local opacity = tonumber(uci:get("banner", "banner", "opacity") or "50")
 local alpha = (100 - opacity) / 100
 local bg_path = "/tmp/banner_cache"
 %>

@@ -56,7 +56,7 @@ rm -rf "$PKG_DIR"
 
 
 mkdir -p "$PKG_DIR"/root/{etc/{config,init.d,cron.d},usr/{bin,lib/lua/luci/{controller,view/banner}},www/luci-static/banner,overlay/banner}
-mkdir -p "$PKG_DIR/default"
+
 # Create Makefile
 echo "[2/3] Creating Makefile..."
 cat > "$PKG_DIR/Makefile" <<'MAKEFILE'
@@ -103,9 +103,7 @@ define Package/luci-app-banner/install
 	$(INSTALL_DIR) $(1)/etc/cron.d
 	$(INSTALL_DIR) $(1)/etc/init.d
 	$(INSTALL_DIR) $(1)/overlay/banner
-	$(INSTALL_DIR) $(1)/default
 	$(CP) ./root/* $(1)/
-	$(CP) ./default/* $(1)/default/
 	chmod +x $(1)/usr/bin/*
 	chmod +x $(1)/etc/init.d/*
 endef
@@ -113,8 +111,7 @@ endef
 define Package/luci-app-banner/postinst
 #!/bin/sh
 [ -n "$${IPKG_INSTROOT}" ] || {
-	mkdir -p /www/luci-static/banner 2>/dev/null
-	[ -f /default/bg_default.jpg ] && cp /default/bg_default.jpg /www/luci-static/banner/default_bg.jpg 2>/dev/null
+	mkdir -p /www/luci-static/banner /overlay/banner 2>/dev/null
 	/etc/init.d/banner enable
 	/etc/init.d/banner start
 }
@@ -167,60 +164,7 @@ validate_jpeg() {
     fi
 }
 
-# 确保 default 目录存在且可写
-mkdir -p "$PKG_DIR/default" || {
-    echo "错误：无法创建目录 $PKG_DIR/default"
-    exit 1
-}
-chmod 755 "$PKG_DIR/default"
-
-# 创建默认的 banner.json
-echo "调试：创建 banner_default.json"
-cat > "$PKG_DIR/default/banner_default.json" <<'DEFAULTJSON'
-{
-  "text": "歡迎使用 Banner 插件！請連接網絡後自動更新內容。",
-  "color": "white",
-  "banner_texts": ["這是一條預設的離線消息"],
-  "nav_tabs": [
-    {
-      "title": "預設導航",
-      "links": [
-        { "name": "請等待在線更新", "url": "#" }
-      ]
-    }
-  ]
-}
-DEFAULTJSON
-
-# 验证 banner_default.json 是否生成
-if [ -s "$PKG_DIR/default/banner_default.json" ]; then
-    echo "调试：banner_default.json 生成成功，大小 $(wc -c < "$PKG_DIR/default/banner_default.json" 2>/dev/null) 字节"
-else
-    echo "错误：banner_default.json 未生成或为空"
-    exit 1
-fi
-
-# 优先使用 xxd 生成占位符 bg_default.jpg
-echo "调试：优先使用 xxd 生成 $PKG_DIR/default/bg_default.jpg"
-if command -v xxd >/dev/null 2>&1; then
-    echo 'ffd8ffe000104a46494600010100000100010000ffdb004300080606070605080707070909080a0c140d0c0b0b0c1912130f141d1a1f1e1d1a1c1c20242e2720222c231c1c2837292c30313434341f27393d38323c2e333432ffc0001108000a000a03012200021101031101ffc4001f0000010501010101010100000000000000000102030405060708090a0bffd9000c03010002110311003f00d28a01ffd9' | xxd -r -p > "$PKG_DIR/default/bg_default.jpg"
-else
-    echo "调试：xxd 不可用，尝试使用 printf 生成 $PKG_DIR/default/bg_default.jpg"
-    printf "%b" '\xff\xd8\xff\xe0\x00\x10\x4a\x46\x49\x46\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00\xff\xdb\x00\x43\x00\x08\x06\x06\x07\x06\x05\x08\x07\x07\x07\x09\x09\x08\x0a\x0c\x14\x0d\x0c\x0b\x0b\x0c\x19\x12\x13\x0f\x14\x1d\x1a\x1f\x1e\x1d\x1a\x1c\x1c\x20\x24\x2e\x27\x20\x22\x2c\x23\x1c\x1c\x28\x37\x29\x2c\x30\x31\x34\x34\x34\x1f\x27\x39\x3d\x38\x32\x3c\x2e\x33\x34\x32\xff\xc0\x00\x11\x08\x00\x0a\x00\x0a\x03\x01\x22\x00\x02\x11\x01\x03\x11\x01\xff\xc4\x00\x1f\x00\x00\x01\x05\x01\x01\x01\x01\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\xff\xda\x00\x0c\x03\x01\x00\x02\x11\x03\x11\x00\x3f\x00\xd2\x8a\x01\xff\xd9' > "$PKG_DIR/default/bg_default.jpg"
-fi
-# 调试：检查生成文件的大小和内容
-echo "调试：生成文件后检查"
-ls -l "$PKG_DIR/default/bg_default.jpg" 2>/dev/null || echo "调试：文件未生成"
-[ -f "$PKG_DIR/default/bg_default.jpg" ] && {
-    echo "调试：文件大小 $(wc -c < "$PKG_DIR/default/bg_default.jpg") 字节"
-    echo "调试：文件前 3 字节 $(od -An -t x1 -N 3 "$PKG_DIR/default/bg_default.jpg" 2>/dev/null | tr -d ' \n' || echo '无法读取')"
-}
-validate_jpeg "$PKG_DIR/default/bg_default.jpg" || {
-    echo "错误：JPEG 生成失败，生成空占位符文件"
-    touch "$PKG_DIR/default/bg_default.jpg"
-    echo "调试：生成空占位符文件 $PKG_DIR/default/bg_default.jpg"
-    exit 0
-}
+echo "Banner plugin setup completed. Background images will be downloaded from remote repository on first run."
 # 創建一個全局配置文件，用於存儲可配置的變數
 mkdir -p "$PKG_DIR/root/usr/share/banner"
 cat > "$PKG_DIR/root/usr/share/banner/config.sh" <<'CONFIGSH'
@@ -580,10 +524,15 @@ while [ ! -f "$JSON" ] && [ $WAIT_COUNT -lt 5 ]; do
 done
 #--- 用這段新程式碼替換舊的 JSON 檢查 ---
 if [ ! -f "$JSON" ]; then
-    log "[!] nav_data.json not found, using default background as fallback."
-    if [ -f "$WEB/default_bg.jpg" ]; then
-        cp "$WEB/default_bg.jpg" "$CACHE/current_bg.jpg" 2>/dev/null
-    fi
+    log "[!] nav_data.json not found, will use cached backgrounds if available."
+    # 尝试使用已缓存的背景图
+    for i in 0 1 2; do
+        if [ -f "$DEST/bg${i}.jpg" ]; then
+            cp "$DEST/bg${i}.jpg" "$CACHE/current_bg.jpg" 2>/dev/null
+            log "[i] Using cached bg${i}.jpg as fallback"
+            exit 0
+        fi
+    done
     exit 1
 fi
 
@@ -636,11 +585,11 @@ if curl --help | grep -q -- --max-filesize; then
     curl -sL --max-time 20 --max-filesize "$MAX_SIZE" "$URL" -o "$TMPFILE" 2>/dev/null
 else
     curl -sL --max-time 20 "$URL" -o "$TMPFILE" 2>/dev/null
-FILE_SIZE=$(stat -c %s "$TMPFILE" 2>/dev/null || stat -f %z "$TMPFILE" 2>/dev/null)
-if [ -s "$TMPFILE" ] && [ "$FILE_SIZE" -gt "$MAX_SIZE" ]; then
-    log "[×] File size of $URL exceeds limit ($MAX_SIZE bytes). Fallback check."
-    rm -f "$TMPFILE"
-fi
+    FILE_SIZE=$(stat -c %s "$TMPFILE" 2>/dev/null || stat -f %z "$TMPFILE" 2>/dev/null)
+    if [ -s "$TMPFILE" ] && [ "$FILE_SIZE" -gt "$MAX_SIZE" ]; then
+        log "[×] File size of $URL exceeds limit ($MAX_SIZE bytes). Fallback check."
+        rm -f "$TMPFILE"
+    fi
 fi
 
         
@@ -665,22 +614,20 @@ fi
 done
 
 if [ $DOWNLOAD_SUCCESS -eq 0 ]; then
-    log "[!] No images were downloaded for group ${BG_GROUP}. Using default background as fallback."
-    for i in 0 1 2; do
-        if [ -s "$WEB/default_bg.jpg" ]; then
-            cp "$WEB/default_bg.jpg" "$DEST/bg$i.jpg" 2>/dev/null
-            [ $i -eq 0 ] && cp "$WEB/default_bg.jpg" "$CACHE/current_bg.jpg" 2>/dev/null
-        fi
-    done
+    log "[!] No images were downloaded for group ${BG_GROUP}. Keeping existing cached images."
+    # 不做任何操作,保留现有的缓存图片
 fi
 
 if [ ! -s "$CACHE/current_bg.jpg" ]; then
-    log "[!] current_bg.jpg is missing. Attempting to restore from bg0.jpg or default."
-    if [ -s "$DEST/bg0.jpg" ]; then
-        cp "$DEST/bg0.jpg" "$CACHE/current_bg.jpg" 2>/dev/null
-    elif [ -s "$WEB/default_bg.jpg" ]; then
-        cp "$WEB/default_bg.jpg" "$CACHE/current_bg.jpg" 2>/dev/null
-    fi
+    log "[!] current_bg.jpg is missing. Attempting to restore from cached backgrounds."
+    # 随机选择一张缓存的背景
+    for i in $(shuf -i 0-2 2>/dev/null || echo "0 1 2"); do
+        if [ -s "$DEST/bg${i}.jpg" ]; then
+            cp "$DEST/bg${i}.jpg" "$CACHE/current_bg.jpg" 2>/dev/null
+            log "[i] Restored current_bg.jpg from bg${i}.jpg"
+            break
+        fi
+    done
 fi
 
 log "[Complete] Background loading for group ${BG_GROUP} finished."
@@ -701,11 +648,18 @@ START=99
 USE_PROCD=1
 
 start() {
+    # 检查 UCI 命令
     if ! command -v uci >/dev/null 2>&1; then
         echo "[$(date)] Error: UCI command not found, cannot start banner service." >> /tmp/banner_init.log
         return 1
     fi
-    
+
+    # 日志函数
+    log_msg() {
+        echo "[$(date)] $1" >> /tmp/banner_update.log
+    }
+
+    # 获取活跃网络接口
     get_active_interface() {
         local iface
         for iface in $(ubus list network.interface.* | cut -d. -f3); do
@@ -718,35 +672,63 @@ start() {
     }
 
     INTERFACE=$(get_active_interface)
-    log_msg() {
-        echo "[$(date)] $1" >> /tmp/banner_update.log
-    }
-
     log_msg "Network detection: Using interface '$INTERFACE'."
+
+    # 等待网络接口上线，最多等待 30 秒
     WAIT=0
-    while ! ubus call network.interface.$INTERFACE status 2>/dev/null | grep -q '"up": true'; do
+    while :; do
+        STATUS=$(ubus call network.interface.$INTERFACE status 2>/dev/null)
+        echo "$STATUS" | grep -q '"up": true' && break
         sleep 2
         WAIT=$((WAIT + 2))
-        if [ $WAIT -ge 30 ]; then # 等待時間縮短為 30 秒
+        if [ $WAIT -ge 30 ]; then
             log_msg "Network interface '$INTERFACE' not up after 30 seconds. Proceeding anyway."
             break
         fi
     done
-    
+
+    # 创建目录并设置权限
     mkdir -p /tmp/banner_cache /www/luci-static/banner /overlay/banner
-    
-    if [ ! -s /tmp/banner_cache/current_bg.jpg ]; then
-        SRC_BG=$(find /overlay/banner /www/luci-static/banner -name 'bg0.jpg' -o -name 'default_bg.jpg' 2>/dev/null | head -n1)
-        if [ -n "$SRC_BG" ] && [ -s "$SRC_BG" ]; then
-            cp "$SRC_BG" /tmp/banner_cache/current_bg.jpg 2>/dev/null
-        fi
+    chmod 755 /tmp/banner_cache /www/luci-static/banner /overlay/banner
+
+    # 确定背景图目录
+    PERSISTENT=$(uci -q get banner.banner.persistent_storage || echo "0")
+    if [ "$PERSISTENT" = "1" ]; then
+        BG_DIR="/overlay/banner"
+    else
+        BG_DIR="/www/luci-static/banner"
     fi
-    
-    /usr/bin/banner_auto_update.sh >/dev/null 2>&1 &
+
+    # 随机选择初始背景图，带回退和兜底
+    # 使用时间戳作为随机数种子
+    RANDOM_BG=$(( $(date +%s) % 3 ))
+    if [ ! -s /tmp/banner_cache/current_bg.jpg ]; then
+        FOUND_BG=0
+        # 先尝试随机选择的，再尝试所有的
+    TRIED_RANDOM=0
+    for i in 0 1 2; do
+    # 优先尝试随机选中的
+    if [ $i -eq $RANDOM_BG ] || [ $TRIED_RANDOM -eq 1 ]; then
+        if [ -f "$BG_DIR/bg${i}.jpg" ]; then
+            cp "$BG_DIR/bg${i}.jpg" /tmp/banner_cache/current_bg.jpg 2>/dev/null
+            log_msg "Using bg${i}.jpg as initial/fallback background"
+            FOUND_BG=1
+            break
+        fi
+        [ $i -eq $RANDOM_BG ] && TRIED_RANDOM=1
+    fi
+done
+        if [ $FOUND_BG -eq 0 ]; then
+    log_msg "No background images found, will wait for remote download"
+fi
+
+    # 启动后台更新和加载脚本，输出到日志
+    /usr/bin/banner_auto_update.sh >> /tmp/banner_update.log 2>&1 &
     sleep 2
     BG_GROUP=$(uci -q get banner.banner.bg_group || echo 1)
-    /usr/bin/banner_bg_loader.sh "$BG_GROUP" >/dev/null 2>&1 &
+    /usr/bin/banner_bg_loader.sh "$BG_GROUP" >> /tmp/banner_update.log 2>&1 &
 }
+
 
 status() {
     local uci_enabled=$(uci -q get banner.banner.bg_enabled || echo 1)
@@ -1528,52 +1510,3 @@ echo ""
 echo "Compilation command:"
 echo "  make package/custom/luci-app-banner/compile V=s"
 echo "=========================================="
-# 创建启动脚本
-cat > "$PKG_DIR/root/etc/init.d/banner" <<'EOF'
-#!/bin/sh /etc/rc.common
-
-USE_PROCD=1
-START=99
-
-start_service() {
-    local banner_dir="/www/luci-static/resources/banner"
-    local bg_file="$banner_dir/bg_default.jpg"
-
-    # 确保目录存在
-    mkdir -p "$banner_dir"
-
-    # 检查 bg_default.jpg 是否存在且有效
-    if [ ! -s "$bg_file" ] || ! (od -An -t x1 -N 3 "$bg_file" 2>/dev/null | grep -q "ffd8ff"); then
-        logger -t luci-app-banner "生成默认背景图 $bg_file"
-        if command -v convert >/dev/null 2>&1 && ldd $(which convert) | grep -q libjpeg; then
-            convert -size 10x10 xc:grey -strip -quality 10 "$bg_file" 2>/dev/null || {
-                logger -t luci-app-banner "错误：convert 生成 $bg_file 失败"
-                # 回退到 printf
-                printf '\xff\xd8\xff\xe0\x00\x10\x4a\x46\x49\x46\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00\xff\xdb\x00\x43\x00\x08\x06\x06\x07\x06\x05\x08\x07\x07\x07\x09\x09\x08\x0a\x0c\x14\x0d\x0c\x0b\x0b\x0c\x19\x12\x13\x0f\x14\x1d\x1a\x1f\x1e\x1d\x1a\x1c\x1c\x20\x24\x2e\x27\x20\x22\x2c\x23\x1c\x1c\x28\x37\x29\x2c\x30\x31\x34\x34\x34\x1f\x27\x39\x3d\x38\x32\x3c\x2e\x33\x34\x32\xff\xc0\x00\x11\x08\x00\x0a\x00\x0a\x03\x01\x22\x00\x02\x11\x01\x03\x11\x01\xff\xc4\x00\x1f\x00\x00\x01\x05\x01\x01\x01\x01\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\xff\xda\x00\x0c\x03\x01\x00\x02\x11\x03\x11\x00\x3f\x00\xd2\x8a\x01\xff\xd9' > "$bg_file"
-            }
-            # 验证生成的文件
-            if [ -s "$bg_file" ] && od -An -t x1 -N 3 "$bg_file" 2>/dev/null | grep -q "ffd8ff"; then
-                logger -t luci-app-banner "成功生成 $bg_file，大小 $(wc -c < "$bg_file") 字节"
-            else
-                logger -t luci-app-banner "错误：生成的 $bg_file 无效"
-            fi
-        else
-            logger -t luci-app-banner "警告：convert 不可用或未链接 libjpeg，使用预定义 JPEG 数据"
-            printf '\xff\xd8\xff\xe0\x00\x10\x4a\x46\x49\x46\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00\xff\xdb\x00\x43\x00\x08\x06\x06\x07\x06\x05\x08\x07\x07\x07\x09\x09\x08\x0a\x0c\x14\x0d\x0c\x0b\x0b\x0c\x19\x12\x13\x0f\x14\x1d\x1a\x1f\x1e\x1d\x1a\x1c\x1c\x20\x24\x2e\x27\x20\x22\x2c\x23\x1c\x1c\x28\x37\x29\x2c\x30\x31\x34\x34\x34\x1f\x27\x39\x3d\x38\x32\x3c\x2e\x33\x34\x32\xff\xc0\x00\x11\x08\x00\x0a\x00\x0a\x03\x01\x22\x00\x02\x11\x01\x03\x11\x01\xff\xc4\x00\x1f\x00\x00\x01\x05\x01\x01\x01\x01\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\xff\xda\x00\x0c\x03\x01\x00\x02\x11\x03\x11\x00\x3f\x00\xd2\x8a\x01\xff\xd9' > "$bg_file"
-            # 验证生成的文件
-            if [ -s "$bg_file" ] && od -An -t x1 -N 3 "$bg_file" 2>/dev/null | grep -q "ffd8ff"; then
-                logger -t luci-app-banner "成功生成 $bg_file，大小 $(wc -c < "$bg_file") 字节"
-            else
-                logger -t luci-app-banner "错误：生成的 $bg_file 无效"
-            fi
-        fi
-    else
-        logger -t luci-app-banner "$bg_file 已存在且有效，跳过生成"
-    fi
-}
-
-stop_service() {
-    logger -t luci-app-banner "停止 luci-app-banner 服务"
-}
-EOF
-chmod +x "$PKG_DIR/root/etc/init.d/banner"

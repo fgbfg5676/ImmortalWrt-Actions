@@ -780,6 +780,7 @@ status() {
 }
 INIT
 
+# =================== 核心修正 #1：替換整個 banner.lua (再次確認為完整版) ===================
 cat > "$PKG_DIR/root/usr/lib/lua/luci/controller/banner.lua" <<'CONTROLLER'
 module("luci.controller.banner", package.seeall)
 
@@ -788,373 +789,226 @@ function index()
     entry({"admin", "status", "banner", "display"}, call("action_display"), _("首页展示"), 1)
     entry({"admin", "status", "banner", "settings"}, call("action_settings"), _("远程更新"), 2)
     entry({"admin", "status", "banner", "background"}, call("action_background"), _("背景设置"), 3)
-    entry({"admin", "status", "banner", "do_update"}, post("action_do_update")).leaf = true
-    entry({"admin", "status", "banner", "do_set_bg"}, post("action_do_set_bg")).leaf = true
-    entry({"admin", "status", "banner", "do_clear_cache"}, post("action_do_clear_cache")).leaf = true
-    entry({"admin", "status", "banner", "do_load_group"}, post("action_do_load_group")).leaf = true
+    
+    -- 重构为纯 API 接口，供前端 AJAX 调用
+    entry({"admin", "status", "banner", "api_update"}, post("api_update")).leaf = true
+    entry({"admin", "status", "banner", "api_set_bg"}, post("api_set_bg")).leaf = true
+    entry({"admin", "status", "banner", "api_clear_cache"}, post("api_clear_cache")).leaf = true
+    entry({"admin", "status", "banner", "api_load_group"}, post("api_load_group")).leaf = true
+    entry({"admin", "status", "banner", "api_set_persistent_storage"}, post("api_set_persistent_storage")).leaf = true
+    entry({"admin", "status", "banner", "api_set_opacity"}, post("api_set_opacity")).leaf = true
+    entry({"admin", "status", "banner", "api_set_carousel_interval"}, post("api_set_carousel_interval")).leaf = true
+    entry({"admin", "status", "banner", "api_set_update_url"}, post("api_set_update_url")).leaf = true
+    entry({"admin", "status", "banner", "api_reset_defaults"}, post("api_reset_defaults")).leaf = true
+    
+    -- 保留用于文件上传和URL表单提交的旧入口
     entry({"admin", "status", "banner", "do_upload_bg"}, post("action_do_upload_bg")).leaf = true
     entry({"admin", "status", "banner", "do_apply_url"}, post("action_do_apply_url")).leaf = true
-    entry({"admin", "status", "banner", "do_set_opacity"}, post("action_do_set_opacity")).leaf = true
-    entry({"admin", "status", "banner", "do_set_carousel_interval"}, post("action_do_set_carousel_interval")).leaf = true
-    entry({"admin", "status", "banner", "do_set_update_url"}, post("action_do_set_update_url")).leaf = true
-    entry({"admin", "status", "banner", "do_set_persistent_storage"}, post("action_do_set_persistent_storage")).leaf = true
-    entry({"admin", "status", "banner", "check_bg_complete"}, call("action_check_bg_complete")).leaf = true
-    entry({"admin", "status", "banner", "do_reset_defaults"}, post("action_do_reset_defaults")).leaf = true
 end
 
+-- 辅助函数：返回 JSON 响应
+local function json_response(data)
+    luci.http.prepare_content("application/json" )
+    luci.http.write(require("luci.jsonc" ).stringify(data))
+end
+
+-- 页面渲染函数 (保持不变)
 function action_display()
     local uci = require("uci").cursor()
     local fs = require("nixio.fs")
-    
     if uci:get("banner", "banner", "bg_enabled") == "0" then
-        luci.template.render("banner/display", {
-            bg_enabled = "0",
-            remote_message = uci:get("banner", "banner", "remote_message") or "服务已被远程禁用"
-        })
+        luci.template.render("banner/display", { bg_enabled = "0", remote_message = uci:get("banner", "banner", "remote_message") or "服务已被远程禁用" })
         return
     end
-    
-    local nav_data = { nav_tabs = {} }
-    pcall(function()
-        nav_data = require("luci.jsonc").parse(fs.readfile("/tmp/banner_cache/nav_data.json"))
-    end)
-    
+    local nav_data = { nav_tabs = {} }; pcall(function() nav_data = require("luci.jsonc").parse(fs.readfile("/tmp/banner_cache/nav_data.json")) end)
     local persistent = uci:get("banner", "banner", "persistent_storage") or "0"
-    local bg_path = (persistent == "1") and "/overlay/banner" or "/www/luci-static/banner"
-
     local text = uci:get("banner", "banner", "text") or "欢迎使用"
-    
-    local opacity = tonumber(uci:get("banner", "banner", "opacity") or "50")
-    if not opacity or opacity < 0 or opacity > 100 then
-        opacity = 50
-    end
-
-    local banner_texts = uci:get("banner", "banner", "banner_texts") or ""
-    if banner_texts == "" then
-        banner_texts = text
-    end
-
-    -- **** 修正點：在控制器中讀取所有聯絡方式 ****
+    local opacity = tonumber(uci:get("banner", "banner", "opacity") or "50"); if not opacity or opacity < 0 or opacity > 100 then opacity = 50 end
+    local banner_texts = uci:get("banner", "banner", "banner_texts") or ""; if banner_texts == "" then banner_texts = text end
     local contact_email = uci:get("banner", "banner", "contact_email") or "example@email.com"
     local contact_telegram = uci:get("banner", "banner", "contact_telegram") or "@fgnb111999"
     local contact_qq = uci:get("banner", "banner", "contact_qq") or "183452852"
-
-    luci.template.render("banner/display", {
-        text = text,
-        color = uci:get("banner", "banner", "color"),
-        opacity = opacity,
-        carousel_interval = uci:get("banner", "banner", "carousel_interval"),
-        current_bg = uci:get("banner", "banner", "current_bg"),
-        bg_enabled = "1",
-        banner_texts = banner_texts,
-        nav_data = nav_data,
-        persistent = persistent,
-        bg_path = bg_path,
-        token = luci.dispatcher.context.authsession,
-        -- **** 修正點：將讀取好的值傳遞給模板 ****
-        contact_email = contact_email,
-        contact_telegram = contact_telegram,
-        contact_qq = contact_qq
-        -- **** 修正點：不再傳遞 uci 物件 ****
-    })
+    luci.template.render("banner/display", { text = text, color = uci:get("banner", "banner", "color"), opacity = opacity, carousel_interval = uci:get("banner", "banner", "carousel_interval"), current_bg = uci:get("banner", "banner", "current_bg"), bg_enabled = "1", banner_texts = banner_texts, nav_data = nav_data, persistent = persistent, bg_path = (persistent == "1") and "/overlay/banner" or "/www/luci-static/banner", token = luci.dispatcher.context.authsession, contact_email = contact_email, contact_telegram = contact_telegram, contact_qq = contact_qq })
 end
 
 function action_settings()
     local uci = require("uci").cursor()
-    
-    local urls = uci:get("banner", "banner", "update_urls") or {}
-    if type(urls) ~= "table" then urls = { urls } end
-    
-    local display_urls = {}
-    for _, url in ipairs(urls) do
-        local name = "Unknown Source"
-        if url:match("github") then name = "GitHub"
-        elseif url:match("gitee") then name = "Gitee"
-        end
-        table.insert(display_urls, { value = url, display = name })
-    end
-    
-    local log = luci.sys.exec("tail -c 5000 /tmp/banner_update.log 2>/dev/null") or "暫無日誌"
-    if log == "" then log = "暫無日誌" end
-    
-    luci.template.render("banner/settings", {
-        text = uci:get("banner", "banner", "text"),
-        opacity = uci:get("banner", "banner", "opacity"),
-        carousel_interval = uci:get("banner", "banner", "carousel_interval"),
-        persistent_storage = uci:get("banner", "banner", "persistent_storage"),
-        last_update = uci:get("banner", "banner", "last_update"),
-        remote_message = uci:get("banner", "banner", "remote_message"),
-        display_urls = display_urls,
-        selected_url = uci:get("banner", "banner", "selected_url"),
-        token = luci.dispatcher.context.authsession,
-        log = log
-    })
+    local urls = uci:get("banner", "banner", "update_urls") or {}; if type(urls) ~= "table" then urls = { urls } end
+    local display_urls = {}; for _, url in ipairs(urls) do local name = "Unknown"; if url:match("github") then name = "GitHub" elseif url:match("gitee") then name = "Gitee" end; table.insert(display_urls, { value = url, display = name }) end
+    local log = luci.sys.exec("tail -c 5000 /tmp/banner_update.log 2>/dev/null") or "暫無日誌"; if log == "" then log = "暫無日誌" end
+    luci.template.render("banner/settings", { text = uci:get("banner", "banner", "text"), opacity = uci:get("banner", "banner", "opacity"), carousel_interval = uci:get("banner", "banner", "carousel_interval"), persistent_storage = uci:get("banner", "banner", "persistent_storage"), last_update = uci:get("banner", "banner", "last_update"), remote_message = uci:get("banner", "banner", "remote_message"), display_urls = display_urls, selected_url = uci:get("banner", "banner", "selected_url"), token = luci.dispatcher.context.authsession, log = log })
 end
 
 function action_background()
     local uci = require("uci").cursor()
-   local log = luci.sys.exec("tail -c 5000 /tmp/banner_bg.log 2>/dev/null") or "暫無日誌"
-if log == "" then log = "暫無日誌" end
-    
-    luci.template.render("banner/background", {
-        bg_group = uci:get("banner", "banner", "bg_group"),
-        opacity = uci:get("banner", "banner", "opacity"),
-        current_bg = uci:get("banner", "banner", "current_bg"),
-        persistent_storage = uci:get("banner", "banner", "persistent_storage"),
-        token = luci.dispatcher.context.authsession,
-        log = log
-    })
+    local log = luci.sys.exec("tail -c 5000 /tmp/banner_bg.log 2>/dev/null") or "暫無日誌"; if log == "" then log = "暫無日誌" end
+    luci.template.render("banner/background", { bg_group = uci:get("banner", "banner", "bg_group"), opacity = uci:get("banner", "banner", "opacity"), current_bg = uci:get("banner", "banner", "current_bg"), persistent_storage = uci:get("banner", "banner", "persistent_storage"), token = luci.dispatcher.context.authsession, log = log })
 end
 
-function action_do_update()
-    luci.sys.call("/usr/bin/banner_manual_update.sh >/dev/null 2>&1 &")
-    luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/settings" ))
+-- ================== 以下是重构后的 API 函数 ==================
+
+function api_update()
+    -- 修正点：同步执行，等待脚本完成
+    local code = luci.sys.call("/usr/bin/banner_manual_update.sh >/dev/null 2>&1")
+    json_response({ success = (code == 0), message = "手动更新命令已执行。请稍后刷新页面查看是否已重新启用。" })
 end
 
-function action_do_set_bg()
+function api_set_bg()
     local uci = require("uci").cursor()
-    local bg = luci.http.formvalue("bg")
+    local bg = luci.http.formvalue("bg" )
     if bg and bg:match("^[0-2]$") then
         uci:set("banner", "banner", "current_bg", bg)
         uci:commit("banner")
         local persistent = uci:get("banner", "banner", "persistent_storage") or "0"
         local src_path = (persistent == "1") and "/overlay/banner" or "/www/luci-static/banner"
-        
-        -- 安全检查
         if not (src_path == "/overlay/banner" or src_path == "/www/luci-static/banner") then
-            luci.http.status(400, "Invalid source directory")
-            return
+            return json_response({ success = false, message = "Invalid source directory" })
         end
-        
-        -- 修复点:将选择的背景复制到 Web 目录并命名为 current_bg.jpg
-        local cmd1 = string.format("cp %s/bg%s.jpg /www/luci-static/banner/current_bg.jpg 2>/dev/null", src_path, bg)
-        local cmd2 = string.format("cp %s/bg%s.jpg /tmp/banner_cache/current_bg.jpg 2>/dev/null", src_path, bg)
-        luci.sys.call(cmd1)
-        luci.sys.call(cmd2)
+        luci.sys.call(string.format("cp %s/bg%s.jpg /www/luci-static/banner/current_bg.jpg 2>/dev/null", src_path, bg))
+        json_response({ success = true, message = "背景已切换为 " .. bg })
+    else
+        json_response({ success = false, message = "Invalid background index" })
     end
-    luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/display"))
 end
 
-function action_do_clear_cache()
-    luci.sys.call("rm -f /tmp/banner_cache/bg*.jpg /overlay/banner/bg*.jpg /www/luci-static/banner/bg*.jpg")
-    luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/background" ))
+function api_clear_cache()
+    luci.sys.call("rm -f /tmp/banner_cache/* /overlay/banner/bg*.jpg /www/luci-static/banner/bg*.jpg /www/luci-static/banner/current_bg.jpg")
+    json_response({ success = true, message = "缓存已清除" })
 end
 
-function action_do_load_group()
+function api_load_group()
     local uci = require("uci").cursor()
     local group = luci.http.formvalue("group" )
     if group and group:match("^[1-4]$") then
         uci:set("banner", "banner", "bg_group", group)
         uci:commit("banner")
-        luci.sys.call(string.format("/usr/bin/banner_bg_loader.sh %s >/dev/null 2>&1 &", group))
+        -- 修正点：同步执行，等待脚本完成
+        local code = luci.sys.call(string.format("/usr/bin/banner_bg_loader.sh %s >/dev/null 2>&1", group))
+        json_response({ success = (code == 0), message = "背景组 " .. group .. " 加载命令已执行。请稍后刷新页面查看效果。" })
+    else
+        json_response({ success = false, message = "Invalid group index" })
     end
-    luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/background" ))
 end
 
+function api_set_persistent_storage()
+    local uci = require("uci").cursor()
+    local persistent = luci.http.formvalue("persistent_storage" )
+    if persistent and persistent:match("^[0-1]$") then
+        local old_persistent = uci:get("banner", "banner", "persistent_storage") or "0"
+        if persistent ~= old_persistent then
+            uci:set("banner", "banner", "persistent_storage", persistent)
+            if persistent == "1" then
+                luci.sys.call("mkdir -p /overlay/banner && cp -f /www/luci-static/banner/*.jpg /overlay/banner/ 2>/dev/null")
+            else
+                luci.sys.call("mkdir -p /www/luci-static/banner && cp -f /overlay/banner/*.jpg /www/luci-static/banner/ 2>/dev/null")
+            end
+            uci:commit("banner")
+        end
+        json_response({ success = true, message = "永久存储已" .. (persistent == "1" and "启用" or "禁用") })
+    else
+        json_response({ success = false, message = "Invalid value" })
+    end
+end
+
+function api_set_opacity()
+    local uci = require("uci").cursor()
+    local opacity = luci.http.formvalue("opacity" )
+    if opacity and tonumber(opacity) and tonumber(opacity) >= 0 and tonumber(opacity) <= 100 then
+        uci:set("banner", "banner", "opacity", opacity); uci:commit("banner")
+        json_response({ success = true, message = "透明度已设置" })
+    else
+        json_response({ success = false, message = "Invalid opacity value" })
+    end
+end
+
+function api_set_carousel_interval()
+    local uci = require("uci").cursor()
+    local interval = luci.http.formvalue("carousel_interval" )
+    if interval and tonumber(interval) and tonumber(interval) >= 1000 and tonumber(interval) <= 30000 then
+        uci:set("banner", "banner", "carousel_interval", interval); uci:commit("banner")
+        json_response({ success = true, message = "轮播间隔已设置" })
+    else
+        json_response({ success = false, message = "Invalid interval value" })
+    end
+end
+
+function api_set_update_url()
+    local uci = require("uci").cursor()
+    local url = luci.http.formvalue("selected_url" )
+    if url and url:match("^https?://" ) then
+        uci:set("banner", "banner", "selected_url", url); uci:commit("banner")
+        json_response({ success = true, message = "更新源已选择" })
+    else
+        json_response({ success = false, message = "Invalid URL" })
+    end
+end
+
+function api_reset_defaults()
+    luci.sys.call("rm -f /etc/config/banner && /etc/init.d/banner restart")
+    json_response({ success = true, message = "已恢复默认配置，页面即将刷新。" })
+end
+
+-- 保留原有的文件上传和URL应用函数，因为它们依赖于表单的 multipart/form-data 和页面跳转
 function action_do_upload_bg()
     local fs = require("nixio.fs")
-    local http = require("luci.http")
+    local http = require("luci.http" )
     local uci = require("uci").cursor()
     local sys = require("luci.sys")
-    
-    -- 获取目标背景编号(默认0)
-    local bg_index = luci.http.formvalue("bg_index") or "0"
-    if not bg_index:match("^[0-2]$") then
-        bg_index = "0"
-    end
-    
+    local bg_index = luci.http.formvalue("bg_index" ) or "0"
+    if not bg_index:match("^[0-2]$") then bg_index = "0" end
     local persistent = uci:get("banner", "banner", "persistent_storage") or "0"
     local dest_dir = (persistent == "1") and "/overlay/banner" or "/www/luci-static/banner"
-    if not (dest_dir == "/overlay/banner" or dest_dir == "/www/luci-static/banner") then
-        luci.http.status(400, "Invalid destination directory")
-        return
-    end
+    if not (dest_dir == "/overlay/banner" or dest_dir == "/www/luci-static/banner") then luci.http.status(400, "Invalid destination directory" ); return end
     sys.call("mkdir -p '" .. dest_dir .. "'")
-
     local tmp_file = dest_dir .. "/bg" .. bg_index .. ".tmp"
     local final_file = dest_dir .. "/bg" .. bg_index .. ".jpg"
-
-    http.setfilehandler(function(meta, chunk, eof)
+    http.setfilehandler(function(meta, chunk, eof )
         if not meta or meta.name ~= "bg_file" then return end
-        
-        if chunk then
-            local fp = io.open(tmp_file, "ab")
-            if fp then fp:write(chunk); fp:close() end
-        end
-
+        if chunk then local fp = io.open(tmp_file, "ab"); if fp then fp:write(chunk); fp:close() end end
         if eof then
             local max_size = tonumber(uci:get("banner", "banner", "max_file_size") or "3145728")
-            if fs.stat(tmp_file) and fs.stat(tmp_file).size > max_size then
-                fs.remove(tmp_file)
-                luci.http.status(400, "File size exceeds 3MB")
-                return
-            end
+            if fs.stat(tmp_file) and fs.stat(tmp_file).size > max_size then fs.remove(tmp_file); luci.http.status(400, "File size exceeds 3MB" ); return end
             if sys.call("file '" .. tmp_file .. "' | grep -qiE 'JPEG|JPG'") == 0 then
                 fs.rename(tmp_file, final_file)
                 sys.call("chmod 644 '" .. final_file .. "'")
-                if persistent == "1" then
-                    sys.call("cp '" .. final_file .. "' /www/luci-static/banner/bg" .. bg_index .. ".jpg 2>/dev/null")
-                end
-                -- 如果上传的是bg0,同时更新current_bg.jpg
-                if bg_index == "0" then
-                    sys.call("cp '" .. final_file .. "' /tmp/banner_cache/current_bg.jpg 2>/dev/null")
-                    uci:set("banner", "banner", "current_bg", "0")
-                    uci:commit("banner")
-                end
+                if persistent == "1" then sys.call("cp '" .. final_file .. "' /www/luci-static/banner/bg" .. bg_index .. ".jpg 2>/dev/null") end
+                if bg_index == "0" then sys.call("cp '" .. final_file .. "' /www/luci-static/banner/current_bg.jpg 2>/dev/null"); uci:set("banner", "banner", "current_bg", "0"); uci:commit("banner") end
             else
-                fs.remove(tmp_file)
-                luci.http.status(400, "Invalid JPEG file")
+                fs.remove(tmp_file); luci.http.status(400, "Invalid JPEG file" )
             end
         end
     end)
-    luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/background"))
+    luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/background" ))
 end
+
 function action_do_apply_url()
     local uci = require("uci").cursor()
     local fs = require("nixio.fs")
     local sys = require("luci.sys")
     local url = luci.http.formvalue("custom_bg_url" )
-
-    if not url or not url:match("^https://.*%.jpe?g$" ) then
-        luci.http.status(400, "Invalid URL format" )
-        luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/display" ))
-        return
-    end
-
+    if not url or not url:match("^https://.*%.jpe?g$" ) then luci.http.status(400, "Invalid URL format" ); luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/background" )); return end
     local persistent = uci:get("banner", "banner", "persistent_storage") or "0"
     local dest_dir = (persistent == "1") and "/overlay/banner" or "/www/luci-static/banner"
-    if not (dest_dir == "/overlay/banner" or dest_dir == "/www/luci-static/banner") then
-        luci.http.status(400, "Invalid destination directory" )
-        return
-    end
+    if not (dest_dir == "/overlay/banner" or dest_dir == "/www/luci-static/banner") then luci.http.status(400, "Invalid destination directory" ); return end
     sys.call("mkdir -p '" .. dest_dir .. "'")
-    
     local tmp_file = dest_dir .. "/bg0.tmp"
     local final_file = dest_dir .. "/bg0.jpg"
-    
     local max_size = uci:get("banner", "banner", "max_file_size") or "3145728"
     local curl_cmd = string.format("curl -fsSL --max-time 20 --max-filesize %s '%s' -o '%s'", max_size, url, tmp_file)
-
     if os.execute(curl_cmd) == 0 and fs.stat(tmp_file) then
-        local magic_ok = false
-        local f = io.open(tmp_file, "rb")
-        if f then
-            if f:read(2) == "\255\216" then magic_ok = true end
-            f:close()
-        end
-
+        local magic_ok = false; local f = io.open(tmp_file, "rb"); if f then if f:read(2) == "\255\216" then magic_ok = true end; f:close() end
         if magic_ok or (sys.call("file '" .. tmp_file .. "' | grep -qiE 'JPEG|JPG'") == 0) then
             fs.rename(tmp_file, final_file)
-            if persistent == "1" then
-                sys.call("cp '" .. final_file .. "' /www/luci-static/banner/bg0.jpg 2>/dev/null")
-            end
-            sys.call("cp '" .. final_file .. "' /tmp/banner_cache/current_bg.jpg 2>/dev/null")
-            uci:set("banner", "banner", "current_bg", "0")
-            uci:commit("banner")
+            if persistent == "1" then sys.call("cp '" .. final_file .. "' /www/luci-static/banner/bg0.jpg 2>/dev/null") end
+            sys.call("cp '" .. final_file .. "' /www/luci-static/banner/current_bg.jpg 2>/dev/null")
+            uci:set("banner", "banner", "current_bg", "0"); uci:commit("banner")
         else
-            fs.remove(tmp_file)
-            luci.http.status(400, "Invalid JPEG file" )
+            fs.remove(tmp_file); luci.http.status(400, "Invalid JPEG file" )
         end
     else
-        fs.remove(tmp_file)
-        luci.http.status(400, "Failed to download file" )
+        fs.remove(tmp_file); luci.http.status(400, "Failed to download file" )
     end
-    
-    luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/display" ))
-end
-
-function action_do_set_opacity()
-    local uci = require("uci").cursor()
-    local opacity = luci.http.formvalue("opacity")
-    if opacity and tonumber(opacity) and tonumber(opacity) >= 0 and tonumber(opacity) <= 100 then
-        uci:set("banner", "banner", "opacity", opacity)
-        uci:commit("banner")
-        luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/settings"))
-    else
-        luci.http.status(400, "Invalid opacity value (must be 0-100)")
-    end
-end
-
-function action_do_set_carousel_interval()
-    local uci = require("uci").cursor()
-    local interval = luci.http.formvalue("carousel_interval" )
-    if interval and tonumber(interval) and tonumber(interval) >= 1000 and tonumber(interval) <= 30000 then
-        uci:set("banner", "banner", "carousel_interval", interval)
-        uci:commit("banner")
-        luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/settings" ))
-    else
-        luci.http.status(400, "Invalid carousel interval (must be 1000-30000 )")
-    end
-end
-
-function action_do_set_update_url()
-    local uci = require("uci").cursor()
-    local selected_url = luci.http.formvalue("selected_url" )
-    if selected_url and selected_url:match("^https?://" ) then
-        uci:set("banner", "banner", "selected_url", selected_url)
-        uci:commit("banner")
-    else
-        luci.http.status(400, "Invalid URL format" )
-    end
-    luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/settings" ))
-end
-
-function action_do_set_persistent_storage()
-    local uci = require("uci").cursor()
-    local persistent = luci.http.formvalue("persistent_storage")
-    if persistent and persistent:match("^[0-1]$") then
-        local old_persistent = uci:get("banner", "banner", "persistent_storage") or "0"
-        
-        -- 只有在状态真正改变时才执行操作
-        if persistent ~= old_persistent then
-            uci:set("banner", "banner", "persistent_storage", persistent)
-            
-            -- 根据新的状态复制文件
-            if persistent == "1" then
-                -- 从 RAM 复制到 Flash
-                luci.sys.call("mkdir -p /overlay/banner && cp -f /www/luci-static/banner/bg*.jpg /overlay/banner/ 2>/dev/null")
-                -- 同步 current_bg.jpg
-                luci.sys.call("cp -f /www/luci-static/banner/current_bg.jpg /overlay/banner/current_bg.jpg 2>/dev/null")
-            else
-                -- 从 Flash 复制到 RAM
-                luci.sys.call("mkdir -p /www/luci-static/banner && cp -f /overlay/banner/bg*.jpg /www/luci-static/banner/ 2>/dev/null")
-                -- 同步 current_bg.jpg
-                luci.sys.call("cp -f /overlay/banner/current_bg.jpg /www/luci-static/banner/current_bg.jpg 2>/dev/null")
-            end
-            
-            uci:commit("banner")
-        end
-        
-        -- 修复点:不再 redirect,只返回成功状态码
-        luci.http.status(200, "OK")
-    else
-        luci.http.status(400, "Invalid persistent storage value")
-    end
-end
-
-function action_check_bg_complete()
-    if require("nixio.fs").access("/tmp/banner_cache/bg_complete") then
-        luci.http.write("complete" )
-    else
-        luci.http.write("pending" )
-    end
-end
-
-function action_do_reset_defaults()
-    local uci = require("uci").cursor()
-    uci:set("banner", "banner", "text", "🎉 新春特惠 · 技术支持24/7 · 已服务500+用户 · 安全稳定运行")
-    uci:set("banner", "banner", "color", "rainbow")
-    uci:set("banner", "banner", "opacity", "50")
-    uci:set("banner", "banner", "carousel_interval", "5000")
-    uci:set("banner", "banner", "bg_group", "1")
-    uci:set("banner", "banner", "current_bg", "0")
-    uci:set("banner", "banner", "bg_enabled", "1")
-    uci:set("banner", "banner", "persistent_storage", "0")
-    uci:delete("banner", "banner", "remote_message")
-    uci:set("banner", "banner", "last_update", "0")
-    uci:commit("banner")
-    luci.sys.call("rm -f /tmp/banner_cache/* /overlay/banner/bg*.jpg /www/luci-static/banner/bg*.jpg")
-    luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/settings" ))
+    luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/background" ))
 end
 CONTROLLER
 
@@ -1437,7 +1291,7 @@ xhr.onerror = function() {
 <%+footer%>
 DISPLAYVIEW
 
-# Settings view
+# =================== 核心修正 #2：替換 settings.htm (再次確認為完整版) ===================
 cat > "$PKG_DIR/root/usr/lib/lua/luci/view/banner/settings.htm" <<'SETTINGSVIEW'
 <%+header%>
 <%+banner/global_style%>
@@ -1448,6 +1302,9 @@ cat > "$PKG_DIR/root/usr/lib/lua/luci/view/banner/settings.htm" <<'SETTINGSVIEW'
 .toggle-slider:before { position: absolute; content: ""; height: 18px; width: 18px; left: 3px; bottom: 3px; background-color: #fff; transition: .4s; border-radius: 50%; }
 input:checked + .toggle-slider { background-color: rgba(76,175,80,.9); }
 input:checked + .toggle-slider:before { transform: translateX(26px); }
+.cbi-button.spinning, .cbi-button:disabled { pointer-events: none; background: #ccc !important; cursor: not-allowed; }
+.cbi-button.spinning:after { content: '...'; display: inline-block; animation: spin 1s linear infinite; }
+@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 </style>
 <div class="cbi-map">
     <h2>远程更新设置</h2>
@@ -1456,204 +1313,182 @@ input:checked + .toggle-slider:before { transform: translateX(26px); }
         <div style="background:rgba(217,83,79,.8);color:#fff;padding:15px;border-radius:10px;margin-bottom:20px;text-align:center"><%=pcdata(remote_message)%></div>
         <% end %>
         <div class="cbi-value"><label class="cbi-value-title">背景透明度</label><div class="cbi-value-field">
-    <form method="post" action="<%=luci.dispatcher.build_url('admin/status/banner/do_set_opacity')%>" style="display:flex;align-items:center;gap:10px;">
-        <input name="token" type="hidden" value="<%=token%>">
-        <input type="range" name="opacity" min="0" max="100" value="<%=opacity%>" id="opacity-slider" style="width:60%">
-        <span id="opacity-display" style="color:#fff;"><%=opacity%>%</span>
-        <input type="submit" class="cbi-button" value="应用" style="padding:4px 12px;">
-    </form>
-</div></div>
-        <div class="cbi-value"><label class="cbi-value-title">永久存储背景</label><div class="cbi-value-field"><label class="toggle-switch"><input type="checkbox"<%=persistent_storage=='1' and ' checked'%> onchange="togglePersistent(this.checked)"><span class="toggle-slider"></span></label><span style="color:#fff;vertical-align:super;margin-left:10px;"><%=persistent_storage=='1' and '已启用' or '已禁用'%></span></div></div>
-<div class="cbi-value"><label class="cbi-value-title">轮播间隔(毫秒)</label><div class="cbi-value-field">
-            <form method="post" action="<%=luci.dispatcher.build_url('admin/status/banner/do_set_carousel_interval')%>">
-                <input name="token" type="hidden" value="<%=token%>">
-                <input type="number" name="carousel_interval" value="<%=carousel_interval%>" min="1000" max="30000" style="width:100px">
-                <input type="submit" class="cbi-button" value="应用">
-            </form>
+            <div style="display:flex;align-items:center;gap:10px;">
+                <input type="range" name="opacity" min="0" max="100" value="<%=opacity%>" id="opacity-slider" style="width:60%" onchange="apiCall('api_set_opacity', {opacity: this.value})">
+                <span id="opacity-display" style="color:#fff;"><%=opacity%>%</span>
+            </div>
+        </div></div>
+        <div class="cbi-value"><label class="cbi-value-title">永久存储背景</label><div class="cbi-value-field">
+            <label class="toggle-switch"><input type="checkbox" id="persistent-checkbox" <%=persistent_storage=='1' and ' checked'%> onchange="apiCall('api_set_persistent_storage', {persistent_storage: this.checked ? '1' : '0'})"><span class="toggle-slider"></span></label>
+            <span id="persistent-text" style="color:#fff;vertical-align:super;margin-left:10px;"><%=persistent_storage=='1' and '已启用' or '已禁用'%></span>
+        </div></div>
+        <div class="cbi-value"><label class="cbi-value-title">轮播间隔(毫秒)</label><div class="cbi-value-field">
+            <input type="number" name="carousel_interval" value="<%=carousel_interval%>" min="1000" max="30000" style="width:100px">
+            <button class="cbi-button" onclick="apiCall('api_set_carousel_interval', {carousel_interval: this.previousElementSibling.value}, false, this)">应用</button>
         </div></div>
         <div class="cbi-value"><label class="cbi-value-title">更新源</label><div class="cbi-value-field">
-            <form method="post" action="<%=luci.dispatcher.build_url('admin/status/banner/do_set_update_url')%>">
-                <input name="token" type="hidden" value="<%=token%>">
-                <select name="selected_url"><% for _, item in ipairs(display_urls) do %><option value="<%=item.value%>"<%=item.value==selected_url and ' selected'%>><%=item.display%></option><% end %></select>
-                <input type="submit" class="cbi-button" value="选择">
-            </form>
+            <select name="selected_url"><% for _, item in ipairs(display_urls) do %><option value="<%=item.value%>"<%=item.value==selected_url and ' selected'%>><%=item.display%></option><% end %></select>
+            <button class="cbi-button" onclick="apiCall('api_set_update_url', {selected_url: this.previousElementSibling.value}, false, this)">选择</button>
         </div></div>
         <div class="cbi-value"><label class="cbi-value-title">上次更新</label><div class="cbi-value-field"><input readonly value="<%=last_update=='0' and '从未' or os.date('%Y-%m-%d %H:%M:%S', tonumber(last_update))%>"></div></div>
-        <div class="cbi-value"><div class="cbi-value-field"><form method="post" action="<%=luci.dispatcher.build_url('admin/status/banner/do_update')%>"><input name="token" type="hidden" value="<%=token%>"><input type="submit" class="cbi-button" value="立即手动更新"></form></div></div>
-        <div class="cbi-value"><label class="cbi-value-title">恢复默认配置</label><div class="cbi-value-field"><form method="post" action="<%=luci.dispatcher.build_url('admin/status/banner/do_reset_defaults')%>" onsubmit="return confirm('确定要恢复默认配置吗？')"><input name="token" type="hidden" value="<%=token%>"><input type="submit" class="cbi-button cbi-button-reset" value="恢复默认值"></form></div></div>
-        <h3>更新日志</h3><div style="background:rgba(0,0,0,.5);padding:12px;border-radius:8px;max-height:250px;overflow-y:auto;font-family:monospace;font-size:12px;color:#0f0;white-space:pre-wrap"><%=pcdata(log)%></div>
+        <div class="cbi-value"><div class="cbi-value-field">
+            <button class="cbi-button" id="manual-update-btn" onclick="apiCall('api_update', {}, true, this)">立即手动更新</button>
+        </div></div>
+        <div class="cbi-value"><label class="cbi-value-title">恢复默认配置</label><div class="cbi-value-field">
+            <button class="cbi-button cbi-button-reset" onclick="if(confirm('确定要恢复默认配置吗？')) apiCall('api_reset_defaults', {}, true, this)">恢复默认值</button>
+        </div></div>
+        <h3>更新日志</h3><div style="background:rgba(0,0,0,.5);padding:12px;border-radius:8px;max-height:250px;overflow-y:auto;font-family:monospace;font-size:12px;color:#0f0;white-space:pre-wrap" id="log-container"><%=pcdata(log)%></div>
     </div>
 </div>
-<div style="position:fixed;bottom:30px;right:30px;display:flex;gap:12px;z-index:999;">
-    <% for i = 0, 2 do %>
-    <div style="width:50px;height:50px;border-radius:50%;border:3px solid rgba(255,255,255,.8);background-image:url(/luci-static/banner/bg<%=i%>.jpg?t=<%=os.time()%>);background-size:cover;cursor:pointer;transition:all .3s;" onclick="changeBgSettings(<%=i%>)" title="切换背景 <%=i+1%>"></div>
-    <% end %>
-</div>
 <script type="text/javascript">
-function changeBgSettings(n) {
-    var f = document.createElement('form');
-    f.method = 'POST';
-    f.action = '<%=luci.dispatcher.build_url("admin/status/banner/do_set_bg")%>';
-    f.innerHTML = '<input name="token" type="hidden" value="<%=token%>"><input name="bg" value="' + n + '">';
-    document.body.appendChild(f).submit();
-}
+    // 统一的 API 调用函数
+    function apiCall(endpoint, data, reloadOnSuccess, btn) {
+        if (btn) btn.classList.add('spinning');
 
-function togglePersistent(checkbox) {
-    var xhr = new XMLHttpRequest();
-    xhr.open('POST', '<%=luci.dispatcher.build_url("admin/status/banner/do_set_persistent_storage")%>', true);
-    xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
-    xhr.onload = function() { window.location.reload(); };
-    xhr.send('token=<%=token%>&persistent_storage=' + (checkbox.checked ? '1' : '0'));
-}
-// OPTIMIZATION 2.5: Disable submit button on invalid input
-var carouselForm = document.querySelector('form[action*="do_set_carousel_interval"]');
-if (carouselForm) {
-    carouselForm.addEventListener('input', function(e) {
-        var input = e.target;
-        var value = parseInt(input.value, 10);
-        var submitBtn = this.querySelector('[type=submit]');
-        var isValid = !isNaN(value) && value >= 1000 && value <= 30000;
-        submitBtn.disabled = !isValid;
-        input.style.borderColor = isValid ? '' : 'red';
-    });
-}
+        var formData = new URLSearchParams();
+        formData.append('token', '<%=token%>');
+        for (var key in data) {
+            formData.append(key, data[key]);
+        }
 
-window.useSimpleAlert = true;
-function showMsg(text) {
-    if (window.useSimpleAlert) {
-        alert(text);
-    } else {
-        // ... 自定義模態框邏輯 ...
+        fetch('<%=luci.dispatcher.build_url("admin/status/banner")%>/' + endpoint, {
+            method: 'POST',
+            body: formData
+        })
+        .then(response => {
+            if (!response.ok) { throw new Error('Network response was not ok: ' + response.statusText); }
+            return response.json();
+        })
+        .then(result => {
+            if (btn) btn.classList.remove('spinning');
+            alert(result.message || (result.success ? '操作成功' : '操作失败'));
+            if (result.success && reloadOnSuccess) {
+                // 延迟刷新，给后台留出足够的时间
+                setTimeout(function() { window.location.reload(); }, 1500);
+            }
+            // 修正点：收到成功响应后，立即更新UI，而不是依赖页面刷新
+            if (result.success && endpoint === 'api_set_persistent_storage') {
+                document.getElementById('persistent-text').textContent = data.persistent_storage === '1' ? '已启用' : '已禁用';
+                document.getElementById('persistent-checkbox').checked = (data.persistent_storage === '1');
+            }
+        })
+        .catch(error => {
+            if (btn) btn.classList.remove('spinning');
+            alert('请求失败: ' + error);
+        });
     }
-}
-function closeMsg() { /* ... */ }
-// --- 新增結束 ---
-
 </script>
 <%+footer%>
 SETTINGSVIEW
 
-# Background settings view
+# =================== 核心修正 #3：替換 background.htm (完整版) ===================
 cat > "$PKG_DIR/root/usr/lib/lua/luci/view/banner/background.htm" <<'BGVIEW'
 <%+header%>
 <%+banner/global_style%>
 <style>
 .loading-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,.8); display: none; justify-content: center; align-items: center; z-index: 9999; }
 .loading-overlay.active { display: flex; }
-/* --- 用這段新程式碼替換舊的 .spinner 規則 --- */
-.spinner {
-    border: 4px solid rgba(255, 255, 255, 0.3);
-    border-top-color: #4fc3f7; /* 只改變頂部顏色，更清晰 */
-    border-radius: 50%;
-    width: 50px;
-    height: 50px;
-    margin: 0 auto 20px;
-    /* 使用新的動畫屬性，時長 1.2s，並採用 ease-in-out 的變速曲線 */
-    animation: spin 1.2s cubic-bezier(0.65, 0, 0.35, 1) infinite;
-}
-
-/* --- 用這段新程式碼替換舊的 @keyframes spin 規則 --- */
-@keyframes spin {
-    0% {
-        transform: rotate(0deg);
-    }
-    100% {
-        transform: rotate(360deg);
-    }
-}
-
+.spinner { border: 4px solid rgba(255, 255, 255, 0.3); border-top-color: #4fc3f7; border-radius: 50%; width: 50px; height: 50px; margin: 0 auto 20px; animation: spin 1.2s cubic-bezier(0.65, 0, 0.35, 1) infinite; }
+@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+.cbi-button.spinning, .cbi-button:disabled { pointer-events: none; background: #ccc !important; cursor: not-allowed; }
+.cbi-button.spinning:after { content: '...'; display: inline-block; animation: spin 1s linear infinite; }
 </style>
-<div class="loading-overlay" id="loadingOverlay"><div style="text-align:center;color:#fff"><div class="spinner"></div><p>正在下载背景图...</p></div></div>
+<div class="loading-overlay" id="loadingOverlay"><div style="text-align:center;color:#fff"><div class="spinner"></div><p>正在处理，请稍候...</p></div></div>
 <div class="cbi-map">
     <h2>背景图设置</h2>
     <div class="cbi-section-node">
         <div class="cbi-value"><label class="cbi-value-title">选择背景图组</label><div class="cbi-value-field">
-            <form method="post" action="<%=luci.dispatcher.build_url('admin/status/banner/do_load_group')%>" id="loadGroupForm">
-                <input name="token" type="hidden" value="<%=token%>">
-                <select name="group">
-                    <% for i = 1, 4 do %><option value="<%=i%>"<%=bg_group==tostring(i) and ' selected'%>><%=i..'-'..i*3%></option><% end %>
-                </select>
-                <input type="submit" class="cbi-button" value="加载背景组">
-            </form>
+            <select name="group">
+                <% for i = 1, 4 do %><option value="<%=i%>"<%=bg_group==tostring(i) and ' selected'%>><%=i..'-'..i*3%></option><% end %>
+            </select>
+            <button class="cbi-button" onclick="apiCall('api_load_group', {group: this.previousElementSibling.value}, true, this)">加载背景组</button>
         </div></div>
         <div class="cbi-value"><label class="cbi-value-title">手动填写背景图链接</label><div class="cbi-value-field">
             <form id="customBgForm" method="post" action="<%=luci.dispatcher.build_url('admin/status/banner/do_apply_url')%>">
-                
                 <input name="token" type="hidden" value="<%=token%>">
                 <input type="text" name="custom_bg_url" placeholder="https://..." style="width:70%">
                 <input type="submit" class="cbi-button" value="应用链接">
             </form>
-            <p style="color:#aaa;font-size:12px">📌 仅支持 GitHub/Gitee 的 HTTPS JPG/JPEG 链接 (小于3MB ), 应用后覆盖 bg0.jpg</p>
+            <p style="color:#aaa;font-size:12px">📌 仅支持 HTTPS JPG/JPEG 链接 (小于3MB ), 应用后覆盖 bg0.jpg</p>
         </div></div>
         <div class="cbi-value"><label class="cbi-value-title">从本地上传背景图</label><div class="cbi-value-field">
             <form method="post" action="<%=luci.dispatcher.build_url('admin/status/banner/do_upload_bg')%>" enctype="multipart/form-data" id="uploadForm">
                 <input name="token" type="hidden" value="<%=token%>">
-                <select name="bg_index" style="width:80px;margin-right:10px;">
-                    <option value="0">bg0.jpg</option>
-                    <option value="1">bg1.jpg</option>
-                    <option value="2">bg2.jpg</option>
-                </select>
+                <select name="bg_index" style="width:80px;margin-right:10px;"><option value="0">bg0.jpg</option><option value="1">bg1.jpg</option><option value="2">bg2.jpg</option></select>
                 <input type="file" name="bg_file" accept="image/jpeg" required>
                 <input type="submit" class="cbi-button" value="上传并应用">
             </form>
             <p style="color:#aaa;font-size:12px">📤 支持上传3张 JPG (小于3MB), 选择要替换的背景编号,上传后立即生效</p>
         </div></div>
         <div class="cbi-value"><label class="cbi-value-title">删除缓存图片</label><div class="cbi-value-field">
-            <form method="post" action="<%=luci.dispatcher.build_url('admin/status/banner/do_clear_cache')%>">
-                <input name="token" type="hidden" value="<%=token%>">
-                <input type="submit" class="cbi-button cbi-button-remove" value="删除缓存">
-            </form>
+            <button class="cbi-button cbi-button-remove" onclick="apiCall('api_clear_cache', {}, true, this)">删除缓存</button>
         </div></div>
         <h3>背景日志</h3>
-<div style="background:rgba(0,0,0,.5);padding:12px;border-radius:8px;max-height:250px;overflow-y:auto;font-family:monospace;font-size:12px;color:#0f0;white-space:pre-wrap"><%=pcdata(log)%></div>
+        <div style="background:rgba(0,0,0,.5);padding:12px;border-radius:8px;max-height:250px;overflow-y:auto;font-family:monospace;font-size:12px;color:#0f0;white-space:pre-wrap"><%=pcdata(log)%></div>
+    </div>
 </div>
-</div>
-<div style="position:fixed;bottom:30px;right:30px;display:flex;gap:12px;z-index:999;">
-    <% for i = 0, 2 do %>
-    <div style="width:50px;height:50px;border-radius:50%;border:3px solid rgba(255,255,255,.8);background-image:url(/luci-static/banner/bg<%=i%>.jpg?t=<%=os.time()%>);background-size:cover;cursor:pointer;transition:all .3s;" onclick="changeBgBackground(<%=i%>)" title="切换背景 <%=i+1%>"></div>
-    <% end %>
-</div>
-<script>
-function changeBgBackground(n) {
-    var f = document.createElement('form');
-    f.method = 'POST';
-    f.action = '<%=luci.dispatcher.build_url("admin/status/banner/do_set_bg")%>';
-    f.innerHTML = '<input name="token" type="hidden" value="<%=token%>"><input name="bg" value="' + n + '">';
-    document.body.appendChild(f).submit();
-}
-
-function showMsg(msg) {
-    alert(msg);
-}
-</script>
 <script type="text/javascript">
-document.getElementById('customBgForm').addEventListener('submit', function(e) {
-    var url = this.custom_bg_url.value.trim();
-    // 只驗證 HTTPS 和 .jpg/.jpeg 後綴，不再限制域名
-    if (!url.match(/^https:\/\/.*\.jpe?g$/i )) {
-        e.preventDefault();
-        // 提示用戶格式要求，並告知後續會有內容驗證
-        showMsg('⚠️ 格式錯誤！請確保鏈接以 https:// 開頭 ，並以 .jpg 或 .jpeg 結尾。\n\n(注意：提交後系統仍會驗證文件內容是否為真實圖片)');
-    }
-});
+    // 统一的 API 调用函数
+    function apiCall(endpoint, data, reloadOnSuccess, btn) {
+        if (btn) btn.classList.add('spinning');
+        document.getElementById('loadingOverlay').classList.add('active');
 
-document.getElementById('uploadForm').addEventListener('submit', function(e) {
-    var file = this.bg_file.files[0];
-    if (!file) {
-        e.preventDefault();
-        showMsg('⚠️ 请选择文件');
-        return;
+        var formData = new URLSearchParams();
+        formData.append('token', '<%=token%>');
+        for (var key in data) {
+            formData.append(key, data[key]);
+        }
+
+        fetch('<%=luci.dispatcher.build_url("admin/status/banner")%>/' + endpoint, {
+            method: 'POST',
+            body: formData
+        })
+        .then(response => {
+            if (!response.ok) { throw new Error('Network response was not ok: ' + response.statusText); }
+            return response.json();
+        })
+        .then(result => {
+            if (btn) btn.classList.remove('spinning');
+            document.getElementById('loadingOverlay').classList.remove('active');
+            alert(result.message || (result.success ? '操作成功' : '操作失败'));
+            if (result.success && reloadOnSuccess) {
+                // 延迟刷新，给后台文件操作和服务重启留出足够的时间
+                setTimeout(function() { window.location.reload(); }, 1500);
+            }
+        })
+        .catch(error => {
+            if (btn) btn.classList.remove('spinning');
+            document.getElementById('loadingOverlay').classList.remove('active');
+            alert('请求失败: ' + error);
+        });
     }
-    if (file.size > 3145728) {
-        e.preventDefault();
-        showMsg('⚠️ 文件大小不能超过 3MB');
-        return;
-    }
-    if (!file.type.match('image/jpeg') && !file.name.match(/\.jpe?g$/i)) {
-        e.preventDefault();
-        showMsg('⚠️ 仅支持 JPG/JPEG 格式');
-    }
-});
+
+    // 本地表单验证 (保持不变)
+    document.getElementById('customBgForm').addEventListener('submit', function(e) {
+        var url = this.custom_bg_url.value.trim();
+        if (!url.match(/^https:\/\/.*\.jpe?g$/i  )) {
+            e.preventDefault();
+            alert('⚠️ 格式錯誤！請確保鏈接以 https:// 開頭  ，並以 .jpg 或 .jpeg 結尾。');
+        }
+    });
+
+    document.getElementById('uploadForm').addEventListener('submit', function(e) {
+        var file = this.bg_file.files[0];
+        if (!file) {
+            e.preventDefault();
+            alert('⚠️ 请选择文件');
+            return;
+        }
+        if (file.size > 3145728) {
+            e.preventDefault();
+            alert('⚠️ 文件大小不能超过 3MB');
+            return;
+        }
+        if (!file.type.match('image/jpeg') && !file.name.match(/\.jpe?g$/i)) {
+            e.preventDefault();
+            alert('⚠️ 仅支持 JPG/JPEG 格式');
+        }
+    });
 </script>
 <%+footer%>
 BGVIEW

@@ -839,6 +839,11 @@ function action_display()
         banner_texts = text
     end
 
+    -- **** 修正點：在控制器中讀取所有聯絡方式 ****
+    local contact_email = uci:get("banner", "banner", "contact_email") or "example@email.com"
+    local contact_telegram = uci:get("banner", "banner", "contact_telegram") or "@fgnb111999"
+    local contact_qq = uci:get("banner", "banner", "contact_qq") or "183452852"
+
     luci.template.render("banner/display", {
         text = text,
         color = uci:get("banner", "banner", "color"),
@@ -848,10 +853,14 @@ function action_display()
         bg_enabled = "1",
         banner_texts = banner_texts,
         nav_data = nav_data,
-       persistent = persistent,
+        persistent = persistent,
         bg_path = bg_path,
         token = luci.dispatcher.context.authsession,
-        uci = uci
+        -- **** 修正點：將讀取好的值傳遞給模板 ****
+        contact_email = contact_email,
+        contact_telegram = contact_telegram,
+        contact_qq = contact_qq
+        -- **** 修正點：不再傳遞 uci 物件 ****
     })
 end
 
@@ -904,52 +913,52 @@ end
 
 function action_do_update()
     luci.sys.call("/usr/bin/banner_manual_update.sh >/dev/null 2>&1 &")
-    luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/settings"))
+    luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/settings" ))
 end
 
 function action_do_set_bg()
     local uci = require("uci").cursor()
-    local bg = luci.http.formvalue("bg")
+    local bg = luci.http.formvalue("bg" )
     if bg and bg:match("^[0-2]$") then
         uci:set("banner", "banner", "current_bg", bg)
         uci:commit("banner")
         local persistent = uci:get("banner", "banner", "persistent_storage") or "0"
         local src_path = (persistent == "1") and "/overlay/banner" or "/www/luci-static/banner"
         if not (src_path == "/overlay/banner" or src_path == "/www/luci-static/banner") then
-            luci.http.status(400, "Invalid source directory")
+            luci.http.status(400, "Invalid source directory" )
             return
         end
         luci.sys.call(string.format("cp %s/bg%s.jpg /tmp/banner_cache/current_bg.jpg 2>/dev/null", src_path, bg))
     end
-    luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/display"))
+    luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/display" ))
 end
 
 function action_do_clear_cache()
     luci.sys.call("rm -f /tmp/banner_cache/bg*.jpg /overlay/banner/bg*.jpg /www/luci-static/banner/bg*.jpg")
-    luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/background"))
+    luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/background" ))
 end
 
 function action_do_load_group()
     local uci = require("uci").cursor()
-    local group = luci.http.formvalue("group")
+    local group = luci.http.formvalue("group" )
     if group and group:match("^[1-4]$") then
         uci:set("banner", "banner", "bg_group", group)
         uci:commit("banner")
         luci.sys.call(string.format("/usr/bin/banner_bg_loader.sh %s >/dev/null 2>&1 &", group))
     end
-    luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/background"))
+    luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/background" ))
 end
 
 function action_do_upload_bg()
     local fs = require("nixio.fs")
-    local http = require("luci.http")
+    local http = require("luci.http" )
     local uci = require("uci").cursor()
     local sys = require("luci.sys")
     
     local persistent = uci:get("banner", "banner", "persistent_storage") or "0"
     local dest_dir = (persistent == "1") and "/overlay/banner" or "/www/luci-static/banner"
     if not (dest_dir == "/overlay/banner" or dest_dir == "/www/luci-static/banner") then
-        luci.http.status(400, "Invalid destination directory")
+        luci.http.status(400, "Invalid destination directory" )
         return
     end
     sys.call("mkdir -p '" .. dest_dir .. "'")
@@ -957,7 +966,7 @@ function action_do_upload_bg()
     local tmp_file = dest_dir .. "/bg0.tmp"
     local final_file = dest_dir .. "/bg0.jpg"
 
-    http.setfilehandler(function(meta, chunk, eof)
+    http.setfilehandler(function(meta, chunk, eof )
         if not meta or meta.name ~= "bg_file" then return end
         
         if chunk then
@@ -969,7 +978,7 @@ function action_do_upload_bg()
             local max_size = tonumber(uci:get("banner", "banner", "max_file_size") or "3145728")
             if fs.stat(tmp_file) and fs.stat(tmp_file).size > max_size then
                 fs.remove(tmp_file)
-                luci.http.status(400, "File size exceeds 3MB")
+                luci.http.status(400, "File size exceeds 3MB" )
                 return
             end
             if sys.call("file '" .. tmp_file .. "' | grep -qiE 'JPEG|JPG'") == 0 then
@@ -983,29 +992,29 @@ function action_do_upload_bg()
                 uci:commit("banner")
             else
                 fs.remove(tmp_file)
-                luci.http.status(400, "Invalid JPEG file")
+                luci.http.status(400, "Invalid JPEG file" )
             end
         end
     end)
-    luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/display"))
+    luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/display" ))
 end
 
 function action_do_apply_url()
     local uci = require("uci").cursor()
     local fs = require("nixio.fs")
     local sys = require("luci.sys")
-    local url = luci.http.formvalue("custom_bg_url")
+    local url = luci.http.formvalue("custom_bg_url" )
 
-    if not url or not url:match("^https://.*%.jpe?g$") then
-        luci.http.status(400, "Invalid URL format")
-        luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/display"))
+    if not url or not url:match("^https://.*%.jpe?g$" ) then
+        luci.http.status(400, "Invalid URL format" )
+        luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/display" ))
         return
     end
 
     local persistent = uci:get("banner", "banner", "persistent_storage") or "0"
     local dest_dir = (persistent == "1") and "/overlay/banner" or "/www/luci-static/banner"
     if not (dest_dir == "/overlay/banner" or dest_dir == "/www/luci-static/banner") then
-        luci.http.status(400, "Invalid destination directory")
+        luci.http.status(400, "Invalid destination directory" )
         return
     end
     sys.call("mkdir -p '" .. dest_dir .. "'")
@@ -1034,55 +1043,55 @@ function action_do_apply_url()
             uci:commit("banner")
         else
             fs.remove(tmp_file)
-            luci.http.status(400, "Invalid JPEG file")
+            luci.http.status(400, "Invalid JPEG file" )
         end
     else
         fs.remove(tmp_file)
-        luci.http.status(400, "Failed to download file")
+        luci.http.status(400, "Failed to download file" )
     end
     
-    luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/display"))
+    luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/display" ))
 end
 
 function action_do_set_opacity()
     local uci = require("uci").cursor()
-    local opacity = luci.http.formvalue("opacity")
+    local opacity = luci.http.formvalue("opacity" )
     if opacity and tonumber(opacity) and tonumber(opacity) >= 0 and tonumber(opacity) <= 100 then
         uci:set("banner", "banner", "opacity", opacity)
         uci:commit("banner")
-        luci.http.status(200)
+        luci.http.status(200 )
     else
-        luci.http.status(400, "Invalid opacity value (must be 0-100)")
+        luci.http.status(400, "Invalid opacity value (must be 0-100 )")
     end
 end
 
 function action_do_set_carousel_interval()
     local uci = require("uci").cursor()
-    local interval = luci.http.formvalue("carousel_interval")
+    local interval = luci.http.formvalue("carousel_interval" )
     if interval and tonumber(interval) and tonumber(interval) >= 1000 and tonumber(interval) <= 30000 then
         uci:set("banner", "banner", "carousel_interval", interval)
         uci:commit("banner")
-        luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/settings"))
+        luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/settings" ))
     else
-        luci.http.status(400, "Invalid carousel interval (must be 1000-30000)")
+        luci.http.status(400, "Invalid carousel interval (must be 1000-30000 )")
     end
 end
 
 function action_do_set_update_url()
     local uci = require("uci").cursor()
-    local selected_url = luci.http.formvalue("selected_url")
-    if selected_url and selected_url:match("^https?://") then
+    local selected_url = luci.http.formvalue("selected_url" )
+    if selected_url and selected_url:match("^https?://" ) then
         uci:set("banner", "banner", "selected_url", selected_url)
         uci:commit("banner")
     else
-        luci.http.status(400, "Invalid URL format")
+        luci.http.status(400, "Invalid URL format" )
     end
-    luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/settings"))
+    luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/settings" ))
 end
 
 function action_do_set_persistent_storage()
     local uci = require("uci").cursor()
-    local persistent = luci.http.formvalue("persistent_storage")
+    local persistent = luci.http.formvalue("persistent_storage" )
     if persistent and persistent:match("^[0-1]$") then
         uci:set("banner", "banner", "persistent_storage", persistent)
         uci:commit("banner")
@@ -1092,16 +1101,16 @@ function action_do_set_persistent_storage()
             luci.sys.call("cp /overlay/banner/bg*.jpg /www/luci-static/banner/ 2>/dev/null")
         end
     else
-        luci.http.status(400, "Invalid persistent storage value")
+        luci.http.status(400, "Invalid persistent storage value" )
     end
-    luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/settings"))
+    luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/settings" ))
 end
 
 function action_check_bg_complete()
     if require("nixio.fs").access("/tmp/banner_cache/bg_complete") then
-        luci.http.write("complete")
+        luci.http.write("complete" )
     else
-        luci.http.write("pending")
+        luci.http.write("pending" )
     end
 end
 
@@ -1119,9 +1128,10 @@ function action_do_reset_defaults()
     uci:set("banner", "banner", "last_update", "0")
     uci:commit("banner")
     luci.sys.call("rm -f /tmp/banner_cache/* /overlay/banner/bg*.jpg /www/luci-static/banner/bg*.jpg")
-    luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/settings"))
+    luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/settings" ))
 end
 CONTROLLER
+
 # Global style view
 cat > "$PKG_DIR/root/usr/lib/lua/luci/view/banner/global_style.htm" <<'GLOBALSTYLE'
 <%
@@ -1274,12 +1284,13 @@ cat > "$PKG_DIR/root/usr/lib/lua/luci/view/banner/display.htm" <<'DISPLAYVIEW'
             <% for i = 0, 2 do %><img src="/luci-static/banner/bg<%=i%>.jpg?t=<%=os.time()%>" alt="BG <%=i+1%>" loading="lazy"><% end %>
         </div>
         
-        <!-- 联系方式 -->
+        <!-- 联系方式 (**** 修正點：直接使用傳入的變數 ****) -->
         <div class="banner-contacts">
-            <div class="contact-card"><div class="contact-info"><span>📧 邮箱</span><strong><%=uci:get("banner", "banner", "contact_email") or "example@email.com"%></strong></div><button class="copy-btn" onclick="copyText('<%=uci:get("banner", "banner", "contact_email") or "example@email.com"%>')">复制</button></div>
-<div class="contact-card"><div class="contact-info"><span>📱 Telegram</span><strong><%=uci:get("banner", "banner", "contact_telegram") or "@fgnb111999"%></strong></div><button class="copy-btn" onclick="copyText('<%=uci:get("banner", "banner", "contact_telegram") or "@fgnb111999"%>')">复制</button></div>
-<div class="contact-card"><div class="contact-info"><span>💬 QQ</span><strong><%=uci:get("banner", "banner", "contact_qq") or "183452852"%></strong></div><button class="copy-btn" onclick="copyText('<%=uci:get("banner", "banner", "contact_qq") or "183452852"%>')">复制</button></div>
+            <div class="contact-card"><div class="contact-info"><span>📧 邮箱</span><strong><%=contact_email%></strong></div><button class="copy-btn" onclick="copyText('<%=contact_email%>')">复制</button></div>
+            <div class="contact-card"><div class="contact-info"><span>📱 Telegram</span><strong><%=contact_telegram%></strong></div><button class="copy-btn" onclick="copyText('<%=contact_telegram%>')">复制</button></div>
+            <div class="contact-card"><div class="contact-info"><span>💬 QQ</span><strong><%=contact_qq%></strong></div><button class="copy-btn" onclick="copyText('<%=contact_qq%>')">复制</button></div>
         </div>
+
         <% if nav_data and nav_data.nav_tabs then %>
         <div class="nav-section">
             <h3>🚀 快速导航</h3>

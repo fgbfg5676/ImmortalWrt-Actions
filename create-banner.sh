@@ -54,8 +54,7 @@ fi
 # 安全檢查通過，執行刪除
 rm -rf "$PKG_DIR"
 
-
-mkdir -p "$PKG_DIR"/root/{etc/{config,init.d,cron.d},usr/{bin,lib/lua/luci/{controller,view/banner}},www/luci-static/banner,overlay/banner}
+mkdir -p "$PKG_DIR"/root/{etc/{config,init.d,cron.d},usr/{bin,share/banner,lib/lua/luci/{controller,view/banner}},www/luci-static/banner,overlay/banner}
 
 # 下载离线背景图
 OFFLINE_BG="$PKG_DIR/root/www/luci-static/banner/bg0.jpg"
@@ -162,25 +161,11 @@ config banner 'banner'
 	option wait_timeout '5' # seconds
 	option cleanup_age '3' # days
 	option restart_delay '15' # seconds
+	option contact_email 'example@email.com'
+	option contact_telegram '@fgnb111999'
+	option contact_qq '183452852'
 UCICONF
-# 验证 JPEG 文件是否有效
-validate_jpeg() {
-    [ ! -s "$1" ] && { log "  [×] File is empty"; return 1; }
-    
-    local size=$(stat -c %s "$1" 2>/dev/null || wc -c < "$1" 2>/dev/null)
-    [ "$size" -lt 1024 ] && { log "  [×] File too small ($size bytes)"; return 1; }
-    
-    local magic=$(od -An -t x1 -N 3 "$1" 2>/dev/null | tr -d ' \n')
-    if [ "$magic" = "ffd8ff" ]; then
-        log "  [√] JPEG magic bytes verified"
-        return 0
-    else
-        log "  [×] Invalid magic bytes: $magic (expected: ffd8ff)"
-        return 1
-    fi
-}
 
-echo "Banner plugin setup completed. Background images will be downloaded from remote repository on first run."
 # 創建一個全局配置文件，用於存儲可配置的變數
 mkdir -p "$PKG_DIR/root/usr/share/banner"
 cat > "$PKG_DIR/root/usr/share/banner/config.sh" <<'CONFIGSH'
@@ -380,7 +365,8 @@ if [ $SUCCESS -eq 1 ] && [ -s "$CACHE/banner_new.json" ]; then
         uci commit banner
         log "[!] Service remotely disabled. Reason: $MSG"
         rm -f "$CACHE/banner_new.json"
-    exit 0
+        exit 0
+    else
         TEXT=$(jsonfilter -i "$CACHE/banner_new.json" -e '@.text' 2>/dev/null)
         if [ -n "$TEXT" ]; then
             cp "$CACHE/banner_new.json" "$CACHE/nav_data.json"
@@ -762,12 +748,6 @@ start() {
         fi
     fi
 
-# 检查远程禁用
-/usr/bin/banner_manual_update.sh >/tmp/banner_update.log 2>&1
-if uci get banner.banner.bg_enabled >/dev/null 2>&1 && [ "$(uci get banner.banner.bg_enabled)" = "0" ]; then
-    log_msg "Service disabled remotely."
-    exit 0
-fi
     # 启动后台更新和加载脚本，输出到日志
     /usr/bin/banner_auto_update.sh >> /tmp/banner_update.log 2>&1 &
     sleep 2
@@ -860,9 +840,10 @@ function action_display()
         bg_enabled = "1",
         banner_texts = banner_texts,
         nav_data = nav_data,
-        persistent = persistent,
+       persistent = persistent,
         bg_path = bg_path,
-        token = luci.dispatcher.context.authsession
+        token = luci.dispatcher.context.authsession,
+        uci = uci
     })
 end
 
@@ -1187,18 +1168,16 @@ input, textarea, select {
 }
 </style>
 <script type="text/javascript">
-document.getElementById('opacity-slider').addEventListener('input', function(e) {
-    var value = parseInt(e.target.value);
-    document.getElementById('opacity-display').textContent = value + '%';
+document.addEventListener('DOMContentLoaded', function() {
+    var slider = document.getElementById('opacity-slider');
+    if (slider) {
+        slider.addEventListener('input', function(e) {
+            var value = parseInt(e.target.value);
+            var display = document.getElementById('opacity-display');
+            if (display) display.textContent = value + '%';
+        });
+    }
 });
-function applyOpacity() {
-    var value = document.getElementById('opacity-slider').value;
-    var xhr = new XMLHttpRequest();
-    xhr.open('POST', '<%=luci.dispatcher.build_url("admin/status/banner/do_set_opacity")%>', true);
-    xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
-    xhr.onload = function() { location.reload(); };
-    xhr.send('token=<%=token%>&opacity=' + value);
-}
 </script>
 GLOBALSTYLE
 
@@ -1358,13 +1337,7 @@ function toggleLinks(el) {
         el.querySelector('.nav-links').classList.toggle('active'); 
     }
 }
-// 添加hover支持（桌面）
-if (window.innerWidth > 768) {
-    document.querySelectorAll('.nav-group').forEach(function(group) {
-        group.addEventListener('mouseenter', function() { this.querySelector('.nav-links').style.display = 'flex'; });
-        group.addEventListener('mouseleave', function() { this.querySelector('.nav-links').style.display = 'none'; });
-    });
-}
+
 function changeBg(n) {
     var f = document.createElement('form');
     f.method = 'POST';
@@ -1445,6 +1418,13 @@ input:checked + .toggle-slider:before { transform: translateX(26px); }
     </form>
 </div></div>
         <div class="cbi-value"><label class="cbi-value-title">永久存储背景</label><div class="cbi-value-field"><label class="toggle-switch"><input type="checkbox"<%=persistent_storage=='1' and ' checked'%> onchange="togglePersistent(this.checked)"><span class="toggle-slider"></span></label><span style="color:#fff;vertical-align:super;margin-left:10px;"><%=persistent_storage=='1' and '已启用' or '已禁用'%></span></div></div>
+<div class="cbi-value"><label class="cbi-value-title">轮播间隔(毫秒)</label><div class="cbi-value-field">
+            <form method="post" action="<%=luci.dispatcher.build_url('admin/status/banner/do_set_carousel_interval')%>">
+                <input name="token" type="hidden" value="<%=token%>">
+                <input type="number" name="carousel_interval" value="<%=carousel_interval%>" min="1000" max="30000" style="width:100px">
+                <input type="submit" class="cbi-button" value="应用">
+            </form>
+        </div></div>
         <div class="cbi-value"><label class="cbi-value-title">更新源</label><div class="cbi-value-field">
             <form method="post" action="<%=luci.dispatcher.build_url('admin/status/banner/do_set_update_url')%>">
                 <input name="token" type="hidden" value="<%=token%>">
@@ -1467,14 +1447,17 @@ function togglePersistent(checkbox) {
     xhr.send('token=<%=token%>&persistent_storage=' + (checkbox.checked ? '1' : '0'));
 }
 // OPTIMIZATION 2.5: Disable submit button on invalid input
-document.querySelector('form[action*="do_set_carousel_interval"]').addEventListener('input', function(e) {
-    var input = e.target;
-    var value = parseInt(input.value, 10);
-    var submitBtn = this.querySelector('[type=submit]');
-    var isValid = !isNaN(value) && value >= 1000 && value <= 30000;
-    submitBtn.disabled = !isValid;
-    input.style.borderColor = isValid ? '' : 'red';
-});
+var carouselForm = document.querySelector('form[action*="do_set_carousel_interval"]');
+if (carouselForm) {
+    carouselForm.addEventListener('input', function(e) {
+        var input = e.target;
+        var value = parseInt(input.value, 10);
+        var submitBtn = this.querySelector('[type=submit]');
+        var isValid = !isNaN(value) && value >= 1000 && value <= 30000;
+        submitBtn.disabled = !isValid;
+        input.style.borderColor = isValid ? '' : 'red';
+    });
+}
 
 window.useSimpleAlert = true;
 function showMsg(text) {

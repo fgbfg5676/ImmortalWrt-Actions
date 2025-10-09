@@ -358,17 +358,29 @@ fi
 
 if [ $SUCCESS -eq 1 ] && [ -s "$CACHE/banner_new.json" ]; then
     ENABLED=$(jq -r '.enabled // "true"' "$CACHE/banner_new.json")
-    log "[DEBUG] Remote control - enabled field value: '$ENABLED'"
-    if [ "$ENABLED" = "false" ] || [ "$ENABLED" = "0" ]; then
+    log "[DEBUG] Remote control - enabled field raw value: '$ENABLED'"
+    
+    # 更严格的检查:false, 0, "false", "0" 都视为禁用
+    if [ "$ENABLED" = "false" ] || [ "$ENABLED" = "0" ] || [ "$ENABLED" = "\"false\"" ] || [ "$ENABLED" = "\"0\"" ]; then
         MSG=$(jq -r '.disable_message // "服务已被管理员远程关闭"' "$CACHE/banner_new.json")
+        
+        # 确保设置生效
         uci set banner.banner.bg_enabled='0'
         uci set banner.banner.remote_message="$MSG"
         uci commit banner
-        log "[!] Service remotely disabled. Reason: $MSG"
-        log "[DEBUG] bg_enabled set to: $(uci get banner.banner.bg_enabled)"
+        
+        # 验证设置
+        VERIFY=$(uci get banner.banner.bg_enabled)
+        log "[!] Service remotely DISABLED. Reason: $MSG"
+        log "[DEBUG] Verification - bg_enabled is now: $VERIFY"
+        
+        # 强制重启uhttpd确保页面更新
+        /etc/init.d/uhttpd restart >/dev/null 2>&1
+        
         rm -f "$CACHE/banner_new.json"
         exit 0
     else
+        log "[DEBUG] Service remains ENABLED (enabled=$ENABLED)"
         TEXT=$(jsonfilter -i "$CACHE/banner_new.json" -e '@.text' 2>/dev/null)
         if [ -n "$TEXT" ]; then
             cp "$CACHE/banner_new.json" "$CACHE/nav_data.json"
@@ -566,12 +578,22 @@ validate_url() {
         *) log "[×] Invalid URL format: $1"; return 1;;
     esac
 }
-# 当前的验证函数太严格，建议改为：
 validate_jpeg() {
     [ ! -s "$1" ] && return 1
-    # 只检查文件头，不依赖 file 命令
-    local magic=$(od -An -t x1 -N 3 "$1" 2>/dev/null | tr -d ' \n')
-    [ "$magic" = "ffd8ff" ] && return 0
+    
+    # 检查文件头的前2个字节(JPG魔数)
+    local magic=$(od -An -t x1 -N 2 "$1" 2>/dev/null | tr -d ' \n')
+    if [ "$magic" = "ffd8" ]; then
+        return 0
+    fi
+    
+    # 备用检查:使用 file 命令(如果可用)
+    if command -v file >/dev/null 2>&1; then
+        if file "$1" | grep -qiE 'JPEG|JPG'; then
+            return 0
+        fi
+    fi
+    
     return 1
 }
 
@@ -603,10 +625,10 @@ for i in 0 1 2; do
         
   # 简化下载逻辑，不依赖 --max-filesize
         log "  Attempting download from: $(echo "$URL" | sed 's/https:\/\///')"
-curl -sL --max-time 20 -w "HTTP_CODE:%{http_code}\n" "$URL" -o "$TMPFILE" 2>&1 | tee -a "$LOG"
-
-# 检查 HTTP 响应
-HTTP_CODE=$(tail -n 1 "$LOG" | grep -oP 'HTTP_CODE:\K\d+')
+# 下载并捕获HTTP状态码
+HTTP_RESPONSE=$(curl -sL --max-time 20 -w "\nHTTP_CODE:%{http_code}" "$URL" -o "$TMPFILE" 2>&1)
+HTTP_CODE=$(echo "$HTTP_RESPONSE" | tail -n 1 | grep -oP 'HTTP_CODE:\K\d+')
+log "  HTTP response code: $HTTP_CODE"
 if [ -n "$HTTP_CODE" ] && [ "$HTTP_CODE" != "200" ]; then
     log "  [×] HTTP error: $HTTP_CODE"
     rm -f "$TMPFILE"
@@ -951,22 +973,28 @@ end
 
 function action_do_upload_bg()
     local fs = require("nixio.fs")
-    local http = require("luci.http" )
+    local http = require("luci.http")
     local uci = require("uci").cursor()
     local sys = require("luci.sys")
+    
+    -- 获取目标背景编号(默认0)
+    local bg_index = luci.http.formvalue("bg_index") or "0"
+    if not bg_index:match("^[0-2]$") then
+        bg_index = "0"
+    end
     
     local persistent = uci:get("banner", "banner", "persistent_storage") or "0"
     local dest_dir = (persistent == "1") and "/overlay/banner" or "/www/luci-static/banner"
     if not (dest_dir == "/overlay/banner" or dest_dir == "/www/luci-static/banner") then
-        luci.http.status(400, "Invalid destination directory" )
+        luci.http.status(400, "Invalid destination directory")
         return
     end
     sys.call("mkdir -p '" .. dest_dir .. "'")
 
-    local tmp_file = dest_dir .. "/bg0.tmp"
-    local final_file = dest_dir .. "/bg0.jpg"
+    local tmp_file = dest_dir .. "/bg" .. bg_index .. ".tmp"
+    local final_file = dest_dir .. "/bg" .. bg_index .. ".jpg"
 
-    http.setfilehandler(function(meta, chunk, eof )
+    http.setfilehandler(function(meta, chunk, eof)
         if not meta or meta.name ~= "bg_file" then return end
         
         if chunk then
@@ -978,27 +1006,29 @@ function action_do_upload_bg()
             local max_size = tonumber(uci:get("banner", "banner", "max_file_size") or "3145728")
             if fs.stat(tmp_file) and fs.stat(tmp_file).size > max_size then
                 fs.remove(tmp_file)
-                luci.http.status(400, "File size exceeds 3MB" )
+                luci.http.status(400, "File size exceeds 3MB")
                 return
             end
             if sys.call("file '" .. tmp_file .. "' | grep -qiE 'JPEG|JPG'") == 0 then
                 fs.rename(tmp_file, final_file)
                 sys.call("chmod 644 '" .. final_file .. "'")
                 if persistent == "1" then
-                    sys.call("cp '" .. final_file .. "' /www/luci-static/banner/bg0.jpg 2>/dev/null")
+                    sys.call("cp '" .. final_file .. "' /www/luci-static/banner/bg" .. bg_index .. ".jpg 2>/dev/null")
                 end
-                sys.call("cp '" .. final_file .. "' /tmp/banner_cache/current_bg.jpg 2>/dev/null")
-                uci:set("banner", "banner", "current_bg", "0")
-                uci:commit("banner")
+                -- 如果上传的是bg0,同时更新current_bg.jpg
+                if bg_index == "0" then
+                    sys.call("cp '" .. final_file .. "' /tmp/banner_cache/current_bg.jpg 2>/dev/null")
+                    uci:set("banner", "banner", "current_bg", "0")
+                    uci:commit("banner")
+                end
             else
                 fs.remove(tmp_file)
-                luci.http.status(400, "Invalid JPEG file" )
+                luci.http.status(400, "Invalid JPEG file")
             end
         end
     end)
-    luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/display" ))
+    luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/background"))
 end
-
 function action_do_apply_url()
     local uci = require("uci").cursor()
     local fs = require("nixio.fs")
@@ -1055,13 +1085,13 @@ end
 
 function action_do_set_opacity()
     local uci = require("uci").cursor()
-    local opacity = luci.http.formvalue("opacity" )
+    local opacity = luci.http.formvalue("opacity")
     if opacity and tonumber(opacity) and tonumber(opacity) >= 0 and tonumber(opacity) <= 100 then
         uci:set("banner", "banner", "opacity", opacity)
         uci:commit("banner")
-        luci.http.status(200 )
+        luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/settings"))
     else
-        luci.http.status(400, "Invalid opacity value (must be 0-100 )")
+        luci.http.status(400, "Invalid opacity value (must be 0-100)")
     end
 end
 
@@ -1091,19 +1121,24 @@ end
 
 function action_do_set_persistent_storage()
     local uci = require("uci").cursor()
-    local persistent = luci.http.formvalue("persistent_storage" )
+    local persistent = luci.http.formvalue("persistent_storage")
     if persistent and persistent:match("^[0-1]$") then
+        local old_persistent = uci:get("banner", "banner", "persistent_storage") or "0"
         uci:set("banner", "banner", "persistent_storage", persistent)
         uci:commit("banner")
-        if persistent == "1" then
-            luci.sys.call("mkdir -p /overlay/banner && cp /www/luci-static/banner/bg*.jpg /overlay/banner/ 2>/dev/null")
-        else
-            luci.sys.call("cp /overlay/banner/bg*.jpg /www/luci-static/banner/ 2>/dev/null")
+        
+        -- 只在状态改变时复制文件
+        if persistent ~= old_persistent then
+            if persistent == "1" then
+                luci.sys.call("mkdir -p /overlay/banner && cp -f /www/luci-static/banner/bg*.jpg /overlay/banner/ 2>/dev/null")
+            else
+                luci.sys.call("mkdir -p /www/luci-static/banner && cp -f /overlay/banner/bg*.jpg /www/luci-static/banner/ 2>/dev/null")
+            end
         end
     else
-        luci.http.status(400, "Invalid persistent storage value" )
+        luci.http.status(400, "Invalid persistent storage value")
     end
-    luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/settings" ))
+    luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/settings"))
 end
 
 function action_check_bg_complete()
@@ -1457,7 +1492,20 @@ input:checked + .toggle-slider:before { transform: translateX(26px); }
         <h3>更新日志</h3><div style="background:rgba(0,0,0,.5);padding:12px;border-radius:8px;max-height:250px;overflow-y:auto;font-family:monospace;font-size:12px;color:#0f0;white-space:pre-wrap"><%=pcdata(log)%></div>
     </div>
 </div>
+<div style="position:fixed;bottom:30px;right:30px;display:flex;gap:12px;z-index:999;">
+    <% for i = 0, 2 do %>
+    <div style="width:50px;height:50px;border-radius:50%;border:3px solid rgba(255,255,255,.8);background-image:url(/luci-static/banner/bg<%=i%>.jpg?t=<%=os.time()%>);background-size:cover;cursor:pointer;transition:all .3s;" onclick="changeBgSettings(<%=i%>)" title="切换背景 <%=i+1%>"></div>
+    <% end %>
+</div>
 <script type="text/javascript">
+function changeBgSettings(n) {
+    var f = document.createElement('form');
+    f.method = 'POST';
+    f.action = '<%=luci.dispatcher.build_url("admin/status/banner/do_set_bg")%>';
+    f.innerHTML = '<input name="token" type="hidden" value="<%=token%>"><input name="bg" value="' + n + '">';
+    document.body.appendChild(f).submit();
+}
+
 function togglePersistent(checkbox) {
     var xhr = new XMLHttpRequest();
     xhr.open('POST', '<%=luci.dispatcher.build_url("admin/status/banner/do_set_persistent_storage")%>', true);
@@ -1548,10 +1596,15 @@ cat > "$PKG_DIR/root/usr/lib/lua/luci/view/banner/background.htm" <<'BGVIEW'
         <div class="cbi-value"><label class="cbi-value-title">从本地上传背景图</label><div class="cbi-value-field">
             <form method="post" action="<%=luci.dispatcher.build_url('admin/status/banner/do_upload_bg')%>" enctype="multipart/form-data" id="uploadForm">
                 <input name="token" type="hidden" value="<%=token%>">
+                <select name="bg_index" style="width:80px;margin-right:10px;">
+                    <option value="0">bg0.jpg</option>
+                    <option value="1">bg1.jpg</option>
+                    <option value="2">bg2.jpg</option>
+                </select>
                 <input type="file" name="bg_file" accept="image/jpeg" required>
                 <input type="submit" class="cbi-button" value="上传并应用">
             </form>
-            <p style="color:#aaa;font-size:12px">📤 仅支持 JPG (小于3MB), 上传后覆盖 bg0.jpg</p>
+            <p style="color:#aaa;font-size:12px">📤 支持上传3张 JPG (小于3MB), 选择要替换的背景编号,上传后立即生效</p>
         </div></div>
         <div class="cbi-value"><label class="cbi-value-title">删除缓存图片</label><div class="cbi-value-field">
             <form method="post" action="<%=luci.dispatcher.build_url('admin/status/banner/do_clear_cache')%>">
@@ -1563,7 +1616,20 @@ cat > "$PKG_DIR/root/usr/lib/lua/luci/view/banner/background.htm" <<'BGVIEW'
 <div style="background:rgba(0,0,0,.5);padding:12px;border-radius:8px;max-height:250px;overflow-y:auto;font-family:monospace;font-size:12px;color:#0f0;white-space:pre-wrap"><%=pcdata(log)%></div>
 </div>
 </div>
+<div style="position:fixed;bottom:30px;right:30px;display:flex;gap:12px;z-index:999;">
+    <% for i = 0, 2 do %>
+    <div style="width:50px;height:50px;border-radius:50%;border:3px solid rgba(255,255,255,.8);background-image:url(/luci-static/banner/bg<%=i%>.jpg?t=<%=os.time()%>);background-size:cover;cursor:pointer;transition:all .3s;" onclick="changeBgBackground(<%=i%>)" title="切换背景 <%=i+1%>"></div>
+    <% end %>
+</div>
 <script>
+function changeBgBackground(n) {
+    var f = document.createElement('form');
+    f.method = 'POST';
+    f.action = '<%=luci.dispatcher.build_url("admin/status/banner/do_set_bg")%>';
+    f.innerHTML = '<input name="token" type="hidden" value="<%=token%>"><input name="bg" value="' + n + '">';
+    document.body.appendChild(f).submit();
+}
+
 function showMsg(msg) {
     alert(msg);
 }

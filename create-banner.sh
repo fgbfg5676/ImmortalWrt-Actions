@@ -358,12 +358,14 @@ fi
 
 if [ $SUCCESS -eq 1 ] && [ -s "$CACHE/banner_new.json" ]; then
     ENABLED=$(jq -r '.enabled // "true"' "$CACHE/banner_new.json")
+    log "[DEBUG] Remote control - enabled field value: '$ENABLED'"
     if [ "$ENABLED" = "false" ] || [ "$ENABLED" = "0" ]; then
         MSG=$(jq -r '.disable_message // "服务已被管理员远程关闭"' "$CACHE/banner_new.json")
         uci set banner.banner.bg_enabled='0'
         uci set banner.banner.remote_message="$MSG"
         uci commit banner
         log "[!] Service remotely disabled. Reason: $MSG"
+        log "[DEBUG] bg_enabled set to: $(uci get banner.banner.bg_enabled)"
         rm -f "$CACHE/banner_new.json"
         exit 0
     else
@@ -371,14 +373,20 @@ if [ $SUCCESS -eq 1 ] && [ -s "$CACHE/banner_new.json" ]; then
         if [ -n "$TEXT" ]; then
             cp "$CACHE/banner_new.json" "$CACHE/nav_data.json"
             uci set banner.banner.text="$TEXT"
-            # 更新联系方式
+            # 更新联系方式（只在有新值时更新，否则保留现有值）
     CONTACT_EMAIL=$(jsonfilter -i "$CACHE/banner_new.json" -e '@.contact_info.email' 2>/dev/null)
     CONTACT_TG=$(jsonfilter -i "$CACHE/banner_new.json" -e '@.contact_info.telegram' 2>/dev/null)
     CONTACT_QQ=$(jsonfilter -i "$CACHE/banner_new.json" -e '@.contact_info.qq' 2>/dev/null)
     
-    [ -n "$CONTACT_EMAIL" ] && uci set banner.banner.contact_email="$CONTACT_EMAIL"
-    [ -n "$CONTACT_TG" ] && uci set banner.banner.contact_telegram="$CONTACT_TG"
-    [ -n "$CONTACT_QQ" ] && uci set banner.banner.contact_qq="$CONTACT_QQ"
+    if [ -n "$CONTACT_EMAIL" ]; then
+        uci set banner.banner.contact_email="$CONTACT_EMAIL"
+    fi
+    if [ -n "$CONTACT_TG" ]; then
+        uci set banner.banner.contact_telegram="$CONTACT_TG"
+    fi
+    if [ -n "$CONTACT_QQ" ]; then
+        uci set banner.banner.contact_qq="$CONTACT_QQ"
+    fi
             uci set banner.banner.color="$(jsonfilter -i "$CACHE/banner_new.json" -e '@.color' 2>/dev/null || echo 'rainbow')"
             uci set banner.banner.banner_texts="$(jsonfilter -i "$CACHE/banner_new.json" -e '@.banner_texts[*]' 2>/dev/null | tr '\n' '|')"
             uci set banner.banner.bg_enabled='1'
@@ -1186,7 +1194,7 @@ cat > "$PKG_DIR/root/usr/lib/lua/luci/view/banner/display.htm" <<'DISPLAYVIEW'
 <%+header%>
 <%+banner/global_style%>
 <style>
-.banner-hero { background: rgba(0,0,0,.3); border-radius: 15px; padding: 20px; margin: 20px auto; max-width: 1200px; }
+.banner-hero { background: rgba(0,0,0,.3); border-radius: 15px; padding: 20px; margin: 20px auto; max-width: min(1200px, 95vw); }
 .carousel { position: relative; width: 100%; height: 300px; overflow: hidden; border-radius: 10px; margin-bottom: 20px; }
 .carousel img { width: 100%; height: 100%; object-fit: cover; position: absolute; opacity: 0; transition: opacity .5s; }
 .carousel img.active { opacity: 1; }
@@ -1231,7 +1239,7 @@ cat > "$PKG_DIR/root/usr/lib/lua/luci/view/banner/display.htm" <<'DISPLAYVIEW'
 .disabled-message { background: rgba(100,100,100,.8); color: #fff; padding: 15px; border-radius: 10px; text-align: center; font-weight: 700; }
 /* 平板优化 */
 @media (max-width: 1024px) and (min-width: 769px) {
-    .banner-hero { padding: 15px; max-width: 95%; }
+    .banner-hero { padding: 15px; max-width: 90vw; }
     .carousel { height: 280px; }
     .nav-groups { grid-template-columns: repeat(2, 1fr); }
 }

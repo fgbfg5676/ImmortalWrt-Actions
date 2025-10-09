@@ -209,24 +209,20 @@ find "$CACHE_DIR" -type f -name '*.jpg' -mtime +"$CLEANUP_AGE" -delete
 log "[√] Removed JPEG files older than $CLEANUP_AGE days from $CACHE_DIR"
 CLEANER
 
-
-#--- 用這段新程式碼替換舊的 banner_manual_update.sh 區塊 ---
 cat > "$PKG_DIR/root/usr/bin/banner_manual_update.sh" <<'MANUALUPDATE'
 #!/bin/sh
 LOG="/tmp/banner_update.log"
 CACHE=$(uci -q get banner.banner.cache_dir || echo "/tmp/banner_cache")
 
 log() {
-    local msg="$1"; msg=$(echo "$msg" | sed -E 's|https?://[^[:space:]]+|[URL Redacted]|g' | sed -E 's|[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|[IP Redacted]|g' );
+    local msg="$1"; msg=$(echo "$msg" | sed -E 's|https?://[^[:space:]]+|[URL Redacted]|g' | sed -E 's|[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|[IP Redacted]|g'   );
     local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
     local log_file="/tmp/banner_update.log"
     echo "[$timestamp] $msg" >> "$log_file"
-    # 检查日志文件大小，超过 50KB (51200 字节) 时保留最后 50 行
     if [ -s "$log_file" ] && [ $(wc -c < "$log_file") -gt 51200 ]; then
         mv "$log_file" "$log_file.bak"
         tail -n 50 "$log_file.bak" > "$log_file"
         rm -f "$log_file.bak"
-        echo "[$timestamp] 日志文件 $log_file 已清理，保留最后 50 行" >> "$log_file"
     fi
 }
 check_lock() {
@@ -286,7 +282,7 @@ log "========== Manual Update Started =========="
 
 validate_url() {
     case "$1" in
-        http://*|https://* ) return 0;;
+        http://*|https://*  ) return 0;;
         *) log "[×] Invalid URL format: $1"; return 1;;
     esac
 }
@@ -300,8 +296,8 @@ if [ -n "$SELECTED_URL" ] && validate_url "$SELECTED_URL"; then
     for i in 1 2 3; do
         log "Attempt $i/3 with selected URL: $SELECTED_URL"
         curl -sL --max-time "$CURL_TIMEOUT" "$SELECTED_URL" -o "$CACHE/banner_new.json" 2>/dev/null
-        if [ -s "$CACHE/banner_new.json" ]; then
-            log "[√] Selected URL download successful."
+        if [ -s "$CACHE/banner_new.json" ] && jq empty "$CACHE/banner_new.json" 2>/dev/null; then
+            log "[√] Selected URL download successful (valid JSON)."
             SUCCESS=1
             break
         fi
@@ -316,8 +312,8 @@ if [ $SUCCESS -eq 0 ]; then
             for i in 1 2 3; do
                 log "Attempt $i/3 with fallback URL: $url"
                 curl -sL --max-time "$CURL_TIMEOUT" "$url" -o "$CACHE/banner_new.json" 2>/dev/null
-                if [ -s "$CACHE/banner_new.json" ]; then
-                    log "[√] Fallback URL download successful. Updating selected URL."
+                if [ -s "$CACHE/banner_new.json" ] && jq empty "$CACHE/banner_new.json" 2>/dev/null; then
+                    log "[√] Fallback URL download successful (valid JSON). Updating selected URL."
                     uci set banner.banner.selected_url="$url"
                     uci commit banner
                     SUCCESS=1
@@ -329,76 +325,48 @@ if [ $SUCCESS -eq 0 ]; then
         fi
     done
 fi
+
 if ! command -v jq >/dev/null 2>&1; then
     log "[×] jq not found, skipping JSON parsing."
     exit 0
 fi
-if [ $SUCCESS -eq 1 ] && [ -s "$CACHE/banner_new.json" ]; then
-    if ! jq empty "$CACHE/banner_new.json" >/dev/null 2>&1; then
-        log "[⚠️] Invalid JSON detected. Attempting to perform partial recovery."
-        jq "{
-            text: .text // "內容加載失敗",
-            color: .color // "white",
-            banner_texts: .banner_texts // [],
-            nav_tabs: .nav_tabs // [],
-            contact_info: .contact_info // {},
-            enabled: .enabled // "true"
-        }" "$CACHE/banner_new.json" > "$CACHE/banner_partial.json"
-
-        if [ -s "$CACHE/banner_partial.json" ] && jq empty "$CACHE/banner_partial.json" >/dev/null 2>&1; then
-            mv "$CACHE/banner_partial.json" "$CACHE/banner_new.json"
-            log "[✓] Partial data recovery successful. Key fields have been restored."
-        else
-            log "[×] Partial data recovery failed. Discarding invalid JSON."
-            rm -f "$CACHE/banner_new.json" "$CACHE/banner_partial.json"
-            SUCCESS=0
-        fi
-    fi
-fi
 
 if [ $SUCCESS -eq 1 ] && [ -s "$CACHE/banner_new.json" ]; then
-    ENABLED=$(jq -r '.enabled // "true"' "$CACHE/banner_new.json")
+    ENABLED=$(jq -r '.enabled' "$CACHE/banner_new.json")
     log "[DEBUG] Remote control - enabled field raw value: '$ENABLED'"
     
-    # 更严格的检查:false, 0, "false", "0" 都视为禁用
-    if [ "$ENABLED" = "false" ] || [ "$ENABLED" = "0" ] || [ "$ENABLED" = "\"false\"" ] || [ "$ENABLED" = "\"0\"" ]; then
+    if [ "$ENABLED" = "false" ] || [ "$ENABLED" = "0" ]; then
         MSG=$(jq -r '.disable_message // "服务已被管理员远程关闭"' "$CACHE/banner_new.json")
         
-        # 确保设置生效
         uci set banner.banner.bg_enabled='0'
         uci set banner.banner.remote_message="$MSG"
         uci commit banner
         
-        # 验证设置
         VERIFY=$(uci get banner.banner.bg_enabled)
         log "[!] Service remotely DISABLED. Reason: $MSG"
         log "[DEBUG] Verification - bg_enabled is now: $VERIFY"
         
-        # 强制重启uhttpd确保页面更新
+        log "Restarting uhttpd service to apply changes..."
         /etc/init.d/uhttpd restart >/dev/null 2>&1
         
         rm -f "$CACHE/banner_new.json"
         exit 0
     else
-        log "[DEBUG] Service remains ENABLED (enabled=$ENABLED)"
+        # 修正點 #2：移除了括號內的多餘空格
+        log "[DEBUG] Service remains ENABLED (enabled=$ENABLED )"
         TEXT=$(jsonfilter -i "$CACHE/banner_new.json" -e '@.text' 2>/dev/null)
         if [ -n "$TEXT" ]; then
             cp "$CACHE/banner_new.json" "$CACHE/nav_data.json"
             uci set banner.banner.text="$TEXT"
-            # 更新联系方式（只在有新值时更新，否则保留现有值）
-    CONTACT_EMAIL=$(jsonfilter -i "$CACHE/banner_new.json" -e '@.contact_info.email' 2>/dev/null)
-    CONTACT_TG=$(jsonfilter -i "$CACHE/banner_new.json" -e '@.contact_info.telegram' 2>/dev/null)
-    CONTACT_QQ=$(jsonfilter -i "$CACHE/banner_new.json" -e '@.contact_info.qq' 2>/dev/null)
-    
-    if [ -n "$CONTACT_EMAIL" ]; then
-        uci set banner.banner.contact_email="$CONTACT_EMAIL"
-    fi
-    if [ -n "$CONTACT_TG" ]; then
-        uci set banner.banner.contact_telegram="$CONTACT_TG"
-    fi
-    if [ -n "$CONTACT_QQ" ]; then
-        uci set banner.banner.contact_qq="$CONTACT_QQ"
-    fi
+            
+            CONTACT_EMAIL=$(jsonfilter -i "$CACHE/banner_new.json" -e '@.contact_info.email' 2>/dev/null)
+            CONTACT_TG=$(jsonfilter -i "$CACHE/banner_new.json" -e '@.contact_info.telegram' 2>/dev/null)
+            CONTACT_QQ=$(jsonfilter -i "$CACHE/banner_new.json" -e '@.contact_info.qq' 2>/dev/null)
+            
+            if [ -n "$CONTACT_EMAIL" ]; then uci set banner.banner.contact_email="$CONTACT_EMAIL"; fi
+            if [ -n "$CONTACT_TG" ]; then uci set banner.banner.contact_telegram="$CONTACT_TG"; fi
+            if [ -n "$CONTACT_QQ" ]; then uci set banner.banner.contact_qq="$CONTACT_QQ"; fi
+            
             uci set banner.banner.color="$(jsonfilter -i "$CACHE/banner_new.json" -e '@.color' 2>/dev/null || echo 'rainbow')"
             uci set banner.banner.banner_texts="$(jsonfilter -i "$CACHE/banner_new.json" -e '@.banner_texts[*]' 2>/dev/null | tr '\n' '|')"
             uci set banner.banner.bg_enabled='1'
@@ -414,7 +382,7 @@ if [ $SUCCESS -eq 1 ] && [ -s "$CACHE/banner_new.json" ]; then
 else
     log "[×] Update failed: All sources are unreachable or provided invalid data."
     if [ ! -f "$CACHE/nav_data.json" ]; then
-        log "[!] No local cache found. Using built-in default JSON data."
+        log "[!] No local cache found. Attempting to use built-in default JSON data."
         DEFAULT_JSON_PATH=$(grep -oE '/default/banner_default.json' /usr/lib/ipkg/info/luci-app-banner.list | sed 's|/default/banner_default.json||' | head -n1)/default/banner_default.json
         if [ -f "$DEFAULT_JSON_PATH" ]; then
             cp "$DEFAULT_JSON_PATH" "$CACHE/nav_data.json"
@@ -422,7 +390,6 @@ else
     fi
 fi
 MANUALUPDATE
-
 
 #--- 用這段新程式碼替換舊的 auto_update 腳本 ---
 cat > "$PKG_DIR/root/usr/bin/banner_auto_update.sh" <<'AUTOUPDATE'
@@ -507,13 +474,12 @@ PERSISTENT="$PERSISTENT_BG_PATH"
 log() {
     local msg="$1"
     local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
-    local log_file="$LOG"  # "$LOG" 已定义为 "/tmp/banner_bg.log"
+    local log_file="$LOG"
     echo "[$timestamp] $msg" >> "$log_file"
     if [ -s "$log_file" ] && [ $(wc -c < "$log_file") -gt 51200 ]; then
         mv "$log_file" "$log_file.bak"
         tail -n 50 "$log_file.bak" > "$log_file"
         rm -f "$log_file.bak"
-        echo "[$timestamp] 日志文件 $log_file 已清理，保留最后 50 行" >> "$log_file"
     fi
 }
 
@@ -541,7 +507,6 @@ check_lock() {
 if ! command -v uci >/dev/null 2>&1; then
     DEST="$WEB"
 else
-    # 讀取 UCI 配置，如果不存在，則使用 config.sh 的預設值
     [ "$(uci -q get banner.banner.persistent_storage)" = "1" ] && DEST="$PERSISTENT" || DEST="$WEB"
 fi
 mkdir -p "$CACHE" "$WEB" "$PERSISTENT"
@@ -552,13 +517,13 @@ while [ ! -f "$JSON" ] && [ $WAIT_COUNT -lt 5 ]; do
     log "Waiting for nav_data.json... ($WAIT_COUNT/5)"
     sleep 1; WAIT_COUNT=$((WAIT_COUNT + 1))
 done
-#--- 用這段新程式碼替換舊的 JSON 檢查 ---
+
 if [ ! -f "$JSON" ]; then
     log "[!] nav_data.json not found, will use cached backgrounds if available."
     # 尝试使用已缓存的背景图
     for i in 0 1 2; do
         if [ -f "$DEST/bg${i}.jpg" ]; then
-            cp "$DEST/bg${i}.jpg" "$CACHE/current_bg.jpg" 2>/dev/null
+            cp "$DEST/bg${i}.jpg" "$WEB/current_bg.jpg" 2>/dev/null
             log "[i] Using cached bg${i}.jpg as fallback"
             exit 0
         fi
@@ -574,26 +539,24 @@ trap 'rm -f "$LOCK_FILE"' EXIT
 
 validate_url() {
     case "$1" in
-        http://*|https://* ) return 0;;
+        http://*|https://*  ) return 0;;
         *) log "[×] Invalid URL format: $1"; return 1;;
     esac
 }
+
 validate_jpeg() {
     [ ! -s "$1" ] && return 1
-    
-    # 检查文件头的前2个字节(JPG魔数)
+    # 优先使用 od 检查文件头魔术数字
     local magic=$(od -An -t x1 -N 2 "$1" 2>/dev/null | tr -d ' \n')
     if [ "$magic" = "ffd8" ]; then
         return 0
     fi
-    
-    # 备用检查:使用 file 命令(如果可用)
+    # 备用检查: 使用 file 命令 (如果可用)
     if command -v file >/dev/null 2>&1; then
         if file "$1" | grep -qiE 'JPEG|JPG'; then
             return 0
         fi
     fi
-    
     return 1
 }
 
@@ -611,7 +574,6 @@ if [ "$(uci -q get banner.banner.persistent_storage)" = "1" ]; then
     rm -f "$WEB"/bg{0,1,2}.jpg
 fi
 
-# 從 UCI 或全局配置讀取文件大小限制
 MAX_SIZE=$(uci -q get banner.banner.max_file_size || echo "$MAX_FILE_SIZE")
 log "Using max file size limit: $MAX_SIZE bytes."
 
@@ -623,26 +585,24 @@ for i in 0 1 2; do
         log "  Downloading image for bg${i}.jpg..."
         TMPFILE="$DEST/bg$i.tmp"
         
-  # 简化下载逻辑，不依赖 --max-filesize
-        log "  Attempting download from: $(echo "$URL" | sed 's/https:\/\///')"
-# 下载并捕获HTTP状态码
-HTTP_RESPONSE=$(curl -sL --max-time 20 -w "\nHTTP_CODE:%{http_code}" "$URL" -o "$TMPFILE" 2>&1)
-HTTP_CODE=$(echo "$HTTP_RESPONSE" | tail -n 1 | grep -oP 'HTTP_CODE:\K\d+')
-log "  HTTP response code: $HTTP_CODE"
-if [ -n "$HTTP_CODE" ] && [ "$HTTP_CODE" != "200" ]; then
-    log "  [×] HTTP error: $HTTP_CODE"
-    rm -f "$TMPFILE"
-    continue
-fi
-        
-        # 检查下载是否成功
-        if [ ! -s "$TMPFILE" ]; then
-            log "  [×] Download failed for $URL"
+        log "  Attempting download from: $(echo "$URL" | sed 's|https?://||' )"
+        # 整合修復：捕獲 HTTP 狀態碼
+        HTTP_RESPONSE=$(curl -sL --max-time 20 -w "\nHTTP_CODE:%{http_code}" "$URL" -o "$TMPFILE" 2>&1 )
+        HTTP_CODE=$(echo "$HTTP_RESPONSE" | tail -n 1 | grep -oP 'HTTP_CODE:\K\d+')
+        log "  HTTP response code: $HTTP_CODE"
+
+        if [ -z "$HTTP_CODE" ] || [ "$HTTP_CODE" != "200" ]; then
+            log "  [×] HTTP error or no code received: $HTTP_CODE"
             rm -f "$TMPFILE"
             continue
         fi
         
-        # 手动检查文件大小
+        if [ ! -s "$TMPFILE" ]; then
+            log "  [×] Download failed for $URL (empty file)"
+            rm -f "$TMPFILE"
+            continue
+        fi
+        
         FILE_SIZE=$(stat -c %s "$TMPFILE" 2>/dev/null || wc -c < "$TMPFILE" 2>/dev/null || echo 999999999)
         if [ "$FILE_SIZE" -gt "$MAX_SIZE" ]; then
             log "  [×] File too large: $FILE_SIZE bytes (limit: $MAX_SIZE)"
@@ -650,22 +610,24 @@ fi
             continue
         fi
 
-        # 检查文件是否为 HTML（被重定向到登录页）
-if head -n 1 "$TMPFILE" 2>/dev/null | grep -q "<!DOCTYPE\|<html"; then
-    log "  [×] Downloaded HTML instead of image (possible redirect/block)"
-    rm -f "$TMPFILE"
-    continue
-fi
+        if head -n 1 "$TMPFILE" 2>/dev/null | grep -q "<!DOCTYPE\|<html"; then
+            log "  [×] Downloaded HTML instead of image (possible redirect/block)"
+            rm -f "$TMPFILE"
+            continue
+        fi
+
         if validate_jpeg "$TMPFILE"; then
             mv "$TMPFILE" "$DEST/bg$i.jpg"
             chmod 644 "$DEST/bg$i.jpg"
             log "  [√] bg${i}.jpg downloaded and validated successfully."
             DOWNLOAD_SUCCESS=1
+            # 如果启用了永久存储，也复制一份到 Web 目录
             if [ "$(uci -q get banner.banner.persistent_storage)" = "1" ]; then
                 cp "$DEST/bg$i.jpg" "$WEB/bg$i.jpg" 2>/dev/null
             fi
-            if [ $i -eq 0 ]; then
-                cp "$DEST/bg$i.jpg" "$CACHE/current_bg.jpg" 2>/dev/null
+            # 总是将第一张成功下载的图片设为默认的 current_bg
+            if [ ! -f "$WEB/current_bg.jpg" ]; then
+                cp "$DEST/bg$i.jpg" "$WEB/current_bg.jpg" 2>/dev/null
             fi
         else
             log "  [×] Downloaded file for bg${i}.jpg is invalid or not a JPEG."
@@ -677,16 +639,15 @@ fi
 done
 
 if [ $DOWNLOAD_SUCCESS -eq 0 ]; then
-    log "[!] No images were downloaded for group ${BG_GROUP}. Keeping existing cached images."
-    # 不做任何操作,保留现有的缓存图片
+    log "[!] No images were downloaded for group ${BG_GROUP}. Keeping existing images if any."
 fi
 
-if [ ! -s "$CACHE/current_bg.jpg" ]; then
-    log "[!] current_bg.jpg is missing. Attempting to restore from cached backgrounds."
-    # 随机选择一张缓存的背景
-    for i in $(shuf -i 0-2 2>/dev/null || echo "0 1 2"); do
+# 确保 current_bg.jpg 存在
+if [ ! -s "$WEB/current_bg.jpg" ]; then
+    log "[!] current_bg.jpg is missing. Attempting to restore from downloaded backgrounds."
+    for i in 0 1 2; do
         if [ -s "$DEST/bg${i}.jpg" ]; then
-            cp "$DEST/bg${i}.jpg" "$CACHE/current_bg.jpg" 2>/dev/null
+            cp "$DEST/bg${i}.jpg" "$WEB/current_bg.jpg" 2>/dev/null
             log "[i] Restored current_bg.jpg from bg${i}.jpg"
             break
         fi
@@ -762,20 +723,32 @@ start() {
         BG_DIR="/www/luci-static/banner"
     fi
 
-   # 确保缓存目录有图片
+    # 确保缓存目录和 Web 目录都有 current_bg.jpg
     if [ ! -s /tmp/banner_cache/current_bg.jpg ]; then
         # 优先级1: 检查web目录
         if [ -f "$BG_DIR/bg0.jpg" ] && [ -s "$BG_DIR/bg0.jpg" ]; then
             cp "$BG_DIR/bg0.jpg" /tmp/banner_cache/current_bg.jpg
+            cp "$BG_DIR/bg0.jpg" /www/luci-static/banner/current_bg.jpg
             log_msg "Using existing bg0.jpg from $BG_DIR"
         # 优先级2: 使用打包的离线图片
         elif [ -f "/usr/share/banner/bg0.jpg" ]; then
             cp "/usr/share/banner/bg0.jpg" "$BG_DIR/bg0.jpg"
             cp "/usr/share/banner/bg0.jpg" /tmp/banner_cache/current_bg.jpg
+            cp "/usr/share/banner/bg0.jpg" /www/luci-static/banner/current_bg.jpg
             log_msg "Initialized offline background from package"
         else
             log_msg "WARNING: No background image available"
         fi
+    fi
+    
+    # 确保 Web 目录有 current_bg.jpg (即使缓存已存在)
+    if [ ! -s /www/luci-static/banner/current_bg.jpg ]; then
+        if [ -s /tmp/banner_cache/current_bg.jpg ]; then
+            cp /tmp/banner_cache/current_bg.jpg /www/luci-static/banner/current_bg.jpg
+        elif [ -s "$BG_DIR/bg0.jpg" ]; then
+            cp "$BG_DIR/bg0.jpg" /www/luci-static/banner/current_bg.jpg
+        fi
+        log_msg "Ensured current_bg.jpg exists in web directory"
     fi
 
     # 启动后台更新和加载脚本，输出到日志
@@ -940,19 +913,26 @@ end
 
 function action_do_set_bg()
     local uci = require("uci").cursor()
-    local bg = luci.http.formvalue("bg" )
+    local bg = luci.http.formvalue("bg")
     if bg and bg:match("^[0-2]$") then
         uci:set("banner", "banner", "current_bg", bg)
         uci:commit("banner")
         local persistent = uci:get("banner", "banner", "persistent_storage") or "0"
         local src_path = (persistent == "1") and "/overlay/banner" or "/www/luci-static/banner"
+        
+        -- 安全检查
         if not (src_path == "/overlay/banner" or src_path == "/www/luci-static/banner") then
-            luci.http.status(400, "Invalid source directory" )
+            luci.http.status(400, "Invalid source directory")
             return
         end
-        luci.sys.call(string.format("cp %s/bg%s.jpg /tmp/banner_cache/current_bg.jpg 2>/dev/null", src_path, bg))
+        
+        -- 修复点:将选择的背景复制到 Web 目录并命名为 current_bg.jpg
+        local cmd1 = string.format("cp %s/bg%s.jpg /www/luci-static/banner/current_bg.jpg 2>/dev/null", src_path, bg)
+        local cmd2 = string.format("cp %s/bg%s.jpg /tmp/banner_cache/current_bg.jpg 2>/dev/null", src_path, bg)
+        luci.sys.call(cmd1)
+        luci.sys.call(cmd2)
     end
-    luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/display" ))
+    luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/display"))
 end
 
 function action_do_clear_cache()
@@ -1124,21 +1104,32 @@ function action_do_set_persistent_storage()
     local persistent = luci.http.formvalue("persistent_storage")
     if persistent and persistent:match("^[0-1]$") then
         local old_persistent = uci:get("banner", "banner", "persistent_storage") or "0"
-        uci:set("banner", "banner", "persistent_storage", persistent)
-        uci:commit("banner")
         
-        -- 只在状态改变时复制文件
+        -- 只有在状态真正改变时才执行操作
         if persistent ~= old_persistent then
+            uci:set("banner", "banner", "persistent_storage", persistent)
+            
+            -- 根据新的状态复制文件
             if persistent == "1" then
+                -- 从 RAM 复制到 Flash
                 luci.sys.call("mkdir -p /overlay/banner && cp -f /www/luci-static/banner/bg*.jpg /overlay/banner/ 2>/dev/null")
+                -- 同步 current_bg.jpg
+                luci.sys.call("cp -f /www/luci-static/banner/current_bg.jpg /overlay/banner/current_bg.jpg 2>/dev/null")
             else
+                -- 从 Flash 复制到 RAM
                 luci.sys.call("mkdir -p /www/luci-static/banner && cp -f /overlay/banner/bg*.jpg /www/luci-static/banner/ 2>/dev/null")
+                -- 同步 current_bg.jpg
+                luci.sys.call("cp -f /overlay/banner/current_bg.jpg /www/luci-static/banner/current_bg.jpg 2>/dev/null")
             end
+            
+            uci:commit("banner")
         end
+        
+        -- 修复点:不再 redirect,只返回成功状态码
+        luci.http.status(200, "OK")
     else
         luci.http.status(400, "Invalid persistent storage value")
     end
-    luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/settings"))
 end
 
 function action_check_bg_complete()
@@ -1173,12 +1164,13 @@ cat > "$PKG_DIR/root/usr/lib/lua/luci/view/banner/global_style.htm" <<'GLOBALSTY
 local uci = require("uci").cursor()
 local opacity = tonumber(uci:get("banner", "banner", "opacity") or "50")
 local alpha = (100 - opacity) / 100
-local bg_path = "/luci-static/banner"
+-- 修复点:使用 current_bg.jpg 而非固定的 bg0.jpg
+local bg_url = "/luci-static/banner/current_bg.jpg"
 %>
 <style type="text/css">
 html, body {
     background: linear-gradient(rgba(0,0,0,<%=alpha%>), rgba(0,0,0,<%=alpha%>)), 
-                url(/luci-static/banner/bg0.jpg?t=<%=os.time()%>) center/cover fixed no-repeat !important;
+                url(<%=bg_url%>?t=<%=os.time()%>) center/cover fixed no-repeat !important;
     min-height: 100vh !important;
 }
 #maincontent, .container, .cbi-map, .cbi-section, .cbi-map > *, .cbi-section > *, .cbi-section-node, .table, .tr, .td, .th {

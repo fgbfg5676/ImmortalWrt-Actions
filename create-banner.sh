@@ -359,6 +359,9 @@ if [ $SUCCESS -eq 1 ] && [ -s "$CACHE/banner_new.json" ]; then
         log "Restarting uhttpd service to apply changes..."
         /etc/init.d/uhttpd restart >/dev/null 2>&1
         
+        # 等待服务完全重启
+        sleep 3
+        
         exit 0
    else
         log "[DEBUG] Service remains ENABLED (enabled=$ENABLED)"
@@ -384,6 +387,9 @@ if [ $SUCCESS -eq 1 ] && [ -s "$CACHE/banner_new.json" ]; then
             
             uci set banner.banner.last_update=$(date +%s)
             uci commit banner
+           # 清除可能残留的锁文件
+            rm -f /tmp/banner_manual_update.lock /tmp/banner_auto_update.lock 2>/dev/null
+            
             log "[√] Manual update applied successfully."
         else
             log "[×] Update failed: Invalid JSON content (missing 'text' field)."
@@ -745,47 +751,44 @@ start() {
     mkdir -p /tmp/banner_cache /www/luci-static/banner /overlay/banner
     chmod 755 /tmp/banner_cache /www/luci-static/banner /overlay/banner
 
-    # 确定背景图目录
-    PERSISTENT=$(uci -q get banner.banner.persistent_storage || echo "0")
-    if [ "$PERSISTENT" = "1" ]; then
-        BG_DIR="/overlay/banner"
+   # 确定背景图目录
+PERSISTENT=$(uci -q get banner.banner.persistent_storage || echo "0")
+if [ "$PERSISTENT" = "1" ]; then
+    BG_DIR="/overlay/banner"
+else
+    BG_DIR="/www/luci-static/banner"
+fi
+
+# 强制同步背景图到 web 目录
+if [ "$PERSISTENT" = "1" ] && [ -d "/overlay/banner" ]; then
+    for i in 0 1 2; do
+        if [ -f "/overlay/banner/bg${i}.jpg" ]; then
+            cp "/overlay/banner/bg${i}.jpg" "/www/luci-static/banner/bg${i}.jpg" 2>/dev/null
+        fi
+    done
+fi
+
+# 微调：开机优先显示系统默认图片
+if [ ! -s "/www/luci-static/banner/current_bg.jpg" ]; then
+    if [ -f "/usr/share/banner/bg0.jpg" ]; then
+        cp "/usr/share/banner/bg0.jpg" "/www/luci-static/banner/current_bg.jpg"
+        log_msg "Initialized current_bg.jpg from offline default"
     else
-        BG_DIR="/www/luci-static/banner"
+        log_msg "WARNING: No background image available"
     fi
+fi
 
-    # 确保缓存目录和 Web 目录都有 current_bg.jpg
-    if [ ! -s /tmp/banner_cache/current_bg.jpg ]; then
-        # 优先级1: 检查web目录
-        if [ -f "$BG_DIR/bg0.jpg" ] && [ -s "$BG_DIR/bg0.jpg" ]; then
-            cp "$BG_DIR/bg0.jpg" /tmp/banner_cache/current_bg.jpg
-            cp "$BG_DIR/bg0.jpg" /www/luci-static/banner/current_bg.jpg
-            log_msg "Using existing bg0.jpg from $BG_DIR"
-        # 优先级2: 使用打包的离线图片
-        elif [ -f "/usr/share/banner/bg0.jpg" ]; then
-            cp "/usr/share/banner/bg0.jpg" "$BG_DIR/bg0.jpg"
-            cp "/usr/share/banner/bg0.jpg" /tmp/banner_cache/current_bg.jpg
-            cp "/usr/share/banner/bg0.jpg" /www/luci-static/banner/current_bg.jpg
-            log_msg "Initialized offline background from package"
-        else
-            log_msg "WARNING: No background image available"
-        fi
-    fi
-    
-    # 确保 Web 目录有 current_bg.jpg (即使缓存已存在)
-    if [ ! -s /www/luci-static/banner/current_bg.jpg ]; then
-        if [ -s /tmp/banner_cache/current_bg.jpg ]; then
-            cp /tmp/banner_cache/current_bg.jpg /www/luci-static/banner/current_bg.jpg
-        elif [ -s "$BG_DIR/bg0.jpg" ]; then
-            cp "$BG_DIR/bg0.jpg" /www/luci-static/banner/current_bg.jpg
-        fi
-        log_msg "Ensured current_bg.jpg exists in web directory"
-    fi
+# 如果 overlay/bg0 存在，则覆盖 current_bg.jpg
+if [ "$PERSISTENT" = "1" ] && [ -f "/overlay/banner/bg0.jpg" ]; then
+    cp "/overlay/banner/bg0.jpg" "/www/luci-static/banner/current_bg.jpg"
+    log_msg "Overlay bg0.jpg applied to current_bg.jpg"
+fi
 
-    # 启动后台更新和加载脚本，输出到日志
-    /usr/bin/banner_auto_update.sh >> /tmp/banner_update.log 2>&1 &
-    sleep 2
-    BG_GROUP=$(uci -q get banner.banner.bg_group || echo 1)
-    /usr/bin/banner_bg_loader.sh "$BG_GROUP" >> /tmp/banner_update.log 2>&1 &
+# 启动后台更新和加载脚本，输出到日志
+/usr/bin/banner_auto_update.sh >> /tmp/banner_update.log 2>&1 &
+sleep 2
+BG_GROUP=$(uci -q get banner.banner.bg_group || echo 1)
+/usr/bin/banner_bg_loader.sh "$BG_GROUP" >> /tmp/banner_update.log 2>&1 &
 }
 
 
@@ -894,7 +897,7 @@ end
 
 function api_set_bg()
     local uci = require("uci").cursor()
-    local bg = luci.http.formvalue("bg" )
+    local bg = luci.http.formvalue("bg")
     if bg and bg:match("^[0-2]$") then
         uci:set("banner", "banner", "current_bg", bg)
         uci:commit("banner")
@@ -904,6 +907,10 @@ function api_set_bg()
             return json_response({ success = false, message = "Invalid source directory" })
         end
         luci.sys.call(string.format("cp %s/bg%s.jpg /www/luci-static/banner/current_bg.jpg 2>/dev/null", src_path, bg))
+        
+        -- 强制刷新缓存
+        luci.sys.call("sync")
+        
         json_response({ success = true, message = "背景已切换为 " .. bg })
     else
         json_response({ success = false, message = "Invalid background index" })
@@ -1250,9 +1257,9 @@ cat > "$PKG_DIR/root/usr/lib/lua/luci/view/banner/display.htm" <<'DISPLAYVIEW'
 <script type="text/javascript">
 var images = document.querySelectorAll('.carousel img'), current = 0;
 function showImage(index) { images.forEach(function(img, i) { img.classList.toggle('active', i === index); }); }
-if (images.length > 1) { showImage(current); setInterval(function() { current = (current + 1) % images.length; showImage(current); }, <%=carousel_interval || 5000%>); } else if (images.length > 0) { showImage(0); }
+if (images.length > 1) { showImage(current); setInterval(function() { current = (current + 1) % images.length; showImage(current); }, <%=carousel_interval or 5000%>); } else if (images.length > 0) { showImage(0); }
 
-var bannerTexts = '<%=banner_texts%>'.split('|').filter(Boolean), textIndex = 0;
+var bannerTexts = '<%=luci.util.pcdata(banner_texts)%>'.split('|').filter(Boolean), textIndex = 0;
 if (bannerTexts.length > 1) {
     var textElem = document.getElementById('banner-text');
     if (textElem) {
@@ -1260,7 +1267,7 @@ if (bannerTexts.length > 1) {
             textIndex = (textIndex + 1) % bannerTexts.length;
             textElem.style.opacity = 0;
             setTimeout(function() { textElem.textContent = bannerTexts[textIndex]; textElem.style.opacity = 1; }, 300);
-        }, <%=carousel_interval || 5000%>);
+        }, <%=carousel_interval or 5000%>);
     }
 }
 
@@ -1283,11 +1290,26 @@ function toggleLinks(el) {
 }
 
 function changeBg(n) {
-    var f = document.createElement('form');
-    f.method = 'POST';
-    f.action = '<%=luci.dispatcher.build_url("admin/status/banner/api_set_bg")%>';
-    f.innerHTML = '<input name="token" type="hidden" value="<%=token%>"><input name="bg" value="' + n + '">';
-    document.body.appendChild(f).submit();
+    var formData = new URLSearchParams();
+    formData.append('token', '<%=token%>');
+    formData.append('bg', n);
+    
+    fetch('<%=luci.dispatcher.build_url("admin/status/banner/api_set_bg")%>', {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => response.json())
+    .then(result => {
+        if (result.success) {
+            // 直接刷新页面应用新背景
+            window.location.reload();
+        } else {
+            alert('切换失败: ' + result.message);
+        }
+    })
+    .catch(error => {
+        alert('请求失败: ' + error);
+    });
 }
 
 function copyText(text) {
@@ -1418,6 +1440,41 @@ if bg_enabled == "1" then
     <% end %>
 </div>
 <% end %>
+<% 
+local uci = require("uci").cursor()
+local bg_enabled = uci:get("banner", "banner", "bg_enabled") or "1"
+if bg_enabled == "1" then 
+%>
+<div class="bg-selector">
+    <% for i = 0, 2 do %>
+    <div class="bg-circle" style="background-image:url(/luci-static/banner/bg<%=i%>.jpg?t=<%=os.time()%>)" onclick="changeBgSettings(<%=i%>)" title="切换背景 <%=i+1%>"></div>
+    <% end %>
+</div>
+<script>
+function changeBgSettings(n) {
+    var formData = new URLSearchParams();
+    formData.append('token', '<%=token%>');
+    formData.append('bg', n);
+    
+    fetch('<%=luci.dispatcher.build_url("admin/status/banner/api_set_bg")%>', {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => response.json())
+    .then(result => {
+        if (result.success) {
+            window.location.reload();
+        } else {
+            alert('切换失败: ' + result.message);
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        alert('请求失败，请稍后重试');
+    });
+}
+</script>
+<% end %>
 <%+footer%>
 SETTINGSVIEW
 
@@ -1540,6 +1597,41 @@ if bg_enabled == "1" then
     <div class="bg-circle" style="background-image:url(/luci-static/banner/bg<%=i%>.jpg?t=<%=os.time()%>)" onclick="parent.location.href='<%=luci.dispatcher.build_url("admin/status/banner")%>/api_set_bg?bg=<%=i%>&token=<%=token%>'" title="切换背景 <%=i+1%>"></div>
     <% end %>
 </div>
+<% end %>
+<% 
+local uci = require("uci").cursor()
+local bg_enabled = uci:get("banner", "banner", "bg_enabled") or "1"
+if bg_enabled == "1" then 
+%>
+<div class="bg-selector">
+    <% for i = 0, 2 do %>
+    <div class="bg-circle" style="background-image:url(/luci-static/banner/bg<%=i%>.jpg?t=<%=os.time()%>)" onclick="changeBgBackground(<%=i%>)" title="切换背景 <%=i+1%>"></div>
+    <% end %>
+</div>
+<script>
+function changeBgBackground(n) {
+    var formData = new URLSearchParams();
+    formData.append('token', '<%=token%>');
+    formData.append('bg', n);
+    
+    fetch('<%=luci.dispatcher.build_url("admin/status/banner/api_set_bg")%>', {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => response.json())
+    .then(result => {
+        if (result.success) {
+            window.location.reload();
+        } else {
+            alert('切换失败: ' + result.message);
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        alert('请求失败，请稍后重试');
+    });
+}
+</script>
 <% end %>
 <%+footer%>
 BGVIEW

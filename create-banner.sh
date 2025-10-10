@@ -335,25 +335,33 @@ if [ $SUCCESS -eq 1 ] && [ -s "$CACHE/banner_new.json" ]; then
     ENABLED=$(jq -r '.enabled' "$CACHE/banner_new.json")
     log "[DEBUG] Remote control - enabled field raw value: '$ENABLED'"
     
-    if [ "$ENABLED" = "false" ] || [ "$ENABLED" = "0" ]; then
+   if [ "$ENABLED" = "false" ] || [ "$ENABLED" = "0" ]; then
         MSG=$(jq -r '.disable_message // "服务已被管理员远程关闭"' "$CACHE/banner_new.json")
         
+        # 设置禁用状态
         uci set banner.banner.bg_enabled='0'
         uci set banner.banner.remote_message="$MSG"
+        
+        # 清空横幅文本和导航数据(保留背景和联系方式)
+        uci set banner.banner.text=""
+        uci set banner.banner.banner_texts=""
         uci commit banner
+        
+        # 删除导航数据缓存(保留背景图缓存)
+        rm -f "$CACHE/nav_data.json" 2>/dev/null
+        rm -f "$CACHE/banner_new.json" 2>/dev/null
         
         VERIFY=$(uci get banner.banner.bg_enabled)
         log "[!] Service remotely DISABLED. Reason: $MSG"
         log "[DEBUG] Verification - bg_enabled is now: $VERIFY"
+        log "[INFO] Banner text and navigation cleared, backgrounds preserved"
         
         log "Restarting uhttpd service to apply changes..."
         /etc/init.d/uhttpd restart >/dev/null 2>&1
         
-        rm -f "$CACHE/banner_new.json"
         exit 0
-    else
-        # 修正點 #2：移除了括號內的多餘空格
-        log "[DEBUG] Service remains ENABLED (enabled=$ENABLED )"
+   else
+        log "[DEBUG] Service remains ENABLED (enabled=$ENABLED)"
         TEXT=$(jsonfilter -i "$CACHE/banner_new.json" -e '@.text' 2>/dev/null)
         if [ -n "$TEXT" ]; then
             cp "$CACHE/banner_new.json" "$CACHE/nav_data.json"
@@ -369,8 +377,11 @@ if [ $SUCCESS -eq 1 ] && [ -s "$CACHE/banner_new.json" ]; then
             
             uci set banner.banner.color="$(jsonfilter -i "$CACHE/banner_new.json" -e '@.color' 2>/dev/null || echo 'rainbow')"
             uci set banner.banner.banner_texts="$(jsonfilter -i "$CACHE/banner_new.json" -e '@.banner_texts[*]' 2>/dev/null | tr '\n' '|')"
+            
+            # 关键修复: 确保启用状态
             uci set banner.banner.bg_enabled='1'
             uci delete banner.banner.remote_message >/dev/null 2>&1
+            
             uci set banner.banner.last_update=$(date +%s)
             uci commit banner
             log "[√] Manual update applied successfully."
@@ -399,16 +410,17 @@ LOG="/tmp/banner_update.log"
 log() {
     local msg="$1"
     local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
-    local log_file="$LOG"  # "$LOG" 已定义为 "/tmp/banner_update.log"
+    local log_file="$LOG"
     msg=$(echo "$msg" | sed -E 's|https?://[^[:space:]]+|[URL Redacted]|g' | sed -E 's|[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|[IP Redacted]|g')
     echo "[$timestamp] $msg" >> "$log_file"
     if [ -s "$log_file" ] && [ $(wc -c < "$log_file") -gt 51200 ]; then
         mv "$log_file" "$log_file.bak"
         tail -n 50 "$log_file.bak" > "$log_file"
         rm -f "$log_file.bak"
-        echo "[$timestamp] 日志文件 $log_file 已清理，保留最后 50 行" >> "$log_file"
+        echo "[$timestamp] 日志文件 $log_file 已清理,保留最后 50 行" >> "$log_file"
     fi
 }
+
 check_lock() {
     local lock_file="$1"; local max_age="$2";
     if [ -f "$lock_file" ]; then
@@ -433,19 +445,26 @@ if ! check_lock "$LOCK" 60; then
 fi
 trap "rm -f $LOCK" EXIT
 
+# 检查是否被禁用
+BG_ENABLED=$(uci -q get banner.banner.bg_enabled || echo "1")
+if [ "$BG_ENABLED" = "0" ]; then
+    log "[INFO] Service is disabled, auto-update skipped"
+    exit 0
+fi
+
 LAST_UPDATE=$(uci -q get banner.banner.last_update || echo 0)
 CURRENT_TIME=$(date +%s)
 INTERVAL=$(uci -q get banner.banner.update_interval || echo 10800)
 
 if [ $((CURRENT_TIME - LAST_UPDATE)) -lt "$INTERVAL" ]; then
-    log "[√] 未到更新时间，跳过自动更新"
+    log "[√] 未到更新时间,跳过自动更新"
     exit 0
 fi
 
 log "========== Auto Update Started =========="
 /usr/bin/banner_manual_update.sh
 if [ $? -ne 0 ]; then
-    log "[×] 自动更新失败，查看 /tmp/banner_update.log 获取详情"
+    log "[×] 自动更新失败,查看 /tmp/banner_update.log 获取详情"
 fi
 AUTOUPDATE
 
@@ -585,15 +604,26 @@ for i in 0 1 2; do
         log "  Downloading image for bg${i}.jpg..."
         TMPFILE="$DEST/bg$i.tmp"
         
-        log "  Attempting download from: $(echo "$URL" | sed 's|https?://||' )"
-        # 整合修復：捕獲 HTTP 狀態碼
-        HTTP_RESPONSE=$(curl -sL --max-time 20 -w "\nHTTP_CODE:%{http_code}" "$URL" -o "$TMPFILE" 2>&1 )
-        HTTP_CODE=$(echo "$HTTP_RESPONSE" | tail -n 1 | grep -oP 'HTTP_CODE:\K\d+')
-        log "  HTTP response code: $HTTP_CODE"
-
-        if [ -z "$HTTP_CODE" ] || [ "$HTTP_CODE" != "200" ]; then
-            log "  [×] HTTP error or no code received: $HTTP_CODE"
-            rm -f "$TMPFILE"
+       log "  Attempting download from: $(echo "$URL" | sed 's|https?://[^/]*/|.../|' )"
+        
+        # 修复: 简化HTTP请求,使用3次重试
+        DOWNLOAD_OK=0
+        for attempt in 1 2 3; do
+            HTTP_CODE=$(curl -sL --max-time 20 -w "%{http_code}" -o "$TMPFILE" "$URL" 2>/dev/null)
+            
+            if [ "$HTTP_CODE" = "200" ] && [ -s "$TMPFILE" ]; then
+                DOWNLOAD_OK=1
+                log "  [√] Download successful on attempt $attempt (HTTP $HTTP_CODE)"
+                break
+            else
+                log "  [×] Attempt $attempt failed (HTTP: ${HTTP_CODE:-timeout})"
+                rm -f "$TMPFILE"
+                [ $attempt -lt 3 ] && sleep 2
+            fi
+        done
+        
+        if [ $DOWNLOAD_OK -eq 0 ]; then
+            log "  [×] All 3 download attempts failed"
             continue
         fi
         
@@ -817,7 +847,16 @@ function action_display()
     local uci = require("uci").cursor()
     local fs = require("nixio.fs")
     if uci:get("banner", "banner", "bg_enabled") == "0" then
-        luci.template.render("banner/display", { bg_enabled = "0", remote_message = uci:get("banner", "banner", "remote_message") or "服务已被远程禁用" })
+        local contact_email = uci:get("banner", "banner", "contact_email") or "example@email.com"
+        local contact_telegram = uci:get("banner", "banner", "contact_telegram") or "@fgnb111999"
+        local contact_qq = uci:get("banner", "banner", "contact_qq") or "183452852"
+        luci.template.render("banner/display", { 
+            bg_enabled = "0", 
+            remote_message = uci:get("banner", "banner", "remote_message") or "服务已被远程禁用",
+            contact_email = contact_email,
+            contact_telegram = contact_telegram,
+            contact_qq = contact_qq
+        })
         return
     end
     local nav_data = { nav_tabs = {} }; pcall(function() nav_data = require("luci.jsonc").parse(fs.readfile("/tmp/banner_cache/nav_data.json")) end)
@@ -1154,9 +1193,11 @@ cat > "$PKG_DIR/root/usr/lib/lua/luci/view/banner/display.htm" <<'DISPLAYVIEW'
 }
 </style>
 <% if bg_enabled == "0" then %>
-    <div class="disabled-message"><%= pcdata(remote_message) %></div>
-<% else %>
     <div class="banner-hero">
+        <div class="disabled-message">
+            <h3 style="color:#fff;margin-bottom:15px;">⚠️ 服务已暂停</h3>
+            <p><%= pcdata(remote_message) %></p>
+        </div>
         <!-- 横幅文字移到最上方 -->
         <div class="banner-scroll" id="banner-text"><%= pcdata(text) %></div>
         
@@ -1198,47 +1239,7 @@ cat > "$PKG_DIR/root/usr/lib/lua/luci/view/banner/display.htm" <<'DISPLAYVIEW'
         </div>
         <% end %>
     </div>
-    <div class="bg-selector">
-        <% for i = 0, 2 do %>
-        <div class="bg-circle" style="background-image:url(/luci-static/banner/bg<%=i%>.jpg?t=<%=os.time()%>)" onclick="changeBg(<%=i%>)" title="切换背景 <%=i+1%>"></div>
-        <% end %>
-    </div>
-<% end %>
-<script type="text/javascript">
-var images = document.querySelectorAll('.carousel img'), current = 0;
-function showImage(index) { images.forEach(function(img, i) { img.classList.toggle('active', i === index); }); }
-if (images.length > 1) { showImage(current); setInterval(function() { current = (current + 1) % images.length; showImage(current); }, <%=carousel_interval%>); } else if (images.length > 0) { showImage(0); }
-
-var bannerTexts = '<%=banner_texts%>'.split('|').filter(Boolean), textIndex = 0;
-if (bannerTexts.length > 1) {
-    var textElem = document.getElementById('banner-text');
-    setInterval(function() {
-        textIndex = (textIndex + 1) % bannerTexts.length;
-        textElem.style.opacity = 0;
-        setTimeout(function() { textElem.textContent = bannerTexts[textIndex]; textElem.style.opacity = 1; }, 300);
-    }, <%=carousel_interval%>);
-}
-
-<% if nav_data and nav_data.nav_tabs then %>
-var currentPage = 1, totalPages = <%=math.ceil(#nav_data.nav_tabs/4)%>;
-function changePage(delta) { currentPage = Math.max(1, Math.min(totalPages, currentPage + delta)); showPage(currentPage); }
-function showPage(page) {
-    document.querySelectorAll('.nav-group').forEach(function(g) { g.style.display = g.dataset.page == page ? 'block' : 'none'; });
-    document.getElementById('page-info').textContent = page + ' / ' + totalPages;
-    var btns = document.querySelectorAll('.pagination button');
-    btns[0].disabled = page === 1; btns[1].disabled = page === totalPages;
-}
-showPage(1);
-<% end %>
-
-function toggleLinks(el) { 
-    // 仅在移动端使用点击切换
-    if (window.innerWidth <= 768) {
-        el.querySelector('.nav-links').classList.toggle('active'); 
-    }
-}
-
-function changeBg(n) {
+    function changeBg(n) {
     var f = document.createElement('form');
     f.method = 'POST';
     f.action = '<%=luci.dispatcher.build_url("admin/status/banner/do_set_bg")%>';
@@ -1271,6 +1272,54 @@ function fallbackCopy(text) {
         alert('✗ 复制失败: ' + text);
     }
     document.body.removeChild(textarea);
+}
+    <div class="bg-selector">
+    <% 
+    local fs = require("nixio.fs")
+    local persistent = persistent or "0"
+    local bg_dir = (persistent == "1") and "/overlay/banner" or "/www/luci-static/banner"
+    for i = 0, 2 do 
+        if fs.access(bg_dir .. "/bg" .. i .. ".jpg") then
+    %>
+    <div class="bg-circle" style="background-image:url(/luci-static/banner/bg<%=i%>.jpg?t=<%=os.time()%>)" onclick="changeBg(<%=i%>)" title="切换背景 <%=i+1%>"></div>
+    <% 
+        end
+    end 
+    %>
+</div>
+
+<script type="text/javascript">
+var images = document.querySelectorAll('.carousel img'), current = 0;
+function showImage(index) { images.forEach(function(img, i) { img.classList.toggle('active', i === index); }); }
+if (images.length > 1) { showImage(current); setInterval(function() { current = (current + 1) % images.length; showImage(current); }, <%=carousel_interval%>); } else if (images.length > 0) { showImage(0); }
+
+var bannerTexts = '<%=banner_texts%>'.split('|').filter(Boolean), textIndex = 0;
+if (bannerTexts.length > 1) {
+    var textElem = document.getElementById('banner-text');
+    setInterval(function() {
+        textIndex = (textIndex + 1) % bannerTexts.length;
+        textElem.style.opacity = 0;
+        setTimeout(function() { textElem.textContent = bannerTexts[textIndex]; textElem.style.opacity = 1; }, 300);
+    }, <%=carousel_interval%>);
+}
+
+<% if nav_data and nav_data.nav_tabs then %>
+var currentPage = 1, totalPages = <%=math.ceil(#nav_data.nav_tabs/4)%>;
+function changePage(delta) { currentPage = Math.max(1, Math.min(totalPages, currentPage + delta)); showPage(currentPage); }
+function showPage(page) {
+    document.querySelectorAll('.nav-group').forEach(function(g) { g.style.display = g.dataset.page == page ? 'block' : 'none'; });
+    document.getElementById('page-info').textContent = page + ' / ' + totalPages;
+    var btns = document.querySelectorAll('.pagination button');
+    btns[0].disabled = page === 1; btns[1].disabled = page === totalPages;
+}
+showPage(1);
+<% end %>
+
+function toggleLinks(el) { 
+    // 仅在移动端使用点击切换
+    if (window.innerWidth <= 768) {
+        el.querySelector('.nav-links').classList.toggle('active'); 
+    }
 }
 
 // 新增开始 (优化 3：加载超时提示)
@@ -1378,6 +1427,17 @@ input:checked + .toggle-slider:before { transform: translateX(26px); }
         });
     }
 </script>
+<% 
+local uci = require("uci").cursor()
+local bg_enabled = uci:get("banner", "banner", "bg_enabled") or "1"
+if bg_enabled == "1" then 
+%>
+<div class="bg-selector">
+    <% for i = 0, 2 do %>
+    <div class="bg-circle" style="background-image:url(/luci-static/banner/bg<%=i%>.jpg?t=<%=os.time()%>)" onclick="parent.location.href='<%=luci.dispatcher.build_url("admin/status/banner")%>/api_set_bg?bg=<%=i%>&token=<%=token%>'" title="切换背景 <%=i+1%>"></div>
+    <% end %>
+</div>
+<% end %>
 <%+footer%>
 SETTINGSVIEW
 
@@ -1490,6 +1550,17 @@ cat > "$PKG_DIR/root/usr/lib/lua/luci/view/banner/background.htm" <<'BGVIEW'
         }
     });
 </script>
+<% 
+local uci = require("uci").cursor()
+local bg_enabled = uci:get("banner", "banner", "bg_enabled") or "1"
+if bg_enabled == "1" then 
+%>
+<div class="bg-selector">
+    <% for i = 0, 2 do %>
+    <div class="bg-circle" style="background-image:url(/luci-static/banner/bg<%=i%>.jpg?t=<%=os.time()%>)" onclick="parent.location.href='<%=luci.dispatcher.build_url("admin/status/banner")%>/api_set_bg?bg=<%=i%>&token=<%=token%>'" title="切换背景 <%=i+1%>"></div>
+    <% end %>
+</div>
+<% end %>
 <%+footer%>
 BGVIEW
 

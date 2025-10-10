@@ -1145,36 +1145,24 @@ cat > "$PKG_DIR/root/usr/lib/lua/luci/view/banner/display.htm" <<'DISPLAYVIEW'
 .nav-group:hover .nav-links {display: flex !important;}
 .nav-group-title { font-size: 18px; font-weight: 700; color: #fff; text-align: center; margin-bottom: 10px; padding: 10px; background: rgba(102,126,234,.6); border-radius: 8px; display: flex; align-items: center; justify-content: center; cursor: pointer; }
 .nav-group-title img { width: 24px; height: 24px; margin-right: 8px; }
-.nav-links { 
-    display: none; 
-    flex-direction: column;  /* 强制竖向 */
-    padding: 10px 0; 
-    max-height: 300px; 
-    overflow-y: auto; 
-}
-.nav-links.active { 
-    display: flex;  /* 改为 flex 以支持 flex-direction */
-}
+.nav-links { display: none; flex-direction: column; padding: 10px 0; max-height: 300px; overflow-y: auto; }
+.nav-links.active { display: flex; }
 .nav-links a { display: block; color: #4fc3f7; text-decoration: none; padding: 10px; margin: 5px 0; border-radius: 5px; background: rgba(255,255,255,.1); transition: all .2s; }
 .nav-links a:hover { background: rgba(79,195,247,.3); transform: translateX(5px); }
-.nav-group { transition: all .3s; }
 .nav-group:hover .nav-links { display: flex !important; flex-direction: column; }
-@media (min-width: 769px) { .nav-group-title { cursor: default; } .nav-links { display: none; } } /* 桌面hover，移动点击 */
+@media (min-width: 769px) { .nav-group-title { cursor: default; } .nav-links { display: none; } }
 .pagination { text-align: center; margin-top: 20px; }
 .pagination button { background: rgba(66,139,202,.9); border: 1px solid rgba(255,255,255,.3); color: #fff; padding: 8px 15px; margin: 0 5px; border-radius: 5px; cursor: pointer; }
 .pagination button:disabled { background: rgba(100,100,100,.5); cursor: not-allowed; }
 .bg-selector { position: fixed; bottom: 30px; right: 30px; display: flex; gap: 12px; z-index: 999; }
 .bg-circle { width: 50px; height: 50px; border-radius: 50%; border: 3px solid rgba(255,255,255,.8); background-size: cover; cursor: pointer; transition: all .3s; }
 .bg-circle:hover { transform: scale(1.15); border-color: #4fc3f7; }
-.disabled-message { background: rgba(100,100,100,.8); color: #fff; padding: 15px; border-radius: 10px; text-align: center; font-weight: 700; }
-/* 平板优化 */
+.disabled-message { background: rgba(217,83,79,.8); color: #fff; padding: 15px; border-radius: 10px; text-align: center; font-weight: 700; margin-bottom: 20px; }
 @media (max-width: 1024px) and (min-width: 769px) {
     .banner-hero { padding: 15px; max-width: 90vw; }
     .carousel { height: 280px; }
     .nav-groups { grid-template-columns: repeat(2, 1fr); }
 }
-
-/* 手机优化 */
 @media (max-width: 768px) {
     .banner-hero { padding: 10px; max-width: 100%; }
     .carousel { height: 200px; }
@@ -1184,29 +1172,41 @@ cat > "$PKG_DIR/root/usr/lib/lua/luci/view/banner/display.htm" <<'DISPLAYVIEW'
     .bg-selector { bottom: 15px; right: 15px; gap: 8px; }
     .bg-circle { width: 40px; height: 40px; }
 }
-
-/* 超小屏优化 */
 @media (max-width: 480px) {
     .banner-scroll { font-size: 14px; padding: 12px; min-height: 50px; }
     .contact-card { flex-direction: column; text-align: center; }
     .nav-group { padding: 10px; }
 }
 </style>
+
 <% if bg_enabled == "0" then %>
     <div class="banner-hero">
         <div class="disabled-message">
             <h3 style="color:#fff;margin-bottom:15px;">⚠️ 服务已暂停</h3>
             <p><%= pcdata(remote_message) %></p>
         </div>
-        <!-- 横幅文字移到最上方 -->
+        
+        <div class="banner-contacts" style="margin-top:20px;">
+            <div class="contact-card"><div class="contact-info"><span>📧 邮箱</span><strong><%=contact_email%></strong></div><button class="copy-btn" onclick="copyText('<%=contact_email%>')">复制</button></div>
+            <div class="contact-card"><div class="contact-info"><span>📱 Telegram</span><strong><%=contact_telegram%></strong></div><button class="copy-btn" onclick="copyText('<%=contact_telegram%>')">复制</button></div>
+            <div class="contact-card"><div class="contact-info"><span>💬 QQ</span><strong><%=contact_qq%></strong></div><button class="copy-btn" onclick="copyText('<%=contact_qq%>')">复制</button></div>
+        </div>
+    </div>
+    
+    <div class="bg-selector">
+        <% for i = 0, 2 do %>
+        <div class="bg-circle" style="background-image:url(/luci-static/banner/bg<%=i%>.jpg?t=<%=os.time()%>)" onclick="changeBg(<%=i%>)" title="切换背景 <%=i+1%>"></div>
+        <% end %>
+    </div>
+    
+<% else %>
+    <div class="banner-hero">
         <div class="banner-scroll" id="banner-text"><%= pcdata(text) %></div>
         
-        <!-- 轮播图 -->
         <div class="carousel">
             <% for i = 0, 2 do %><img src="/luci-static/banner/bg<%=i%>.jpg?t=<%=os.time()%>" alt="BG <%=i+1%>" loading="lazy"><% end %>
         </div>
         
-        <!-- 联系方式 (**** 修正點：直接使用傳入的變數 ****) -->
         <div class="banner-contacts">
             <div class="contact-card"><div class="contact-info"><span>📧 邮箱</span><strong><%=contact_email%></strong></div><button class="copy-btn" onclick="copyText('<%=contact_email%>')">复制</button></div>
             <div class="contact-card"><div class="contact-info"><span>📱 Telegram</span><strong><%=contact_telegram%></strong></div><button class="copy-btn" onclick="copyText('<%=contact_telegram%>')">复制</button></div>
@@ -1239,13 +1239,57 @@ cat > "$PKG_DIR/root/usr/lib/lua/luci/view/banner/display.htm" <<'DISPLAYVIEW'
         </div>
         <% end %>
     </div>
-    function changeBg(n) {
+    
+    <div class="bg-selector">
+        <% for i = 0, 2 do %>
+        <div class="bg-circle" style="background-image:url(/luci-static/banner/bg<%=i%>.jpg?t=<%=os.time()%>)" onclick="changeBg(<%=i%>)" title="切换背景 <%=i+1%>"></div>
+        <% end %>
+    </div>
+<% end %>
+
+<script type="text/javascript">
+var images = document.querySelectorAll('.carousel img'), current = 0;
+function showImage(index) { images.forEach(function(img, i) { img.classList.toggle('active', i === index); }); }
+if (images.length > 1) { showImage(current); setInterval(function() { current = (current + 1) % images.length; showImage(current); }, <%=carousel_interval || 5000%>); } else if (images.length > 0) { showImage(0); }
+
+var bannerTexts = '<%=banner_texts%>'.split('|').filter(Boolean), textIndex = 0;
+if (bannerTexts.length > 1) {
+    var textElem = document.getElementById('banner-text');
+    if (textElem) {
+        setInterval(function() {
+            textIndex = (textIndex + 1) % bannerTexts.length;
+            textElem.style.opacity = 0;
+            setTimeout(function() { textElem.textContent = bannerTexts[textIndex]; textElem.style.opacity = 1; }, 300);
+        }, <%=carousel_interval || 5000%>);
+    }
+}
+
+<% if nav_data and nav_data.nav_tabs then %>
+var currentPage = 1, totalPages = <%=math.ceil(#nav_data.nav_tabs/4)%>;
+function changePage(delta) { currentPage = Math.max(1, Math.min(totalPages, currentPage + delta)); showPage(currentPage); }
+function showPage(page) {
+    document.querySelectorAll('.nav-group').forEach(function(g) { g.style.display = g.dataset.page == page ? 'block' : 'none'; });
+    document.getElementById('page-info').textContent = page + ' / ' + totalPages;
+    var btns = document.querySelectorAll('.pagination button');
+    btns[0].disabled = page === 1; btns[1].disabled = page === totalPages;
+}
+showPage(1);
+<% end %>
+
+function toggleLinks(el) { 
+    if (window.innerWidth <= 768) {
+        el.querySelector('.nav-links').classList.toggle('active'); 
+    }
+}
+
+function changeBg(n) {
     var f = document.createElement('form');
     f.method = 'POST';
-    f.action = '<%=luci.dispatcher.build_url("admin/status/banner/do_set_bg")%>';
+    f.action = '<%=luci.dispatcher.build_url("admin/status/banner/api_set_bg")%>';
     f.innerHTML = '<input name="token" type="hidden" value="<%=token%>"><input name="bg" value="' + n + '">';
     document.body.appendChild(f).submit();
 }
+
 function copyText(text) {
     if (navigator.clipboard && navigator.clipboard.writeText) {
         navigator.clipboard.writeText(text).then(function() { 
@@ -1267,79 +1311,15 @@ function fallbackCopy(text) {
     textarea.select();
     try {
         var success = document.execCommand('copy');
-        alert(success ? '✓ 已复制: ' + text : '✗ 复制失败，请手动复制');
+        alert(success ? '✓ 已复制: ' + text : '✗ 复制失败,请手动复制');
     } catch(e) {
         alert('✗ 复制失败: ' + text);
     }
     document.body.removeChild(textarea);
 }
-    <div class="bg-selector">
-    <% 
-    local fs = require("nixio.fs")
-    local persistent = persistent or "0"
-    local bg_dir = (persistent == "1") and "/overlay/banner" or "/www/luci-static/banner"
-    for i = 0, 2 do 
-        if fs.access(bg_dir .. "/bg" .. i .. ".jpg") then
-    %>
-    <div class="bg-circle" style="background-image:url(/luci-static/banner/bg<%=i%>.jpg?t=<%=os.time()%>)" onclick="changeBg(<%=i%>)" title="切换背景 <%=i+1%>"></div>
-    <% 
-        end
-    end 
-    %>
-</div>
-
-<script type="text/javascript">
-var images = document.querySelectorAll('.carousel img'), current = 0;
-function showImage(index) { images.forEach(function(img, i) { img.classList.toggle('active', i === index); }); }
-if (images.length > 1) { showImage(current); setInterval(function() { current = (current + 1) % images.length; showImage(current); }, <%=carousel_interval%>); } else if (images.length > 0) { showImage(0); }
-
-var bannerTexts = '<%=banner_texts%>'.split('|').filter(Boolean), textIndex = 0;
-if (bannerTexts.length > 1) {
-    var textElem = document.getElementById('banner-text');
-    setInterval(function() {
-        textIndex = (textIndex + 1) % bannerTexts.length;
-        textElem.style.opacity = 0;
-        setTimeout(function() { textElem.textContent = bannerTexts[textIndex]; textElem.style.opacity = 1; }, 300);
-    }, <%=carousel_interval%>);
-}
-
-<% if nav_data and nav_data.nav_tabs then %>
-var currentPage = 1, totalPages = <%=math.ceil(#nav_data.nav_tabs/4)%>;
-function changePage(delta) { currentPage = Math.max(1, Math.min(totalPages, currentPage + delta)); showPage(currentPage); }
-function showPage(page) {
-    document.querySelectorAll('.nav-group').forEach(function(g) { g.style.display = g.dataset.page == page ? 'block' : 'none'; });
-    document.getElementById('page-info').textContent = page + ' / ' + totalPages;
-    var btns = document.querySelectorAll('.pagination button');
-    btns[0].disabled = page === 1; btns[1].disabled = page === totalPages;
-}
-showPage(1);
-<% end %>
-
-function toggleLinks(el) { 
-    // 仅在移动端使用点击切换
-    if (window.innerWidth <= 768) {
-        el.querySelector('.nav-links').classList.toggle('active'); 
-    }
-}
-
-// 新增开始 (优化 3：加载超时提示)
-setTimeout(function() {
-    var xhr = new XMLHttpRequest();
-    xhr.open('GET', '/tmp/banner_cache/nav_data.json', true);
-    xhr.onload = function() {
-    if (xhr.status !== 200) {
-        console.log('⚠️ 数据加载失败，可能显示默认内容');  // 改用 console.log
-    }
-};
-xhr.onerror = function() {
-    console.log('⚠️ 数据加载失败，可能显示默认内容');
-};
-    xhr.send();
-}, 5000);
 </script>
 <%+footer%>
 DISPLAYVIEW
-
 # =================== 核心修正 #2：替換 settings.htm (再次確認為完整版) ===================
 cat > "$PKG_DIR/root/usr/lib/lua/luci/view/banner/settings.htm" <<'SETTINGSVIEW'
 <%+header%>

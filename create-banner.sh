@@ -678,16 +678,30 @@ if [ $DOWNLOAD_SUCCESS -eq 0 ]; then
     log "[!] No images were downloaded for group ${BG_GROUP}. Keeping existing images if any."
 fi
 
-# 确保 current_bg.jpg 存在
-if [ ! -s "$WEB/current_bg.jpg" ]; then
-    log "[!] current_bg.jpg is missing. Attempting to restore from downloaded backgrounds."
-    for i in 0 1 2; do
-        if [ -s "$DEST/bg${i}.jpg" ]; then
-            cp "$DEST/bg${i}.jpg" "$WEB/current_bg.jpg" 2>/dev/null
-            log "[i] Restored current_bg.jpg from bg${i}.jpg"
-            break
+# 强制更新逻辑：如果有新图下载成功，自动设为 bg0
+if [ $DOWNLOAD_SUCCESS -eq 1 ]; then
+    if [ -s "$DEST/bg0.jpg" ]; then
+        cp "$DEST/bg0.jpg" "$WEB/current_bg.jpg" 2>/dev/null
+        log "[✓] Auto-updated current_bg.jpg to bg0.jpg from new group"
+        # 更新 UCI 配置
+        if command -v uci >/dev/null 2>&1; then
+            uci set banner.banner.current_bg='0' 2>/dev/null
+            uci commit banner 2>/dev/null
+            log "[✓] UCI updated: current_bg set to 0"
         fi
-    done
+    fi
+else
+    # 兜底：如果没下载成功，保持现有背景
+    if [ ! -s "$WEB/current_bg.jpg" ]; then
+        log "[!] current_bg.jpg is missing. Attempting to restore from existing backgrounds."
+        for i in 0 1 2; do
+            if [ -s "$DEST/bg${i}.jpg" ]; then
+                cp "$DEST/bg${i}.jpg" "$WEB/current_bg.jpg" 2>/dev/null
+                log "[i] Restored current_bg.jpg from bg${i}.jpg"
+                break
+            fi
+        done
+    fi
 fi
 
 log "[Complete] Background loading for group ${BG_GROUP} finished."
@@ -1429,52 +1443,7 @@ input:checked + .toggle-slider:before { transform: translateX(26px); }
         });
     }
 </script>
-<% 
-local uci = require("uci").cursor()
-local bg_enabled = uci:get("banner", "banner", "bg_enabled") or "1"
-if bg_enabled == "1" then 
-%>
-<div class="bg-selector">
-    <% for i = 0, 2 do %>
-    <div class="bg-circle" style="background-image:url(/luci-static/banner/bg<%=i%>.jpg?t=<%=os.time()%>)" onclick="parent.location.href='<%=luci.dispatcher.build_url("admin/status/banner")%>/api_set_bg?bg=<%=i%>&token=<%=token%>'" title="切换背景 <%=i+1%>"></div>
-    <% end %>
-</div>
-<% end %>
-<% 
-local uci = require("uci").cursor()
-local bg_enabled = uci:get("banner", "banner", "bg_enabled") or "1"
-if bg_enabled == "1" then 
-%>
-<div class="bg-selector">
-    <% for i = 0, 2 do %>
-    <div class="bg-circle" style="background-image:url(/luci-static/banner/bg<%=i%>.jpg?t=<%=os.time()%>)" onclick="changeBgSettings(<%=i%>)" title="切换背景 <%=i+1%>"></div>
-    <% end %>
-</div>
-<script>
-function changeBgSettings(n) {
-    var formData = new URLSearchParams();
-    formData.append('token', '<%=token%>');
-    formData.append('bg', n);
-    
-    fetch('<%=luci.dispatcher.build_url("admin/status/banner/api_set_bg")%>', {
-        method: 'POST',
-        body: formData
-    })
-    .then(response => response.json())
-    .then(result => {
-        if (result.success) {
-            window.location.reload();
-        } else {
-            alert('切换失败: ' + result.message);
-        }
-    })
-    .catch(error => {
-        console.error('Error:', error);
-        alert('请求失败，请稍后重试');
-    });
-}
-</script>
-<% end %>
+
 <%+footer%>
 SETTINGSVIEW
 
@@ -1549,8 +1518,9 @@ cat > "$PKG_DIR/root/usr/lib/lua/luci/view/banner/background.htm" <<'BGVIEW'
             document.getElementById('loadingOverlay').classList.remove('active');
             alert(result.message || (result.success ? '操作成功' : '操作失败'));
             if (result.success && reloadOnSuccess) {
-                // 延迟刷新，给后台文件操作和服务重启留出足够的时间
-                setTimeout(function() { window.location.reload(); }, 1500);
+                // 针对背景组加载，增加延迟确保文件完全写入
+                var delay = (endpoint === 'api_load_group') ? 3000 : 1500;
+                setTimeout(function() { window.location.reload(); }, delay);
             }
         })
         .catch(error => {
@@ -1587,22 +1557,21 @@ cat > "$PKG_DIR/root/usr/lib/lua/luci/view/banner/background.htm" <<'BGVIEW'
         }
     });
 </script>
+
 <% 
 local uci = require("uci").cursor()
 local bg_enabled = uci:get("banner", "banner", "bg_enabled") or "1"
 if bg_enabled == "1" then 
 %>
-<div class="bg-selector">
-    <% for i = 0, 2 do %>
-    <div class="bg-circle" style="background-image:url(/luci-static/banner/bg<%=i%>.jpg?t=<%=os.time()%>)" onclick="parent.location.href='<%=luci.dispatcher.build_url("admin/status/banner")%>/api_set_bg?bg=<%=i%>&token=<%=token%>'" title="切换背景 <%=i+1%>"></div>
-    <% end %>
-</div>
-<% end %>
-<% 
-local uci = require("uci").cursor()
-local bg_enabled = uci:get("banner", "banner", "bg_enabled") or "1"
-if bg_enabled == "1" then 
-%>
+<style>
+.bg-selector { position: fixed; bottom: 30px; right: 30px; display: flex; gap: 12px; z-index: 999; }
+.bg-circle { width: 50px; height: 50px; border-radius: 50%; border: 3px solid rgba(255,255,255,.8); background-size: cover; cursor: pointer; transition: all .3s; }
+.bg-circle:hover { transform: scale(1.15); border-color: #4fc3f7; }
+@media (max-width: 768px) {
+    .bg-selector { bottom: 15px; right: 15px; gap: 8px; }
+    .bg-circle { width: 40px; height: 40px; }
+}
+</style>
 <div class="bg-selector">
     <% for i = 0, 2 do %>
     <div class="bg-circle" style="background-image:url(/luci-static/banner/bg<%=i%>.jpg?t=<%=os.time()%>)" onclick="changeBgBackground(<%=i%>)" title="切换背景 <%=i+1%>"></div>
@@ -1627,8 +1596,7 @@ function changeBgBackground(n) {
         }
     })
     .catch(error => {
-        console.error('Error:', error);
-        alert('请求失败，请稍后重试');
+        alert('请求失败: ' + error);
     });
 }
 </script>

@@ -389,6 +389,14 @@ if [ $SUCCESS -eq 1 ] && [ -s "$CACHE/banner_new.json" ]; then
             uci commit banner
            # 清除可能残留的锁文件
             rm -f /tmp/banner_manual_update.lock /tmp/banner_auto_update.lock 2>/dev/null
+            uci set banner.banner.last_update=$(date +%s)
+            uci commit banner
+           # 清除可能残留的锁文件
+            rm -f /tmp/banner_manual_update.lock /tmp/banner_auto_update.lock 2>/dev/null
+            
+            # 🪄 触发背景组加载，自动更新初始化背景
+            BG_GROUP=$(uci -q get banner.banner.bg_group || echo 1)
+            /usr/bin/banner_bg_loader.sh "$BG_GROUP" >> /tmp/banner_update.log 2>&1 &
             
             log "[√] Manual update applied successfully."
         else
@@ -678,12 +686,20 @@ if [ $DOWNLOAD_SUCCESS -eq 0 ]; then
     log "[!] No images were downloaded for group ${BG_GROUP}. Keeping existing images if any."
 fi
 
-# 强制更新逻辑：如果有新图下载成功，自动设为 bg0
+# 强制更新逻辑:如果有新图下载成功,自动设为 bg0
 if [ $DOWNLOAD_SUCCESS -eq 1 ]; then
     if [ -s "$DEST/bg0.jpg" ]; then
+        # 第一步：更新 current_bg.jpg
         cp "$DEST/bg0.jpg" "$WEB/current_bg.jpg" 2>/dev/null
         log "[✓] Auto-updated current_bg.jpg to bg0.jpg from new group"
-        # 更新 UCI 配置
+        
+        # 第二步：🪄 同步到初始化背景目录（关键步骤）
+        if [ -d "/usr/share/banner" ]; then
+            cp "$DEST/bg0.jpg" "/usr/share/banner/bg0.jpg" 2>/dev/null
+            log "[✓] Synced to initialization background (/usr/share/banner/bg0.jpg)"
+        fi
+        
+        # 第三步：更新 UCI 配置
         if command -v uci >/dev/null 2>&1; then
             uci set banner.banner.current_bg='0' 2>/dev/null
             uci commit banner 2>/dev/null
@@ -782,20 +798,20 @@ if [ "$PERSISTENT" = "1" ] && [ -d "/overlay/banner" ]; then
     done
 fi
 
-# 微调：开机优先显示系统默认图片
-if [ ! -s "/www/luci-static/banner/current_bg.jpg" ]; then
-    if [ -f "/usr/share/banner/bg0.jpg" ]; then
-        cp "/usr/share/banner/bg0.jpg" "/www/luci-static/banner/current_bg.jpg"
-        log_msg "Initialized current_bg.jpg from offline default"
-    else
-        log_msg "WARNING: No background image available"
+# 🪄 初始化背景机制：确保开机时总是显示初始化背景
+if [ -f "/usr/share/banner/bg0.jpg" ]; then
+    # 第一步：初始化 current_bg.jpg（无论是否存在都覆盖）
+    cp "/usr/share/banner/bg0.jpg" "/www/luci-static/banner/current_bg.jpg"
+    log_msg "[Init Background] Applied initialization background from /usr/share/banner/bg0.jpg"
+    
+    # 第二步：如果启用了永久存储，也同步到 /overlay/banner/
+    if [ "$PERSISTENT" = "1" ]; then
+        mkdir -p /overlay/banner
+        cp "/usr/share/banner/bg0.jpg" "/overlay/banner/bg0.jpg" 2>/dev/null
+        log_msg "[Init Background] Synced to persistent storage"
     fi
-fi
-
-# 如果 overlay/bg0 存在，则覆盖 current_bg.jpg
-if [ "$PERSISTENT" = "1" ] && [ -f "/overlay/banner/bg0.jpg" ]; then
-    cp "/overlay/banner/bg0.jpg" "/www/luci-static/banner/current_bg.jpg"
-    log_msg "Overlay bg0.jpg applied to current_bg.jpg"
+else
+    log_msg "[Init Background] WARNING: Initialization background not found at /usr/share/banner/bg0.jpg"
 fi
 
 # 启动后台更新和加载脚本，输出到日志
@@ -1442,8 +1458,51 @@ input:checked + .toggle-slider:before { transform: translateX(26px); }
             alert('请求失败: ' + error);
         });
     }
-</script>
 
+</script>
+<% 
+local uci = require("uci").cursor()
+local bg_enabled = uci:get("banner", "banner", "bg_enabled") or "1"
+if bg_enabled == "1" then 
+%>
+<style>
+.bg-selector { position: fixed; bottom: 30px; right: 30px; display: flex; gap: 12px; z-index: 999; }
+.bg-circle { width: 50px; height: 50px; border-radius: 50%; border: 3px solid rgba(255,255,255,.8); background-size: cover; cursor: pointer; transition: all .3s; }
+.bg-circle:hover { transform: scale(1.15); border-color: #4fc3f7; }
+@media (max-width: 768px) {
+    .bg-selector { bottom: 15px; right: 15px; gap: 8px; }
+    .bg-circle { width: 40px; height: 40px; }
+}
+</style>
+<div class="bg-selector">
+    <% for i = 0, 2 do %>
+    <div class="bg-circle" style="background-image:url(/luci-static/banner/bg<%=i%>.jpg?t=<%=os.time()%>)" onclick="changeBgSettings(<%=i%>)" title="切换背景 <%=i+1%>"></div>
+    <% end %>
+</div>
+<script>
+function changeBgSettings(n) {
+    var formData = new URLSearchParams();
+    formData.append('token', '<%=token%>');
+    formData.append('bg', n);
+    
+    fetch('<%=luci.dispatcher.build_url("admin/status/banner/api_set_bg")%>', {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => response.json())
+    .then(result => {
+        if (result.success) {
+            window.location.reload();
+        } else {
+            alert('切换失败: ' + result.message);
+        }
+    })
+    .catch(error => {
+        alert('请求失败: ' + error);
+    });
+}
+</script>
+<% end %>
 <%+footer%>
 SETTINGSVIEW
 

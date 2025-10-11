@@ -416,10 +416,12 @@ else
 fi
 MANUALUPDATE
 
-#--- 用這段新程式碼替換舊的 auto_update 腳本 ---
 cat > "$PKG_DIR/root/usr/bin/banner_auto_update.sh" <<'AUTOUPDATE'
 #!/bin/sh
 LOG="/tmp/banner_update.log"
+BOOT_FLAG="/tmp/banner_first_boot"
+RETRY_FLAG="/tmp/banner_retry_count"
+RETRY_TIMER="/tmp/banner_retry_timer"
 
 log() {
     local msg="$1"
@@ -448,6 +450,19 @@ check_lock() {
     touch "$lock_file"; return 0;
 }
 
+# 检查网络连通性
+check_network() {
+    # 尝试ping常用DNS服务器
+    if ping -c 1 -W 2 8.8.8.8 >/dev/null 2>&1 || ping -c 1 -W 2 114.114.114.114 >/dev/null 2>&1; then
+        return 0
+    fi
+    # 备用检查：尝试curl一个轻量级接口
+    if curl -sL --max-time 3 --head https://www.baidu.com >/dev/null 2>&1; then
+        return 0
+    fi
+    return 1
+}
+
 if ! command -v uci >/dev/null 2>&1; then
     log "[×] UCI command not found in auto_update script. Exiting."
     exit 0
@@ -466,6 +481,104 @@ if [ "$BG_ENABLED" = "0" ]; then
     exit 0
 fi
 
+# ==================== 🚀 开机首次更新机制 ====================
+if [ ! -f "$BOOT_FLAG" ]; then
+    log "========== 🔥 First Boot Auto Update =========="
+    log "[BOOT] Detected first boot after restart, waiting for network..."
+    
+    # 等待网络就绪（最多等待60秒）
+    WAIT_COUNT=0
+    while [ $WAIT_COUNT -lt 30 ]; do
+        if check_network; then
+            log "[BOOT] ✓ Network is ready after ${WAIT_COUNT}s"
+            break
+        fi
+        sleep 2
+        WAIT_COUNT=$((WAIT_COUNT + 1))
+    done
+    
+    if [ $WAIT_COUNT -ge 30 ]; then
+        log "[BOOT] ⚠ Network not ready after 60s, will retry later"
+        # 设置5分钟后重试标记
+        echo "$(date +%s)" > "$RETRY_TIMER"
+        echo "0" > "$RETRY_FLAG"
+        touch "$BOOT_FLAG"
+        exit 0
+    fi
+    
+    # 网络就绪，执行首次更新（最多3次重试）
+    RETRY_COUNT=0
+    UPDATE_SUCCESS=0
+    
+    while [ $RETRY_COUNT -lt 3 ]; do
+        RETRY_COUNT=$((RETRY_COUNT + 1))
+        log "[BOOT] Update attempt $RETRY_COUNT/3..."
+        
+        if /usr/bin/banner_manual_update.sh; then
+            log "[BOOT] ✓ First boot update successful on attempt $RETRY_COUNT"
+            UPDATE_SUCCESS=1
+            break
+        else
+            log "[BOOT] × Update attempt $RETRY_COUNT failed"
+            [ $RETRY_COUNT -lt 3 ] && sleep 5
+        fi
+    done
+    
+    if [ $UPDATE_SUCCESS -eq 1 ]; then
+        # 更新成功，清除所有标记
+        touch "$BOOT_FLAG"
+        rm -f "$RETRY_FLAG" "$RETRY_TIMER"
+        log "[BOOT] First boot update completed successfully"
+    else
+        # 3次都失败，设置5分钟后重试
+        log "[BOOT] ⚠ All 3 attempts failed, scheduling retry in 5 minutes"
+        echo "$(date +%s)" > "$RETRY_TIMER"
+        echo "0" > "$RETRY_FLAG"
+        touch "$BOOT_FLAG"
+    fi
+    
+    exit 0
+fi
+
+# ==================== ⏰ 5分钟重试机制 ====================
+if [ -f "$RETRY_TIMER" ]; then
+    RETRY_TIME=$(cat "$RETRY_TIMER")
+    CURRENT_TIME=$(date +%s)
+    TIME_DIFF=$((CURRENT_TIME - RETRY_TIME))
+    
+    if [ $TIME_DIFF -ge 300 ]; then
+        log "========== 🔄 Retry Update (5min elapsed) =========="
+        
+        # 检查网络
+        if ! check_network; then
+            log "[RETRY] ⚠ Network still not ready, will check again later"
+            echo "$(date +%s)" > "$RETRY_TIMER"
+            exit 0
+        fi
+        
+        # 执行重试更新
+        if /usr/bin/banner_manual_update.sh; then
+            log "[RETRY] ✓ Retry update successful"
+            rm -f "$RETRY_FLAG" "$RETRY_TIMER"
+        else
+            log "[RETRY] × Retry update failed"
+            RETRY_COUNT=$(cat "$RETRY_FLAG" 2>/dev/null || echo 0)
+            RETRY_COUNT=$((RETRY_COUNT + 1))
+            
+            if [ $RETRY_COUNT -ge 3 ]; then
+                log "[RETRY] ⚠ Max retries (3) reached, giving up until next cycle"
+                rm -f "$RETRY_FLAG" "$RETRY_TIMER"
+            else
+                echo "$RETRY_COUNT" > "$RETRY_FLAG"
+                echo "$(date +%s)" > "$RETRY_TIMER"
+                log "[RETRY] Scheduled next retry (attempt $((RETRY_COUNT + 1))/3) in 5 minutes"
+            fi
+        fi
+        exit 0
+    fi
+fi
+
+# ==================== 📅 正常3小时间隔更新 ====================
 LAST_UPDATE=$(uci -q get banner.banner.last_update || echo 0)
 CURRENT_TIME=$(date +%s)
 INTERVAL=$(uci -q get banner.banner.update_interval || echo 10800)
@@ -475,7 +588,15 @@ if [ $((CURRENT_TIME - LAST_UPDATE)) -lt "$INTERVAL" ]; then
     exit 0
 fi
 
-log "========== Auto Update Started =========="
+log "========== Auto Update Started (3h cycle) =========="
+
+# 检查网络
+if ! check_network; then
+    log "[×] Network not available, skipping scheduled update"
+    exit 0
+fi
+
+# 执行更新
 /usr/bin/banner_manual_update.sh
 if [ $? -ne 0 ]; then
     log "[×] 自动更新失败,查看 /tmp/banner_update.log 获取详情"

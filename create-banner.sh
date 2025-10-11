@@ -1165,6 +1165,39 @@ cat > "$PKG_DIR/root/usr/lib/lua/luci/view/banner/display.htm" <<'DISPLAYVIEW'
 .carousel { position: relative; width: 100%; height: 300px; overflow: hidden; border-radius: 10px; margin-bottom: 20px; }
 .carousel img { width: 100%; height: 100%; object-fit: cover; position: absolute; opacity: 0; transition: opacity .5s; }
 .carousel img.active { opacity: 1; }
+/* 文件轮播样式 */
+.file-carousel { position: relative; width: 100%; min-height: 280px; background: rgba(0,0,0,.25); border-radius: 10px; margin-bottom: 20px; padding: 20px; overflow: hidden; }
+.carousel-track { display: flex; gap: 15px; transition: transform .4s ease; }
+.file-card { min-width: calc(33.333% - 10px); background: rgba(255,255,255,.12); border: 1px solid rgba(255,255,255,.2); border-radius: 8px; padding: 15px; display: flex; align-items: center; gap: 12px; backdrop-filter: blur(5px); transition: all .3s; }
+.file-card:hover { transform: translateY(-3px); background: rgba(255,255,255,.18); border-color: #4fc3f7; }
+.file-icon { font-size: 36px; flex-shrink: 0; }
+.file-info { flex: 1; min-width: 0; }
+.file-name { color: #fff; font-weight: 700; font-size: 15px; margin-bottom: 5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.file-desc { color: #ddd; font-size: 12px; margin-bottom: 5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.file-size { color: #aaa; font-size: 11px; }
+.file-action { flex-shrink: 0; }
+.action-btn { padding: 8px 16px; border: 0; border-radius: 5px; font-weight: 700; cursor: pointer; transition: all .3s; font-size: 13px; text-decoration: none; display: inline-block; }
+.download-btn { background: rgba(76,175,80,.9); color: #fff; }
+.download-btn:hover { background: rgba(76,175,80,1); transform: scale(1.05); }
+.visit-btn { background: rgba(33,150,243,.9); color: #fff; }
+.visit-btn:hover { background: rgba(33,150,243,1); transform: scale(1.05); }
+.carousel-controls { display: flex; align-items: center; justify-content: center; gap: 15px; margin-top: 15px; }
+.carousel-btn { background: rgba(255,255,255,.15); border: 1px solid rgba(255,255,255,.3); color: #fff; padding: 8px 15px; border-radius: 5px; cursor: pointer; transition: all .3s; font-weight: 700; }
+.carousel-btn:hover { background: rgba(255,255,255,.25); transform: scale(1.05); }
+.carousel-btn:disabled { opacity: .5; cursor: not-allowed; }
+.carousel-indicator { color: #fff; font-weight: 700; }
+
+/* 响应式 */
+@media (max-width: 1024px) {
+    .file-card { min-width: calc(50% - 7.5px); }
+}
+@media (max-width: 768px) {
+    .file-carousel { min-height: 240px; padding: 15px; }
+    .file-card { min-width: 100%; flex-direction: column; text-align: center; }
+    .file-info { width: 100%; }
+    .file-action { width: 100%; }
+    .action-btn { width: 100%; }
+}
 .banner-scroll { padding: 20px; margin-bottom: 30px; text-align: center; font-weight: 700; font-size: 18px; border-radius: 10px; min-height: 60px; display: flex; align-items: center; justify-content: center;
 <% if color == 'rainbow' then %>background: linear-gradient(90deg, #ff0000, #ff7f00, #ffff00, #00ff00, #0000ff, #4b0082, #9400d3); background-size: 400% 400%; animation: rainbow 8s ease infinite; color: #fff; text-shadow: 2px 2px 4px rgba(0,0,0,.5)<% else %>background: rgba(255,255,255,.15); color: <%=color%><% end %>
 }
@@ -1240,9 +1273,54 @@ cat > "$PKG_DIR/root/usr/lib/lua/luci/view/banner/display.htm" <<'DISPLAYVIEW'
     <div class="banner-hero">
         <div class="banner-scroll" id="banner-text"><%= pcdata(text) %></div>
         
+        <% if nav_data and nav_data.carousel_files and #nav_data.carousel_files > 0 then %>
+        <div class="file-carousel">
+            <div class="carousel-track" id="carousel-track">
+                <% for idx, file in ipairs(nav_data.carousel_files) do %>
+                <div class="file-card" data-index="<%=idx%>">
+                    <div class="file-icon">
+                        <% if file.type == "pdf" then %>
+                            📄
+                        <% elseif file.type == "txt" then %>
+                            📝
+                        <% elseif file.type == "url" then %>
+                            🔗
+                        <% else %>
+                            📦
+                        <% end %>
+                    </div>
+                    <div class="file-info">
+                        <div class="file-name"><%=pcdata(file.name)%></div>
+                        <div class="file-desc"><%=pcdata(file.desc or '')%></div>
+                        <div class="file-size">
+                            <% if file.size then %>
+                                <%=file.size%>
+                            <% elseif file.type == "url" then %>
+                                链接跳转
+                            <% end %>
+                        </div>
+                    </div>
+                    <div class="file-action">
+                        <% if file.type == "url" then %>
+                            <a href="<%=pcdata(file.url)%>" target="_blank" rel="noopener noreferrer" class="action-btn visit-btn">访问</a>
+                        <% else %>
+                            <button class="action-btn download-btn" onclick="downloadFile('<%=pcdata(file.url)%>', '<%=pcdata(file.name)%>')">下载</button>
+                        <% end %>
+                    </div>
+                </div>
+                <% end %>
+            </div>
+            <div class="carousel-controls">
+                <button class="carousel-btn prev-btn" onclick="slideCarousel(-1)">◀</button>
+                <span class="carousel-indicator" id="carousel-indicator">1 / 1</span>
+                <button class="carousel-btn next-btn" onclick="slideCarousel(1)">▶</button>
+            </div>
+        </div>
+        <% else %>
         <div class="carousel">
             <% for i = 0, 2 do %><img src="/luci-static/banner/bg<%=i%>.jpg?t=<%=os.time()%>" alt="BG <%=i+1%>" loading="lazy"><% end %>
         </div>
+        <% end %>
         
         <div class="banner-contacts">
             <div class="contact-card"><div class="contact-info"><span>📧 邮箱</span><strong><%=contact_email%></strong></div><button class="copy-btn" onclick="copyText('<%=contact_email%>')">复制</button></div>
@@ -1262,7 +1340,7 @@ cat > "$PKG_DIR/root/usr/lib/lua/luci/view/banner/display.htm" <<'DISPLAYVIEW'
                     </div>
                     <div class="nav-links">
                         <% for _, link in ipairs(tab.links) do %>
-                        <a href="<%=pcdata(link.url)%>" target="_blank" rel="noopener noreferrer"><%=pcdata(link.name)%></a>
+                        <a href="<%=pcdata(link.url)%>" target="_blank" rel="noopener noreferrer" title="<%=pcdata(link.desc or '')%>"><%=pcdata(link.name)%></a>
                         <% end %>
                     </div>
                 </div>
@@ -1368,6 +1446,78 @@ function fallbackCopy(text) {
         alert('✗ 复制失败: ' + text);
     }
     document.body.removeChild(textarea);
+}
+// 文件轮播功能
+var carouselIndex = 0;
+var carouselItems = document.querySelectorAll('.file-card').length;
+var carouselItemsPerView = window.innerWidth > 1024 ? 3 : (window.innerWidth > 768 ? 2 : 1);
+
+function slideCarousel(direction) {
+    var track = document.getElementById('carousel-track');
+    var indicator = document.getElementById('carousel-indicator');
+    if (!track || !indicator) return;
+    
+    carouselIndex += direction;
+    var maxIndex = Math.ceil(carouselItems / carouselItemsPerView) - 1;
+    
+    if (carouselIndex < 0) carouselIndex = 0;
+    if (carouselIndex > maxIndex) carouselIndex = maxIndex;
+    
+    var cardWidth = track.querySelector('.file-card').offsetWidth;
+    var gap = 15;
+    var offset = -(carouselIndex * carouselItemsPerView * (cardWidth + gap));
+    track.style.transform = 'translateX(' + offset + 'px)';
+    
+    indicator.textContent = (carouselIndex + 1) + ' / ' + (maxIndex + 1);
+    
+    document.querySelector('.prev-btn').disabled = (carouselIndex === 0);
+    document.querySelector('.next-btn').disabled = (carouselIndex === maxIndex);
+}
+
+// 自动轮播
+if (carouselItems > carouselItemsPerView) {
+    setInterval(function() {
+        var maxIndex = Math.ceil(carouselItems / carouselItemsPerView) - 1;
+        if (carouselIndex >= maxIndex) {
+            carouselIndex = -1;
+        }
+        slideCarousel(1);
+    }, 5000);
+}
+
+// 下载文件函数
+function downloadFile(url, filename) {
+    // 显示下载提示
+    var loadingMsg = document.createElement('div');
+    loadingMsg.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:rgba(0,0,0,.8);color:#fff;padding:20px 40px;border-radius:10px;z-index:9999;font-weight:700;';
+    loadingMsg.textContent = '正在下载 ' + filename + '...';
+    document.body.appendChild(loadingMsg);
+    
+    // 创建隐藏的下载链接
+    var link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    link.style.display = 'none';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    
+    // 2秒后移除提示
+    setTimeout(function() {
+        document.body.removeChild(loadingMsg);
+    }, 2000);
+}
+
+// 响应式调整
+window.addEventListener('resize', function() {
+    carouselItemsPerView = window.innerWidth > 1024 ? 3 : (window.innerWidth > 768 ? 2 : 1);
+    carouselIndex = 0;
+    slideCarousel(0);
+});
+
+// 初始化
+if (document.querySelector('.file-carousel')) {
+    slideCarousel(0);
 }
 </script>
 <%+footer%>

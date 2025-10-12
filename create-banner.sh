@@ -48,6 +48,10 @@ else
         exit 1
     }
 fi
+# 允许 GitHub Actions Runner 路径
+if echo "$ABS_PKG_DIR" | grep -q "^/home/runner/work/ImmortalWrt-Actions"; then
+    echo "⚙ 允许 GitHub Actions 路径: $ABS_PKG_DIR"
+else
 
 # 黑名单检查：禁止危险的系统路径
 case "$ABS_PKG_DIR" in

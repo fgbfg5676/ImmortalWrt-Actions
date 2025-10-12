@@ -24,35 +24,97 @@ echo "Package directory: $PKG_DIR"
 # Clean and create directory structure
 echo "[1/3] Creating directory structure..."
 
-# 安全性檢查：確保 PKG_DIR 是一個有效且安全的路徑
+
+# ==================== 路径安全检查 - 加强版 ====================
+
+
+# 检查目录变量是否为空
 if [ -z "$PKG_DIR" ]; then
-    echo "❌ 錯誤：目標目錄變數為空，已終止操作。"
+    echo "✖ 错误：目标目录变量为空，已终止操作。"
     exit 1
 fi
 
+# 获取规范化的绝对路径
 if command -v realpath >/dev/null 2>&1; then
-    # 使用 -m 選項確保即使路徑不存在也能正常工作
-    ABS_PKG_DIR=$(realpath -m "$PKG_DIR")
+    ABS_PKG_DIR=$(realpath -m "$PKG_DIR" 2>/dev/null) || {
+        echo "✖ 错误：无法规范化路径 '$PKG_DIR'"
+        exit 1
+    }
 else
-    # 作為最終備用方案，如果連 realpath 都沒有，我們就手動處理
-    echo "警告：系統中未找到 realpath 命令，路徑安全檢查可能不夠完備。"
-    ABS_PKG_DIR="$PKG_DIR" # 直接使用，並依賴後續檢查
+    echo "⚠ 警告：系统未安装 realpath，路径安全检查可能不够完善。"
+    # Fallback: 手动规范化（不完美但聊胜于无）
+    ABS_PKG_DIR=$(cd "$(dirname "$PKG_DIR")" 2>/dev/null && pwd)/$(basename "$PKG_DIR") || {
+        echo "✖ 错误：路径无效 '$PKG_DIR'"
+        exit 1
+    }
 fi
 
+# 黑名单检查：禁止危险的系统路径
 case "$ABS_PKG_DIR" in
-    "/"|"/root"|"/root/"|"$HOME"|"$HOME/"|"/etc"|"/etc/"|"/usr"|"/usr/")
-        echo "❌ 錯誤：目標目錄指向了危險的系統路徑 ('$ABS_PKG_DIR')，已終止操作。"
+    "/"|\
+    "/root"|\
+    "/root/"*|\
+    "/etc"|\
+    "/etc/"*|\
+    "/usr"|\
+    "/usr/"*|\
+    "/bin"|\
+    "/bin/"*|\
+    "/sbin"|\
+    "/sbin/"*|\
+    "/lib"|\
+    "/lib/"*|\
+    "/boot"|\
+    "/boot/"*|\
+    "$HOME"|\
+    "$HOME/"*)
+        echo "✖ 错误：目标目录指向了危险的系统路径 ('$ABS_PKG_DIR')，已终止操作。"
         exit 1
         ;;
 esac
 
-if echo "$PKG_DIR" | grep -q '/\.\./'; then
-    echo "❌ 錯誤：目標目錄包含非法的路徑穿越符 '..' ('$PKG_DIR')，已終止操作。"
+# 检查路径穿越字符（所有可能的形式）
+if echo "$PKG_DIR" | grep -qE '\.\./|\.\.$|/\.\.'; then
+    echo "✖ 错误：目标目录包含非法的路径穿越符 '..' ('$PKG_DIR')，已终止操作。"
     exit 1
 fi
 
-# 安全檢查通過，執行刪除
-rm -rf "$PKG_DIR"
+# 检查符号链接（可选，更严格）
+if [ -L "$PKG_DIR" ]; then
+    echo "⚠ 警告：目标路径是符号链接，已拒绝。"
+    exit 1
+fi
+
+# 白名单验证：确保路径在允许的基础目录内
+ALLOWED_BASE_DIRS="/tmp /var/tmp $GITHUB_WORKSPACE ./openwrt"
+PATH_ALLOWED=0
+for allowed_base in $ALLOWED_BASE_DIRS; do
+    if [ -n "$allowed_base" ]; then
+        # 规范化允许的基础目录
+        if command -v realpath >/dev/null 2>&1; then
+            allowed_base=$(realpath -m "$allowed_base" 2>/dev/null) || continue
+        fi
+        
+        # 检查目标路径是否在允许的基础目录内
+        case "$ABS_PKG_DIR" in
+            "$allowed_base"*)
+                PATH_ALLOWED=1
+                break
+                ;;
+        esac
+    fi
+done
+
+if [ $PATH_ALLOWED -eq 0 ]; then
+    echo "✖ 错误：目标路径 '$ABS_PKG_DIR' 不在允许的目录范围内。"
+    echo "   允许的基础目录: $ALLOWED_BASE_DIRS"
+    exit 1
+fi
+
+echo "✓ 路径安全检查通过: $ABS_PKG_DIR"
+
+# 安全检查通过，执行删除
+rm -rf "$ABS_PKG_DIR"
 
 mkdir -p "$PKG_DIR"/root/{etc/{config,init.d,cron.d},usr/{bin,share/banner,lib/lua/luci/{controller,view/banner}},www/luci-static/banner,overlay/banner}
 
@@ -192,10 +254,42 @@ cat > "$PKG_DIR/root/usr/bin/banner_cache_cleaner.sh" <<'CLEANER'
 LOG="/tmp/banner_update.log"
 
 log() {
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" >> "$LOG"
-    if [ -s "$LOG" ] && [ $(wc -c < "$LOG") -gt 51200 ]; then
-        mv "$LOG" "$LOG.bak"; tail -n 50 "$LOG.bak" > "$LOG"; rm -f "$LOG.bak"
+    local msg="$1"
+    local timestamp=$(date '+%Y-%m-%d %H:%M:%S' 2>/dev/null || date)
+    local log_file="${LOG:-/tmp/banner_update.log}"
+    
+    # URL和IP脱敏(如果需要)
+    if echo "$msg" | grep -qE 'https?://|[0-9]{1,3}\.[0-9]{1,3}'; then
+        msg=$(echo "$msg" | sed -E 's|https?://[^[:space:]]+|[URL]|g' | sed -E 's|[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|[IP]|g')
     fi
+    
+    # 防止日志写入失败导致脚本中断
+    {
+        echo "[$timestamp] $msg" >> "$log_file" 2>/dev/null
+    } || {
+        # 写入失败,尝试写到stderr,但不中断脚本
+        echo "[$timestamp] LOG_ERROR: $msg" >&2 2>/dev/null || true
+        return 1
+    }
+    
+    # 日志轮转(加错误保护)
+    local log_size=$(wc -c < "$log_file" 2>/dev/null || echo 0)
+    if [ -s "$log_file" ] && [ "$log_size" -gt 51200 ]; then
+        {
+            # 使用临时文件避免数据丢失
+            tail -n 50 "$log_file" > "${log_file}.tmp" 2>/dev/null && \
+            mv "${log_file}.tmp" "$log_file" 2>/dev/null
+        } || {
+            # 轮转失败,尝试直接截断(保留最后100行)
+            tail -n 100 "$log_file" > "${log_file}.new" 2>/dev/null && \
+            mv "${log_file}.new" "$log_file" 2>/dev/null
+        } || {
+            # 彻底失败,清空文件(最后的保护)
+            : > "$log_file" 2>/dev/null || true
+        }
+    fi
+    
+    return 0
 }
 
 log "========== Cache Cleanup Started =========="
@@ -210,34 +304,110 @@ log "[√] Removed JPEG files older than $CLEANUP_AGE days from $CACHE_DIR"
 CLEANER
 
 cat > "$PKG_DIR/root/usr/bin/banner_manual_update.sh" <<'MANUALUPDATE'
-#!/bin/sh
 LOG="/tmp/banner_update.log"
 CACHE=$(uci -q get banner.banner.cache_dir || echo "/tmp/banner_cache")
 
+# 日志函数（保持不变）
 log() {
-    local msg="$1"; msg=$(echo "$msg" | sed -E 's|https?://[^[:space:]]+|[URL Redacted]|g' | sed -E 's|[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|[IP Redacted]|g'   );
-    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
-    local log_file="/tmp/banner_update.log"
-    echo "[$timestamp] $msg" >> "$log_file"
-    if [ -s "$log_file" ] && [ $(wc -c < "$log_file") -gt 51200 ]; then
-        mv "$log_file" "$log_file.bak"
-        tail -n 50 "$log_file.bak" > "$log_file"
-        rm -f "$log_file.bak"
+    local msg="$1"
+    local timestamp=$(date '+%Y-%m-%d %H:%M:%S' 2>/dev/null || date)
+    local log_file="${LOG:-/tmp/banner_update.log}"
+    
+    # URL和IP脱敏(如果需要)
+    if echo "$msg" | grep -qE 'https?://|[0-9]{1,3}\.[0-9]{1,3}'; then
+        msg=$(echo "$msg" | sed -E 's|https?://[^[:space:]]+|[URL]|g' | sed -E 's|[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|[IP]|g')
+    fi
+    
+    # 防止日志写入失败导致脚本中断
+    {
+        echo "[$timestamp] $msg" >> "$log_file" 2>/dev/null
+    } || {
+        # 写入失败,尝试写到stderr,但不中断脚本
+        echo "[$timestamp] LOG_ERROR: $msg" >&2 2>/dev/null || true
+        return 1
+    }
+    
+    # 日志轮转(加错误保护)
+    local log_size=$(wc -c < "$log_file" 2>/dev/null || echo 0)
+    if [ -s "$log_file" ] && [ "$log_size" -gt 51200 ]; then
+        {
+            # 使用临时文件避免数据丢失
+            tail -n 50 "$log_file" > "${log_file}.tmp" 2>/dev/null && \
+            mv "${log_file}.tmp" "$log_file" 2>/dev/null
+        } || {
+            # 轮转失败,尝试直接截断(保留最后100行)
+            tail -n 100 "$log_file" > "${log_file}.new" 2>/dev/null && \
+            mv "${log_file}.new" "$log_file" 2>/dev/null
+        } || {
+            # 彻底失败,清空文件(最后的保护)
+            : > "$log_file" 2>/dev/null || true
+        }
+    fi
+    
+    return 0
+}
+# ==================== 🔐 URL验证函数 ====================
+validate_url() {
+    local url="$1"
+    # 检查URL格式
+    case "$url" in
+        http://*|https://*) 
+            # URL必须以http或https开头
+            return 0
+            ;;
+        *)
+            log "[✗] Invalid URL format: $url"
+            return 1
+            ;;
+    esac
+}
+# ==================== 新的 flock 锁机制 ====================
+LOCK_FD=200
+LOCK_FILE="/var/lock/banner_manual_update.lock"
+
+# 获取锁（带超时）
+acquire_lock() {
+    local timeout="${1:-60}"
+    
+    # 确保锁文件目录存在
+    mkdir -p /var/lock 2>/dev/null
+    
+    # 打开文件描述符
+    eval "exec $LOCK_FD>$LOCK_FILE" || {
+        log "[ERROR] Failed to open lock file"
+        return 1
+    }
+    
+    # 尝试获取独占锁（带超时）
+    if flock -w "$timeout" "$LOCK_FD"; then
+        log "[LOCK] Successfully acquired lock (FD: $LOCK_FD)"
+        return 0
+    else
+        log "[ERROR] Failed to acquire lock after ${timeout}s timeout"
+        eval "exec $LOCK_FD>&-"  # 关闭文件描述符
+        return 1
     fi
 }
-check_lock() {
-    local lock_file="$1"; local max_age="$2";
-    if [ -f "$lock_file" ]; then
-        local lock_time=$(stat -c %Y "$lock_file" 2>/dev/null || date +%s); local current_time=$(date +%s); local age=$((current_time - lock_time));
-        if [ $age -gt $max_age ]; then
-            log "Clearing stale lock (age: ${age}s): $lock_file"; rm -f "$lock_file";
-        else
-            log "Task blocked by lock (age: ${age}s): $lock_file"; return 1;
-        fi
-    fi;
-    touch "$lock_file"; return 0;
+
+# 释放锁
+release_lock() {
+    if [ -n "$LOCK_FD" ]; then
+        log "[LOCK] Releasing lock (FD: $LOCK_FD)"
+        flock -u "$LOCK_FD" 2>/dev/null
+        eval "exec $LOCK_FD>&-"  # 关闭文件描述符
+    fi
 }
 
+# 设置清理陷阱
+cleanup() {
+    release_lock
+    log "[CLEANUP] Script exiting"
+}
+trap cleanup EXIT INT TERM
+
+# ==================== 主逻辑开始 ====================
+
+# 检查 UCI 配置
 if [ ! -f "/etc/config/banner" ]; then
     log "[×] UCI 配置文件 /etc/config/banner 不存在，创建默认配置"
     cat > /etc/config/banner <<'EOF'
@@ -261,21 +431,23 @@ EOF
 fi
 
 mkdir -p "$CACHE"
+
 if ! command -v uci >/dev/null 2>&1; then
     log "[×] UCI command not found. This script requires UCI to function. Exiting."
-    exit 0
-fi
-
-MANUAL_LOCK="/tmp/banner_manual_update.lock"
-if ! check_lock "$MANUAL_LOCK" 60; then
     exit 1
 fi
-trap "rm -f $MANUAL_LOCK" EXIT
 
-AUTO_LOCK="/tmp/banner_auto_update.lock"
-if [ -f "$AUTO_LOCK" ]; then
-    log "Manual update overriding auto-update lock."
-    rm -f "$AUTO_LOCK"
+# 获取锁（60秒超时）
+if ! acquire_lock 60; then
+    log "[ERROR] Another instance is running or lock acquisition failed"
+    exit 1
+fi
+
+# 如果存在 auto_update 锁，清理它（手动更新优先）
+AUTO_LOCK_FILE="/var/lock/banner_auto_update.lock"
+if [ -f "$AUTO_LOCK_FILE" ]; then
+    log "[INFO] Manual update overriding auto-update lock."
+    rm -f "$AUTO_LOCK_FILE"
 fi
 
 log "========== Manual Update Started =========="
@@ -295,7 +467,7 @@ CURL_TIMEOUT=$(uci -q get banner.banner.curl_timeout || echo 15)
 if [ -n "$SELECTED_URL" ] && validate_url "$SELECTED_URL"; then
     for i in 1 2 3; do
         log "Attempt $i/3 with selected URL: $SELECTED_URL"
-        curl -sL --max-time "$CURL_TIMEOUT" "$SELECTED_URL" -o "$CACHE/banner_new.json" 2>/dev/null
+        curl -sL --connect-timeout 10 --max-time "$CURL_TIMEOUT" "$SELECTED_URL" -o "$CACHE/banner_new.json" 2>/dev/null
         if [ -s "$CACHE/banner_new.json" ] && jq empty "$CACHE/banner_new.json" 2>/dev/null; then
             log "[√] Selected URL download successful (valid JSON)."
             SUCCESS=1
@@ -311,7 +483,7 @@ if [ $SUCCESS -eq 0 ]; then
         if [ "$url" != "$SELECTED_URL" ] && validate_url "$url"; then
             for i in 1 2 3; do
                 log "Attempt $i/3 with fallback URL: $url"
-                curl -sL --max-time "$CURL_TIMEOUT" "$url" -o "$CACHE/banner_new.json" 2>/dev/null
+                curl -sL --connect-timeout 10 --max-time "$CURL_TIMEOUT" "$url" -o "$CACHE/banner_new.json" 2>/dev/null
                 if [ -s "$CACHE/banner_new.json" ] && jq empty "$CACHE/banner_new.json" 2>/dev/null; then
                     log "[√] Fallback URL download successful (valid JSON). Updating selected URL."
                     uci set banner.banner.selected_url="$url"
@@ -425,54 +597,100 @@ RETRY_TIMER="/tmp/banner_retry_timer"
 
 log() {
     local msg="$1"
-    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
-    local log_file="$LOG"
-    msg=$(echo "$msg" | sed -E 's|https?://[^[:space:]]+|[URL Redacted]|g' | sed -E 's|[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|[IP Redacted]|g')
-    echo "[$timestamp] $msg" >> "$log_file"
-    if [ -s "$log_file" ] && [ $(wc -c < "$log_file") -gt 51200 ]; then
-        mv "$log_file" "$log_file.bak"
-        tail -n 50 "$log_file.bak" > "$log_file"
-        rm -f "$log_file.bak"
-        echo "[$timestamp] 日志文件 $log_file 已清理,保留最后 50 行" >> "$log_file"
+    local timestamp=$(date '+%Y-%m-%d %H:%M:%S' 2>/dev/null || date)
+    local log_file="${LOG:-/tmp/banner_update.log}"
+    
+    # URL和IP脱敏(如果需要)
+    if echo "$msg" | grep -qE 'https?://|[0-9]{1,3}\.[0-9]{1,3}'; then
+        msg=$(echo "$msg" | sed -E 's|https?://[^[:space:]]+|[URL]|g' | sed -E 's|[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|[IP]|g')
+    fi
+    
+    # 防止日志写入失败导致脚本中断
+    {
+        echo "[$timestamp] $msg" >> "$log_file" 2>/dev/null
+    } || {
+        # 写入失败,尝试写到stderr,但不中断脚本
+        echo "[$timestamp] LOG_ERROR: $msg" >&2 2>/dev/null || true
+        return 1
+    }
+    
+    # 日志轮转(加错误保护)
+    local log_size=$(wc -c < "$log_file" 2>/dev/null || echo 0)
+    if [ -s "$log_file" ] && [ "$log_size" -gt 51200 ]; then
+        {
+            # 使用临时文件避免数据丢失
+            tail -n 50 "$log_file" > "${log_file}.tmp" 2>/dev/null && \
+            mv "${log_file}.tmp" "$log_file" 2>/dev/null
+        } || {
+            # 轮转失败,尝试直接截断(保留最后100行)
+            tail -n 100 "$log_file" > "${log_file}.new" 2>/dev/null && \
+            mv "${log_file}.new" "$log_file" 2>/dev/null
+        } || {
+            # 彻底失败,清空文件(最后的保护)
+            : > "$log_file" 2>/dev/null || true
+        }
+    fi
+    
+    return 0
+}
+
+# ==================== 新的 flock 锁机制 ====================
+LOCK_FD=201  # 使用不同的文件描述符避免冲突
+LOCK_FILE="/var/lock/banner_auto_update.lock"
+
+acquire_lock() {
+    local timeout="${1:-60}"
+    mkdir -p /var/lock 2>/dev/null
+    
+    eval "exec $LOCK_FD>$LOCK_FILE" || {
+        log "[ERROR] Failed to open lock file"
+        return 1
+    }
+    
+    if flock -w "$timeout" "$LOCK_FD"; then
+        log "[LOCK] Successfully acquired auto-update lock (FD: $LOCK_FD)"
+        return 0
+    else
+        log "[ERROR] Failed to acquire lock after ${timeout}s"
+        eval "exec $LOCK_FD>&-"
+        return 1
     fi
 }
 
-check_lock() {
-    local lock_file="$1"; local max_age="$2";
-    if [ -f "$lock_file" ]; then
-        local lock_time=$(stat -c %Y "$lock_file" 2>/dev/null || date +%s); local current_time=$(date +%s); local age=$((current_time - lock_time));
-        if [ $age -gt $max_age ]; then
-            log "Clearing stale lock (age: ${age}s): $lock_file"; rm -f "$lock_file";
-        else
-            log "Task blocked by lock (age: ${age}s): $lock_file"; return 1;
-        fi
-    fi;
-    touch "$lock_file"; return 0;
+release_lock() {
+    if [ -n "$LOCK_FD" ]; then
+        flock -u "$LOCK_FD" 2>/dev/null
+        eval "exec $LOCK_FD>&-"
+    fi
 }
 
-# 检查网络连通性
+cleanup() {
+    release_lock
+}
+trap cleanup EXIT INT TERM
+
+# 网络检查函数（保持不变）
 check_network() {
-    # 尝试ping常用DNS服务器
     if ping -c 1 -W 2 8.8.8.8 >/dev/null 2>&1 || ping -c 1 -W 2 114.114.114.114 >/dev/null 2>&1; then
         return 0
     fi
-    # 备用检查：尝试curl一个轻量级接口
-    if curl -sL --max-time 3 --head https://www.baidu.com >/dev/null 2>&1; then
+    if curl -sL --connect-timeout 5 --max-time 3 --head https://www.baidu.com >/dev/null 2>&1; then
         return 0
     fi
     return 1
 }
 
+# 检查 UCI
 if ! command -v uci >/dev/null 2>&1; then
     log "[×] UCI command not found in auto_update script. Exiting."
     exit 0
 fi
 
-LOCK="/tmp/banner_auto_update.lock"
-if ! check_lock "$LOCK" 60; then
+# 获取锁
+if ! acquire_lock 60; then
+    log "[ERROR] Failed to acquire lock, exiting"
     exit 1
 fi
-trap "rm -f $LOCK" EXIT
 
 # 检查是否被禁用
 BG_ENABLED=$(uci -q get banner.banner.bg_enabled || echo "1")
@@ -481,10 +699,15 @@ if [ "$BG_ENABLED" = "0" ]; then
     exit 0
 fi
 
-# ==================== 🚀 开机首次更新机制 ====================
+# ==================== 🚀 开机首次更新机制（时间容错版） ====================
 if [ ! -f "$BOOT_FLAG" ]; then
     log "========== 🔥 First Boot Auto Update =========="
     log "[BOOT] Detected first boot after restart, waiting for network..."
+    
+    # 记录启动时系统运行时间（秒）- 不受时间跳变影响
+    BOOT_UPTIME=$(cat /proc/uptime | cut -d' ' -f1 | cut -d'.' -f1)
+    echo "$BOOT_UPTIME" > /tmp/banner_boot_uptime
+    log "[BOOT] System uptime at boot: ${BOOT_UPTIME}s"
     
     # 等待网络就绪（最多等待60秒）
     WAIT_COUNT=0
@@ -498,11 +721,13 @@ if [ ! -f "$BOOT_FLAG" ]; then
     done
     
     if [ $WAIT_COUNT -ge 30 ]; then
-        log "[BOOT] ⚠ Network not ready after 60s, will retry later"
-        # 设置5分钟后重试标记
-        echo "$(date +%s)" > "$RETRY_TIMER"
+       log "[BOOT] ⚠ Network not ready after 60s, will retry later"
+        # 记录当前系统运行时间作为重试基准
+        CURRENT_UPTIME=$(cat /proc/uptime | cut -d' ' -f1 | cut -d'.' -f1)
+        echo "$CURRENT_UPTIME" > "$RETRY_TIMER"
         echo "0" > "$RETRY_FLAG"
         touch "$BOOT_FLAG"
+        log "[BOOT] Retry scheduled at uptime: ${CURRENT_UPTIME}s (will check in 5min)"
         exit 0
     fi
     
@@ -532,49 +757,147 @@ if [ ! -f "$BOOT_FLAG" ]; then
     else
         # 3次都失败，设置5分钟后重试
         log "[BOOT] ⚠ All 3 attempts failed, scheduling retry in 5 minutes"
-        echo "$(date +%s)" > "$RETRY_TIMER"
+        CURRENT_UPTIME=$(cat /proc/uptime | cut -d' ' -f1 | cut -d'.' -f1)
+        echo "$CURRENT_UPTIME" > "$RETRY_TIMER"
         echo "0" > "$RETRY_FLAG"
         touch "$BOOT_FLAG"
+        log "[BOOT] Retry scheduled at uptime: ${CURRENT_UPTIME}s"
     fi
     
     exit 0
 fi
 
-# ==================== ⏰ 5分钟重试机制 ====================
-if [ -f "$RETRY_TIMER" ]; then
-    RETRY_TIME=$(cat "$RETRY_TIMER")
-    CURRENT_TIME=$(date +%s)
-    TIME_DIFF=$((CURRENT_TIME - RETRY_TIME))
+# ==================== ⏰ 5分钟重试机制（基于系统运行时间） ====================
+# 辅助函数: 获取启动ID (用于检测重启)
+get_boot_id() {
+    # 优先使用boot_id (更可靠)
+    if [ -f /proc/sys/kernel/random/boot_id ]; then
+        cat /proc/sys/kernel/random/boot_id 2>/dev/null
+        return 0
+    fi
     
+    # Fallback: 使用PID 1的启动时间
+    if [ -f /proc/1/stat ]; then
+        awk '{print $22}' /proc/1/stat 2>/dev/null
+        return 0
+    fi
+    
+    # 最后的fallback: 返回空
+    echo ""
+    return 1
+}
+
+# 检测系统是否重启
+detect_reboot() {
+    local saved_boot_id_file="/tmp/banner_boot_id"
+    local current_boot_id=$(get_boot_id)
+    
+    if [ -z "$current_boot_id" ]; then
+        log "[WARN] Cannot determine boot ID, skipping reboot detection"
+        return 1  # 无法确定,假设未重启
+    fi
+    
+    if [ -f "$saved_boot_id_file" ]; then
+        local saved_boot_id=$(cat "$saved_boot_id_file")
+        if [ "$current_boot_id" != "$saved_boot_id" ]; then
+            # Boot ID不同,系统已重启
+            log "[REBOOT] System reboot detected (boot_id changed)"
+            echo "$current_boot_id" > "$saved_boot_id_file"
+            return 0  # 检测到重启
+        fi
+    else
+        # 首次运行,保存boot ID
+        echo "$current_boot_id" > "$saved_boot_id_file"
+    fi
+    
+    return 1  # 未重启
+}
+
+# 重试逻辑主体
+if [ -f "$RETRY_TIMER" ]; then
+    # 首先检测是否重启
+    if detect_reboot; then
+        log "[RETRY] System rebooted, clearing retry schedule"
+        rm -f "$RETRY_TIMER" "$RETRY_FLAG"
+        exit 0
+    fi
+    
+    # 读取保存的uptime
+    RETRY_UPTIME=$(cat "$RETRY_TIMER" 2>/dev/null)
+    CURRENT_UPTIME=$(cat /proc/uptime | cut -d' ' -f1 | cut -d'.' -f1)
+    
+    # 基本合法性检查
+    if [ -z "$RETRY_UPTIME" ] || [ -z "$CURRENT_UPTIME" ]; then
+        log "[ERROR] Invalid uptime values, clearing retry"
+        rm -f "$RETRY_TIMER" "$RETRY_FLAG"
+        exit 0
+    fi
+    
+    # 检查uptime是否异常(当前uptime远小于保存的uptime)
+    # 这可能表示系统重启或时间异常
+    if [ "$CURRENT_UPTIME" -lt "$((RETRY_UPTIME - 3600))" ]; then
+        log "[RETRY] Uptime anomaly detected (current: ${CURRENT_UPTIME}s < saved: ${RETRY_UPTIME}s - 1h)"
+        log "[RETRY] Possible system reboot or time issue, clearing retry schedule"
+        rm -f "$RETRY_TIMER" "$RETRY_FLAG"
+        exit 0
+    fi
+    
+    # 计算时间差
+    TIME_DIFF=$((CURRENT_UPTIME - RETRY_UPTIME))
+    
+    # 时间差合法性检查(不应该是负数)
+    if [ $TIME_DIFF -lt 0 ]; then
+        log "[ERROR] Negative time diff: ${TIME_DIFF}s, clearing retry"
+        rm -f "$RETRY_TIMER" "$RETRY_FLAG"
+        exit 0
+    fi
+    
+    log "[DEBUG] Retry check: current=${CURRENT_UPTIME}s, saved=${RETRY_UPTIME}s, diff=${TIME_DIFF}s"
+    
+    # 检查是否到达重试时间(5分钟 = 300秒)
     if [ $TIME_DIFF -ge 300 ]; then
         log "========== 🔄 Retry Update (5min elapsed) =========="
         
         # 检查网络
         if ! check_network; then
-            log "[RETRY] ⚠ Network still not ready, will check again later"
-            echo "$(date +%s)" > "$RETRY_TIMER"
+            log "[RETRY] ⚠ Network still not ready, rescheduling"
+            # 重新设置重试时间
+            CURRENT_UPTIME=$(cat /proc/uptime | cut -d' ' -f1 | cut -d'.' -f1)
+            echo "$CURRENT_UPTIME" > "$RETRY_TIMER"
+            log "[RETRY] Rescheduled at uptime: ${CURRENT_UPTIME}s"
             exit 0
         fi
         
         # 执行重试更新
+        log "[RETRY] Executing update attempt..."
         if /usr/bin/banner_manual_update.sh; then
+            # 更新成功
             log "[RETRY] ✓ Retry update successful"
             rm -f "$RETRY_FLAG" "$RETRY_TIMER"
+            exit 0
         else
-            log "[RETRY] × Retry update failed"
+            # 更新失败,检查重试次数
+            log "[RETRY] ✗ Retry update failed"
             RETRY_COUNT=$(cat "$RETRY_FLAG" 2>/dev/null || echo 0)
             RETRY_COUNT=$((RETRY_COUNT + 1))
             
             if [ $RETRY_COUNT -ge 3 ]; then
+                # 达到最大重试次数
                 log "[RETRY] ⚠ Max retries (3) reached, giving up until next cycle"
                 rm -f "$RETRY_FLAG" "$RETRY_TIMER"
+                exit 0
             else
+                # 更新重试计数和时间
                 echo "$RETRY_COUNT" > "$RETRY_FLAG"
-                echo "$(date +%s)" > "$RETRY_TIMER"
-                log "[RETRY] Scheduled next retry (attempt $((RETRY_COUNT + 1))/3) in 5 minutes"
+                CURRENT_UPTIME=$(cat /proc/uptime | cut -d' ' -f1 | cut -d'.' -f1)
+                echo "$CURRENT_UPTIME" > "$RETRY_TIMER"
+                log "[RETRY] Scheduled next retry (attempt $((RETRY_COUNT + 1))/3) at uptime: ${CURRENT_UPTIME}s"
+                exit 0
             fi
         fi
-        exit 0
+    else
+        # 尚未到重试时间
+        log "[DEBUG] Retry not yet due (${TIME_DIFF}s / 300s elapsed)"
     fi
 fi
 
@@ -611,51 +934,137 @@ BG_GROUP=${1:-1}
 if [ -f "/usr/share/banner/config.sh" ]; then
     . /usr/share/banner/config.sh
 else
-    # Fallback defaults
     MAX_FILE_SIZE=3145728
     CACHE_DIR="/tmp/banner_cache"
     DEFAULT_BG_PATH="/www/luci-static/banner"
     PERSISTENT_BG_PATH="/overlay/banner"
 fi
 
-# 定义变量
 LOG="/tmp/banner_bg.log"
 CACHE="$CACHE_DIR"
 WEB="$DEFAULT_BG_PATH"
 PERSISTENT="$PERSISTENT_BG_PATH"
 
-# 添加日志函数
+# 日志函数
 log() {
     local msg="$1"
-    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
-    local log_file="$LOG"
-    echo "[$timestamp] $msg" >> "$log_file"
-    if [ -s "$log_file" ] && [ $(wc -c < "$log_file") -gt 51200 ]; then
-        mv "$log_file" "$log_file.bak"
-        tail -n 50 "$log_file.bak" > "$log_file"
-        rm -f "$log_file.bak"
+    local timestamp=$(date '+%Y-%m-%d %H:%M:%S' 2>/dev/null || date)
+    local log_file="${LOG:-/tmp/banner_update.log}"
+    
+    # URL和IP脱敏(如果需要)
+    if echo "$msg" | grep -qE 'https?://|[0-9]{1,3}\.[0-9]{1,3}'; then
+        msg=$(echo "$msg" | sed -E 's|https?://[^[:space:]]+|[URL]|g' | sed -E 's|[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|[IP]|g')
     fi
+    
+    # 防止日志写入失败导致脚本中断
+    {
+        echo "[$timestamp] $msg" >> "$log_file" 2>/dev/null
+    } || {
+        # 写入失败,尝试写到stderr,但不中断脚本
+        echo "[$timestamp] LOG_ERROR: $msg" >&2 2>/dev/null || true
+        return 1
+    }
+    
+    # 日志轮转(加错误保护)
+    local log_size=$(wc -c < "$log_file" 2>/dev/null || echo 0)
+    if [ -s "$log_file" ] && [ "$log_size" -gt 51200 ]; then
+        {
+            # 使用临时文件避免数据丢失
+            tail -n 50 "$log_file" > "${log_file}.tmp" 2>/dev/null && \
+            mv "${log_file}.tmp" "$log_file" 2>/dev/null
+        } || {
+            # 轮转失败,尝试直接截断(保留最后100行)
+            tail -n 100 "$log_file" > "${log_file}.new" 2>/dev/null && \
+            mv "${log_file}.new" "$log_file" 2>/dev/null
+        } || {
+            # 彻底失败,清空文件(最后的保护)
+            : > "$log_file" 2>/dev/null || true
+        }
+    fi
+    
+    return 0
 }
-
-# 添加锁检查函数
-check_lock() {
-    local lock_file="$1"
-    local max_age="$2"
-    if [ -f "$lock_file" ]; then
-        local lock_time=$(stat -c %Y "$lock_file" 2>/dev/null || date +%s)
-        local current_time=$(date +%s)
-        local age=$((current_time - lock_time))
-        if [ $age -gt $max_age ]; then
-            log "Clearing stale lock (age: ${age}s): $lock_file"
-            rm -f "$lock_file"
+# ==================== 🔍 JPEG验证函数 ====================
+validate_jpeg() {
+    local file="$1"
+    
+    # 检查文件是否存在且非空
+    if [ ! -s "$file" ]; then
+        log "[✗] File is empty or does not exist: $file"
+        return 1
+    fi
+    
+    # 使用 file 命令检查文件类型
+    if command -v file >/dev/null 2>&1; then
+        if file "$file" 2>/dev/null | grep -qiE 'JPEG|JPG'; then
+            log "[✓] Valid JPEG file: $file"
+            return 0
         else
-            log "Task blocked by lock (age: ${age}s): $lock_file"
+            log "[✗] Not a valid JPEG file: $file"
+            return 1
+        fi
+    else
+        # 如果没有 file 命令，检查文件头部魔术字节
+        # JPEG文件以 FF D8 FF 开头
+        local header=$(hexdump -n 3 -e '3/1 "%02X"' "$file" 2>/dev/null)
+        if [ "${header:0:4}" = "FFD8" ]; then
+            log "[✓] Valid JPEG file (header check): $file"
+            return 0
+        else
+            log "[✗] Invalid JPEG header: $file"
             return 1
         fi
     fi
-    touch "$lock_file"
-    return 0
 }
+
+# ==================== 🔐 URL验证函数 ====================
+validate_url() {
+    local url="$1"
+    case "$url" in
+        http://*|https://*) 
+            return 0
+            ;;
+        *)
+            log "[✗] Invalid URL format: $url"
+            return 1
+            ;;
+    esac
+}
+# ==================== 新的 flock 锁机制 ====================
+LOCK_FD=202  # 使用独立的文件描述符
+LOCK_FILE="/var/lock/banner_bg_loader.lock"
+
+acquire_lock() {
+    local timeout="${1:-60}"
+    mkdir -p /var/lock 2>/dev/null
+    
+    eval "exec $LOCK_FD>$LOCK_FILE" || {
+        log "[ERROR] Failed to open lock file"
+        return 1
+    }
+    
+    if flock -w "$timeout" "$LOCK_FD"; then
+        log "[LOCK] Successfully acquired bg_loader lock (FD: $LOCK_FD)"
+        return 0
+    else
+        log "[ERROR] Failed to acquire lock after ${timeout}s"
+        eval "exec $LOCK_FD>&-"
+        return 1
+    fi
+}
+
+release_lock() {
+    if [ -n "$LOCK_FD" ]; then
+        flock -u "$LOCK_FD" 2>/dev/null
+        eval "exec $LOCK_FD>&-"
+    fi
+}
+
+cleanup() {
+    release_lock
+    rm -f "$CACHE/bg_loading"
+}
+trap cleanup EXIT INT TERM
 
 # 动态决定存储路径
 if ! command -v uci >/dev/null 2>&1; then
@@ -663,18 +1072,20 @@ if ! command -v uci >/dev/null 2>&1; then
 else
     [ "$(uci -q get banner.banner.persistent_storage)" = "1" ] && DEST="$PERSISTENT" || DEST="$WEB"
 fi
+
 mkdir -p "$CACHE" "$WEB" "$PERSISTENT"
 
+# 等待 nav_data.json
 JSON="$CACHE/nav_data.json"
 WAIT_COUNT=0
 while [ ! -f "$JSON" ] && [ $WAIT_COUNT -lt 5 ]; do
     log "Waiting for nav_data.json... ($WAIT_COUNT/5)"
-    sleep 1; WAIT_COUNT=$((WAIT_COUNT + 1))
+    sleep 1
+    WAIT_COUNT=$((WAIT_COUNT + 1))
 done
 
 if [ ! -f "$JSON" ]; then
     log "[!] nav_data.json not found, will use cached backgrounds if available."
-    # 尝试使用已缓存的背景图
     for i in 0 1 2; do
         if [ -f "$DEST/bg${i}.jpg" ]; then
             cp "$DEST/bg${i}.jpg" "$WEB/current_bg.jpg" 2>/dev/null
@@ -685,34 +1096,11 @@ if [ ! -f "$JSON" ]; then
     exit 1
 fi
 
-LOCK_FILE="/tmp/banner_bg_loader.lock"
-if ! check_lock "$LOCK_FILE" 60; then
+# 获取锁
+if ! acquire_lock 60; then
+    log "[ERROR] Failed to acquire lock, exiting"
     exit 1
 fi
-trap 'rm -f "$LOCK_FILE"' EXIT
-
-validate_url() {
-    case "$1" in
-        http://*|https://*  ) return 0;;
-        *) log "[×] Invalid URL format: $1"; return 1;;
-    esac
-}
-
-validate_jpeg() {
-    [ ! -s "$1" ] && return 1
-    # 优先使用 od 检查文件头魔术数字
-    local magic=$(od -An -t x1 -N 2 "$1" 2>/dev/null | tr -d ' \n')
-    if [ "$magic" = "ffd8" ]; then
-        return 0
-    fi
-    # 备用检查: 使用 file 命令 (如果可用)
-    if command -v file >/dev/null 2>&1; then
-        if file "$1" | grep -qiE 'JPEG|JPG'; then
-            return 0
-        fi
-    fi
-    return 1
-}
 
 log "Loading background group ${BG_GROUP}..."
 echo "loading" > "$CACHE/bg_loading"
@@ -744,7 +1132,7 @@ for i in 0 1 2; do
         # 修复: 简化HTTP请求,使用3次重试
         DOWNLOAD_OK=0
         for attempt in 1 2 3; do
-            HTTP_CODE=$(curl -sL --max-time 20 -w "%{http_code}" -o "$TMPFILE" "$URL" 2>/dev/null)
+            HTTP_CODE=$(curl -sL --connect-timeout 10 --max-time 20 -w "%{http_code}" -o "$TMPFILE" "$URL" 2>/dev/null)
             
             if [ "$HTTP_CODE" = "200" ] && [ -s "$TMPFILE" ]; then
                 DOWNLOAD_OK=1
@@ -1145,67 +1533,238 @@ function api_reset_defaults()
     json_response({ success = true, message = "已恢复默认配置，页面即将刷新。" })
 end
 
--- 保留原有的文件上传和URL应用函数，因为它们依赖于表单的 multipart/form-data 和页面跳转
 function action_do_upload_bg()
     local fs = require("nixio.fs")
-    local http = require("luci.http" )
+    local http = require("luci.http")
     local uci = require("uci").cursor()
     local sys = require("luci.sys")
-    local bg_index = luci.http.formvalue("bg_index" ) or "0"
-    if not bg_index:match("^[0-2]$") then bg_index = "0" end
+    
+    -- ==================== 步骤1: 严格验证 bg_index ====================
+    local bg_index = luci.http.formvalue("bg_index") or "0"
+    
+    -- 白名单验证: 只允许 0, 1, 2
+    if not bg_index:match("^[0-2]$") then
+        luci.http.status(400, "Invalid background index")
+        luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/background"))
+        return
+    end
+    
+    -- ==================== 步骤2: 路径白名单验证 ====================
     local persistent = uci:get("banner", "banner", "persistent_storage") or "0"
+    
+    -- 定义允许的目录白名单
+    local allowed_dirs = {
+        ["/overlay/banner"] = true,
+        ["/www/luci-static/banner"] = true
+    }
+    
+    -- 根据配置选择目标目录
     local dest_dir = (persistent == "1") and "/overlay/banner" or "/www/luci-static/banner"
-    if not (dest_dir == "/overlay/banner" or dest_dir == "/www/luci-static/banner") then luci.http.status(400, "Invalid destination directory" ); return end
-    sys.call("mkdir -p '" .. dest_dir .. "'")
-    local tmp_file = dest_dir .. "/bg" .. bg_index .. ".tmp"
-    local final_file = dest_dir .. "/bg" .. bg_index .. ".jpg"
-    http.setfilehandler(function(meta, chunk, eof )
-        if not meta or meta.name ~= "bg_file" then return end
-        if chunk then local fp = io.open(tmp_file, "ab"); if fp then fp:write(chunk); fp:close() end end
+    
+    -- 验证目标目录在白名单内
+    if not allowed_dirs[dest_dir] then
+        luci.http.status(400, "Invalid destination directory")
+        luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/background"))
+        return
+    end
+    
+    -- 创建目录(安全的路径)
+    sys.call(string.format("mkdir -p '%s' 2>/dev/null", dest_dir:gsub("'", "'\\''")))
+    
+    -- ==================== 步骤3: 安全构建文件路径 ====================
+    local tmp_file = string.format("%s/bg%s.tmp", dest_dir, bg_index)
+    local final_file = string.format("%s/bg%s.jpg", dest_dir, bg_index)
+    
+    -- 路径穿越检查
+    local function is_safe_path(path, base_dir)
+        -- 确保路径以基础目录开头
+        if path:sub(1, #base_dir) ~= base_dir then
+            return false
+        end
+        -- 确保路径不包含 ../
+        if path:match("%.%.") then
+            return false
+        end
+        -- 确保路径不包含多余的斜杠
+        if path:match("//") then
+            return false
+        end
+        return true
+    end
+    
+    if not is_safe_path(tmp_file, dest_dir) or not is_safe_path(final_file, dest_dir) then
+        luci.http.status(400, "Path traversal detected")
+        luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/background"))
+        return
+    end
+    
+    -- ==================== 步骤4: 文件上传处理 ====================
+    http.setfilehandler(function(meta, chunk, eof)
+        if not meta or meta.name ~= "bg_file" then
+            return
+        end
+        
+        -- 写入文件块
+        if chunk then
+            local fp = io.open(tmp_file, "ab")
+            if fp then
+                fp:write(chunk)
+                fp:close()
+            else
+                -- 文件打开失败
+                return
+            end
+        end
+        
+        -- 文件上传完成
         if eof then
             local max_size = tonumber(uci:get("banner", "banner", "max_file_size") or "3145728")
-            if fs.stat(tmp_file) and fs.stat(tmp_file).size > max_size then fs.remove(tmp_file); luci.http.status(400, "File size exceeds 3MB" ); return end
-            if sys.call("file '" .. tmp_file .. "' | grep -qiE 'JPEG|JPG'") == 0 then
+            
+            -- 验证文件存在和大小
+            local file_stat = fs.stat(tmp_file)
+            if not file_stat then
+                luci.http.status(400, "File upload failed")
+                return
+            end
+            
+            if file_stat.size > max_size then
+                fs.remove(tmp_file)
+                luci.http.status(400, "File size exceeds 3MB")
+                return
+            end
+            
+            -- 验证JPEG格式
+            if sys.call(string.format("file '%s' | grep -qiE 'JPEG|JPG'", tmp_file:gsub("'", "'\\'''"))) == 0 then
+                -- 文件有效,移动到最终位置
                 fs.rename(tmp_file, final_file)
-                sys.call("chmod 644 '" .. final_file .. "'")
-                if persistent == "1" then sys.call("cp '" .. final_file .. "' /www/luci-static/banner/bg" .. bg_index .. ".jpg 2>/dev/null") end
-                if bg_index == "0" then sys.call("cp '" .. final_file .. "' /www/luci-static/banner/current_bg.jpg 2>/dev/null"); uci:set("banner", "banner", "current_bg", "0"); uci:commit("banner") end
+                sys.call(string.format("chmod 644 '%s'", final_file:gsub("'", "'\\''")))
+                
+                -- 同步文件
+                if persistent == "1" then
+                    local sync_target = string.format("/www/luci-static/banner/bg%s.jpg", bg_index)
+                    sys.call(string.format("cp '%s' '%s' 2>/dev/null", 
+                        final_file:gsub("'", "'\\''"),
+                        sync_target:gsub("'", "'\\''")
+                    ))
+                end
+                
+                -- 如果是 bg0,更新当前背景
+                if bg_index == "0" then
+                    sys.call(string.format("cp '%s' /www/luci-static/banner/current_bg.jpg 2>/dev/null",
+                        final_file:gsub("'", "'\\''")
+                    ))
+                    uci:set("banner", "banner", "current_bg", "0")
+                    uci:commit("banner")
+                end
             else
-                fs.remove(tmp_file); luci.http.status(400, "Invalid JPEG file" )
+                -- 文件格式无效
+                fs.remove(tmp_file)
+                luci.http.status(400, "Invalid JPEG file")
             end
         end
     end)
-    luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/background" ))
+    
+    -- 重定向回背景设置页面
+    luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/background"))
 end
-
 function action_do_apply_url()
+    local http = require("luci.http")
+    local sys = require("luci.sys")
     local uci = require("uci").cursor()
     local fs = require("nixio.fs")
-    local sys = require("luci.sys")
-    local url = luci.http.formvalue("custom_bg_url" )
-    if not url or not url:match("^https://.*%.jpe?g$" ) then luci.http.status(400, "Invalid URL format" ); luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/background" )); return end
+    
+    -- 获取用户输入的URL
+    local custom_url = luci.http.formvalue("custom_bg_url")
+    
+    -- URL验证
+    if not custom_url or custom_url == "" then
+        luci.http.status(400, "URL cannot be empty")
+        luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/background"))
+        return
+    end
+    
+    -- 验证URL格式（必须是HTTPS的JPEG图片）
+    if not custom_url:match("^https://.*%.jpe?g$") then
+        luci.http.status(400, "Invalid URL format. Must be HTTPS and end with .jpg or .jpeg")
+        luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/background"))
+        return
+    end
+    
+    -- 确定目标目录
     local persistent = uci:get("banner", "banner", "persistent_storage") or "0"
     local dest_dir = (persistent == "1") and "/overlay/banner" or "/www/luci-static/banner"
-    if not (dest_dir == "/overlay/banner" or dest_dir == "/www/luci-static/banner") then luci.http.status(400, "Invalid destination directory" ); return end
-    sys.call("mkdir -p '" .. dest_dir .. "'")
+    
+    -- 路径白名单验证
+    local allowed_dirs = {
+        ["/overlay/banner"] = true,
+        ["/www/luci-static/banner"] = true
+    }
+    
+    if not allowed_dirs[dest_dir] then
+        luci.http.status(400, "Invalid destination directory")
+        luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/background"))
+        return
+    end
+    
+    -- 创建目录
+    sys.call(string.format("mkdir -p '%s' 2>/dev/null", dest_dir:gsub("'", "'\\''")))
+    
+    -- 构建安全的文件路径
     local tmp_file = dest_dir .. "/bg0.tmp"
     local final_file = dest_dir .. "/bg0.jpg"
-    local max_size = uci:get("banner", "banner", "max_file_size") or "3145728"
-    local curl_cmd = string.format("curl -fsSL --max-time 20 --max-filesize %s '%s' -o '%s'", max_size, url, tmp_file)
-    if os.execute(curl_cmd) == 0 and fs.stat(tmp_file) then
-        local magic_ok = false; local f = io.open(tmp_file, "rb"); if f then if f:read(2) == "\255\216" then magic_ok = true end; f:close() end
-        if magic_ok or (sys.call("file '" .. tmp_file .. "' | grep -qiE 'JPEG|JPG'") == 0) then
-            fs.rename(tmp_file, final_file)
-            if persistent == "1" then sys.call("cp '" .. final_file .. "' /www/luci-static/banner/bg0.jpg 2>/dev/null") end
-            sys.call("cp '" .. final_file .. "' /www/luci-static/banner/current_bg.jpg 2>/dev/null")
-            uci:set("banner", "banner", "current_bg", "0"); uci:commit("banner")
-        else
-            fs.remove(tmp_file); luci.http.status(400, "Invalid JPEG file" )
-        end
-    else
-        fs.remove(tmp_file); luci.http.status(400, "Failed to download file" )
+    
+    -- 下载文件
+    local max_size = tonumber(uci:get("banner", "banner", "max_file_size") or "3145728")
+    local download_cmd = string.format(
+        "curl -fsSL --connect-timeout 10 --max-time 30 --max-filesize %d '%s' -o '%s' 2>/dev/null",
+        max_size,
+        custom_url:gsub("'", "'\\''"),
+        tmp_file:gsub("'", "'\\''")
+    )
+    
+    local ret = sys.call(download_cmd)
+    
+    if ret ~= 0 or not fs.stat(tmp_file) then
+        fs.remove(tmp_file)
+        luci.http.status(400, "Failed to download image from URL")
+        luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/background"))
+        return
     end
-    luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/background" ))
+    
+    -- 验证文件大小
+    local file_stat = fs.stat(tmp_file)
+    if not file_stat or file_stat.size > max_size then
+        fs.remove(tmp_file)
+        luci.http.status(400, "Downloaded file exceeds 3MB limit")
+        luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/background"))
+        return
+    end
+    
+    -- 验证JPEG格式
+    if sys.call(string.format("file '%s' | grep -qiE 'JPEG|JPG'", tmp_file:gsub("'", "'\\'''"))) == 0 then
+        -- 文件有效，移动到最终位置
+        fs.rename(tmp_file, final_file)
+        sys.call(string.format("chmod 644 '%s'", final_file:gsub("'", "'\\''")))
+        
+        -- 同步文件
+        if persistent == "1" then
+            sys.call("cp '/overlay/banner/bg0.jpg' '/www/luci-static/banner/bg0.jpg' 2>/dev/null")
+        end
+        
+        -- 更新当前背景
+        sys.call("cp '" .. final_file:gsub("'", "'\\''") .. "' /www/luci-static/banner/current_bg.jpg 2>/dev/null")
+        uci:set("banner", "banner", "current_bg", "0")
+        uci:commit("banner")
+    else
+        -- 文件格式无效
+        fs.remove(tmp_file)
+        luci.http.status(400, "Downloaded file is not a valid JPEG")
+        luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/background"))
+        return
+    end
+    
+    -- 重定向回背景设置页面
+    luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/background"))
 end
 CONTROLLER
 

@@ -76,6 +76,7 @@ case "$ABS_PKG_DIR" in
         exit 1
         ;;
 esac
+fi
 
 # 检查路径穿越字符（所有可能的形式）
 if echo "$PKG_DIR" | grep -qE '\.\./|\.\.$|/\.\.'; then

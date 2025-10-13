@@ -1311,13 +1311,24 @@ START=99
 USE_PROCD=1
 
 start() {
-    # 检查 UCI 命令
+
     if ! command -v uci >/dev/null 2>&1; then
         echo "[$(date)] Error: UCI command not found, cannot start banner service." >> /tmp/banner_init.log
         return 1
     fi
 
-    # 日志函数
+    if [ ! -f "/usr/share/banner/timeouts.conf" ]; then
+        mkdir -p /usr/share/banner
+        cat > /usr/share/banner/timeouts.conf <<'TIMEOUTS_INIT'
+LOCK_TIMEOUT=60
+NETWORK_WAIT_TIMEOUT=60
+CURL_CONNECT_TIMEOUT=10
+CURL_MAX_TIMEOUT=30
+RETRY_INTERVAL=5
+BOOT_RETRY_INTERVAL=300
+TIMEOUTS_INIT
+    fi
+
     log_msg() {
         echo "[$(date)] $1" >> /tmp/banner_update.log
     }

@@ -1359,7 +1359,7 @@ function action_display()
     local fs = require("nixio.fs")
 
     if uci:get("banner", "banner", "bg_enabled") == "0" then
-        -- 服務被禁用時，只傳遞禁用頁面需要的數據
+        -- 服務被禁用時，只定義和傳遞禁用頁面需要的數據
         local remote_message = uci:get("banner", "banner", "remote_message") or "服务已被远程禁用"
         local contact_email = uci:get("banner", "banner", "contact_email") or "niwo5507@gmail.com"
         local contact_telegram = uci:get("banner", "banner", "contact_telegram") or "@fgnb111999"

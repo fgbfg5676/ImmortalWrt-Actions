@@ -1189,169 +1189,135 @@ cat > "$PKG_DIR/root/etc/init.d/banner" <<'INIT'
 START=99
 USE_PROCD=1
 
-start() {
-    # ==================== 🚨 关键修复1: 立即初始化背景图 ====================
-    echo "[$(date)] ========== Banner Service Starting ==========" >> /tmp/banner_init.log
-    
-    # 确保目录存在
-    mkdir -p /tmp/banner_cache /www/luci-static/banner /overlay/banner /usr/share/banner
-    chmod 755 /tmp/banner_cache /www/luci-static/banner /overlay/banner /usr/share/banner
-    
-    # 🎯 核心修复: 立即部署内置背景图
+# 日誌檔案路徑
+LOG_FILE="/tmp/banner_init.log"
+
+# 統一的日誌函數
+log() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" >> "$LOG_FILE"
+}
+
+# 服務啟動函數
+start_service() {
+    # 確保日誌檔案可寫
+    touch "$LOG_FILE"
+    chmod 666 "$LOG_FILE"
+    log "========== Banner Service Starting =========="
+
+    # 部署內建背景圖 (保持原有邏輯)
     BUILTIN_BG="/usr/share/banner/bg0.jpg"
     TARGET_BG="/www/luci-static/banner/current_bg.jpg"
-    
     if [ -f "$BUILTIN_BG" ]; then
-        # 强制覆盖,确保开机立即可见
-        cp -f "$BUILTIN_BG" "$TARGET_BG" 2>/dev/null
-        cp -f "$BUILTIN_BG" "/www/luci-static/banner/bg0.jpg" 2>/dev/null
-        chmod 644 "$TARGET_BG" "/www/luci-static/banner/bg0.jpg"
-        echo "[$(date)] ✓ Built-in background deployed: $TARGET_BG" >> /tmp/banner_init.log
+        mkdir -p /www/luci-static/banner
+        cp -f "$BUILTIN_BG" "$TARGET_BG"
+        log "✓ 內建背景圖已部署。"
     else
-        echo "[$(date)] ✗ WARNING: Built-in background not found at $BUILTIN_BG" >> /tmp/banner_init.log
+        log "✗ 警告：找不到內建背景圖 ${BUILTIN_BG}"
     fi
-    
-    # 强制刷新 Web 服务器缓存
-    sync
-    
-    # ==================== 🚨 关键修复2: 增强 UCI 检查 ====================
-    if ! command -v uci >/dev/null 2>&1; then
-        echo "[$(date)] Error: UCI command not found" >> /tmp/banner_init.log
-        return 1
-    fi
-    
-    # 确保配置文件存在
-    if [ ! -f "/etc/config/banner" ]; then
-        echo "[$(date)] Creating default banner config" >> /tmp/banner_init.log
-        cat > /etc/config/banner <<'UCICONF'
-config banner 'banner'
-	option text '欢迎使用 OpenWrt Banner'
-	option color 'rainbow'
-	option opacity '50'
-	option carousel_interval '5000'
-	option bg_group '1'
-	option bg_enabled '1'
-	option persistent_storage '0'
-	option current_bg '0'
-	list update_urls 'https://raw.githubusercontent.com/fgbfg5676/openwrt-banner/main/banner.json'
-	option selected_url 'https://raw.githubusercontent.com/fgbfg5676/openwrt-banner/main/banner.json'
-	option update_interval '10800'
-	option last_update '0'
-	option banner_texts ''
-	option remote_message ''
-	option cache_dir '/tmp/banner_cache'
-	option web_dir '/www/luci-static/banner'
-	option persistent_dir '/overlay/banner'
-	option contact_email 'example@email.com'
-	option contact_telegram '@fgnb111999'
-	option contact_qq '183452852'
-UCICONF
-    fi
-    
-    # ==================== 🚨 关键修复3: 确保日志文件可写 ====================
-    touch /tmp/banner_update.log /tmp/banner_bg.log /tmp/banner_init.log
-    chmod 666 /tmp/banner_update.log /tmp/banner_bg.log /tmp/banner_init.log
-    
-    # 初始化日志
-    echo "[$(date)] ========== Banner Service Initialized ==========" > /tmp/banner_update.log
-    
-    # ==================== 🚨 关键修复4: 清理旧的启动标记 ====================
-    # 删除旧的首次启动标记,确保每次重启都会执行首次更新
-    rm -f /tmp/banner_first_boot /tmp/banner_retry_timer /tmp/banner_retry_count 2>/dev/null
-    echo "[$(date)] Cleared boot flags to ensure fresh start" >> /tmp/banner_init.log
-    
-    # ==================== 🚨 关键修复5: 使用 procd 管理后台脚本 ====================
-    # 方式1: 使用 procd 启动 (推荐)
-    procd_open_instance "banner_auto_update"
-    procd_set_param command /bin/sh -c "sleep 5 && /usr/bin/banner_auto_update.sh >> /tmp/banner_update.log 2>&1"
-    procd_set_param respawn 3600 5 0  # 每小时最多重启5次
-    procd_set_param stdout 1
-    procd_set_param stderr 1
-    procd_close_instance
-    
-    echo "[$(date)] Started auto-update via procd (5s delay)" >> /tmp/banner_init.log
-    
-    # 方式2: 同时使用 at 命令作为备份 (如果 procd 失败)
-    if command -v at >/dev/null 2>&1; then
-        echo "/usr/bin/banner_auto_update.sh >> /tmp/banner_update.log 2>&1" | at now + 10 seconds 2>/dev/null
-        echo "[$(date)] Scheduled auto-update via 'at' command (10s delay)" >> /tmp/banner_init.log
-    fi
-    
-    # 方式3: 使用 cron 作为最终备份
-    # 在 /etc/crontabs/root 中添加一次性任务
-    BOOT_TIME=$(date +%M)
-    NEXT_MIN=$(( (BOOT_TIME + 1) % 60 ))
-    if ! grep -q "banner_boot_update" /etc/crontabs/root 2>/dev/null; then
-        echo "$NEXT_MIN * * * * /usr/bin/banner_auto_update.sh >> /tmp/banner_update.log 2>&1 # banner_boot_update" >> /etc/crontabs/root
-        /etc/init.d/cron restart 2>/dev/null
-        echo "[$(date)] Added one-time cron job for boot update" >> /tmp/banner_init.log
-    fi
-    
-    # ==================== 🚨 关键修复6: 延迟启动背景加载 ====================
-    # 给网络和更新脚本留出时间
+
+    # 核心修復：後台執行一個網路巡檢員，直到網路就緒才更新
     (
-        sleep 15
-        BG_GROUP=$(uci -q get banner.banner.bg_group || echo 1)
-        echo "[$(date)] Starting background loader for group $BG_GROUP..." >> /tmp/banner_init.log
-        /usr/bin/banner_bg_loader.sh "$BG_GROUP" >> /tmp/banner_bg.log 2>&1
+        # 清理可能存在的舊標記
+        rm -f /tmp/banner_first_boot_done
+
+        # 延遲5秒開始，避免開機初期過於繁忙
+        sleep 5
+
+        # 循環偵測網路，直到成功
+        while [ ! -f /tmp/banner_first_boot_done ]; do
+            log "正在偵測網路連線 (ping 223.5.5.5)..."
+
+            # 使用 ping 指令檢查公網連線
+            if ping -c 1 -W 3 223.5.5.5 >/dev/null 2>&1; then
+                log "✅ 網路已就緒！準備執行首次更新。"
+                
+                # 執行真正的手動更新腳本，並將其輸出記錄到更新日誌
+                /usr/bin/banner_manual_update.sh >> /tmp/banner_update.log 2>&1
+                
+                # 建立成功標記，以便結束偵測循環
+                touch /tmp/banner_first_boot_done
+                
+                log "✅ 首次開機更新任務已觸發。"
+                break # 成功後退出循環
+            else
+                # 如果網路未就緒，等待15秒後重試
+                log "網路尚未就緒，15秒後重試..."
+                sleep 15
+            fi
+        done
     ) &
-    
-    echo "[$(date)] ========== Banner Service Started ==========" >> /tmp/banner_init.log
+
+    log "========== Banner Service Started (網路巡檢員已在後台運行) =========="
 }
 
-stop() {
-    echo "[$(date)] Stopping banner service..." >> /tmp/banner_init.log
-    
-    # 停止 procd 管理的实例
-    killall banner_auto_update.sh banner_bg_loader.sh 2>/dev/null
-    
-    # 清理 cron 中的一次性任务
-    if [ -f /etc/crontabs/root ]; then
-        sed -i '/banner_boot_update/d' /etc/crontabs/root
-        /etc/init.d/cron restart 2>/dev/null
-    fi
+# 服務停止函數
+stop_service() {
+    log "========== Banner Service Stopping =========="
+    # 停止由本腳本啟動的後台任務
+    # 使用 pkill 更精準地殺掉包含特定參數的進程
+    pkill -f "ping -c 1 -W 3 223.5.5.5"
 }
 
-restart() {
-    stop
-    sleep 2
-    start
+# rc.common 會自動處理 start/stop/restart
+# 但為了確保清理邏輯被執行，我們明確定義 restart
+restart_service() {
+    stop_service
+    sleep 1
+    start_service
 }
-
 status() {
-    local uci_enabled=$(uci -q get banner.banner.bg_enabled || echo 1)
-    local remote_msg=$(uci -q get banner.banner.remote_message)
-
-    echo "===== Banner Status ====="
-    if [ "$uci_enabled" = "0" ] && [ -n "$remote_msg" ]; then
-        echo "Status: Disabled (Reason: $remote_msg)"
+    # 標題，清晰地標識了版本
+    echo "===== Banner Service Status (Patched v2.0) ====="
+    
+    # 1. 核心狀態：實時回報「網路巡檢員」的工作狀態
+    if pgrep -f "ping -c 1 -W 3 223.5.5.5" >/dev/null; then
+        echo "Status: Running (網路巡檢員正在後台偵測網路...)"
+    elif [ -f /tmp/banner_first_boot_done ]; then
+        echo "Status: Idle (首次開機更新已完成)"
     else
-        echo "Status: Enabled"
+        echo "Status: Idle (服務已啟動，等待巡檢員執行)"
+    fi
+
+    # 2. UCI 配置狀態：顯示遠端或手動的啟用/禁用狀態
+    local uci_enabled=$(uci -q get banner.banner.bg_enabled || echo 1)
+    if [ "$uci_enabled" = "0" ]; then
+        local remote_msg=$(uci -q get banner.banner.remote_message)
+        echo "UCI Status: Disabled (Reason: ${remote_msg:-手動禁用})"
+    else
+        echo "UCI Status: Enabled"
     fi
     
+    # 3. 上次更新時間：讓您知道內容的新鮮度
     local last_update=$(uci -q get banner.banner.last_update || echo 0)
     if [ "$last_update" = "0" ]; then
         echo "Last Update: Never"
     else
-        echo "Last Update: $(date -d "@$last_update" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || date)"
+        # 兼容不同系統的 date 命令，非常穩健
+        echo "Last Update: $(date -d "@$last_update" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || date -r "$last_update" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo '無法解析時間')"
     fi
     
-    echo ""
-    echo "Boot flags status:"
-    echo "  - First boot flag: $([ -f /tmp/banner_first_boot ] && echo 'EXISTS' || echo 'NOT SET')"
-    echo "  - Retry timer: $([ -f /tmp/banner_retry_timer ] && cat /tmp/banner_retry_timer || echo 'NONE')"
+    echo "---" # 分隔線，讓版面更清晰
     
-    echo ""
-    echo "Recent init logs:"
-    tail -n 5 /tmp/banner_init.log 2>/dev/null || echo "No init logs"
+    # 4. 初始化日誌：快速查看開機過程
+    echo "Recent Init Logs (/tmp/banner_init.log):"
+    tail -n 5 /tmp/banner_init.log 2>/dev/null || echo "  (No init logs)"
     
-    echo ""
-    echo "Recent update logs:"
-    tail -n 10 /tmp/banner_update.log 2>/dev/null || echo "No update logs available"
+    echo "---"
     
-    echo "========================"
+    # 5. 更新日誌：快速查看更新是否成功，或失敗原因
+    echo "Recent Update Logs (/tmp/banner_update.log):"
+    tail -n 5 /tmp/banner_update.log 2>/dev/null || echo "  (No update logs)"
+    
+    echo "================================================"
 }
+
+# rc.common 會自動處理 status，這裡無需定義
+# 如果需要自訂 status，可以取消註解
+# status() {
+#     echo "自訂狀態輸出..."
+# }
 INIT
+
 
 # =================== 核心修正 #1：替換整個 banner.lua (再次確認為完整版) ===================
 cat > "$PKG_DIR/root/usr/lib/lua/luci/controller/banner.lua" <<'CONTROLLER'

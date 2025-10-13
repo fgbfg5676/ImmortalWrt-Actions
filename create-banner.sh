@@ -242,6 +242,7 @@ cat > "$PKG_DIR/root/etc/config/banner" <<'UCICONF'
 config banner 'banner'
 	option text '🎉 福利导航的内容会不定时更新，关注作者不迷路'
 	option color 'rainbow'
+                option font_color '#FFFFFF'
 	option opacity '50' # 0-100
 	option carousel_interval '5000' # 1000-30000 (ms)
 	option bg_group '1' # 1-4
@@ -1338,6 +1339,7 @@ function index()
     entry({"admin", "status", "banner", "api_set_opacity"}, post("api_set_opacity")).leaf = true
     entry({"admin", "status", "banner", "api_set_carousel_interval"}, post("api_set_carousel_interval")).leaf = true
     entry({"admin", "status", "banner", "api_set_update_url"}, post("api_set_update_url")).leaf = true
+    entry({"admin", "status", "banner", "api_set_font_color"}, post("api_set_font_color")).leaf = true
     entry({"admin", "status", "banner", "api_reset_defaults"}, post("api_reset_defaults")).leaf = true
     
     -- 保留用于文件上传和URL表单提交的旧入口
@@ -1356,16 +1358,27 @@ function action_display()
     local uci = require("uci").cursor()
     local fs = require("nixio.fs")
     if uci:get("banner", "banner", "bg_enabled") == "0" then
-        local contact_email = uci:get("banner", "banner", "contact_email") or "example@email.com"
-        local contact_telegram = uci:get("banner", "banner", "contact_telegram") or "@fgnb111999"
-        local contact_qq = uci:get("banner", "banner", "contact_qq") or "183452852"
-        luci.template.render("banner/display", { 
-            bg_enabled = "0", 
-            remote_message = uci:get("banner", "banner", "remote_message") or "服务已被远程禁用",
-            contact_email = contact_email,
-            contact_telegram = contact_telegram,
-            contact_qq = contact_qq
-        })
+    local contact_email = uci:get("banner", "banner", "contact_email") or "niwo5507@gmail.com"
+    local contact_telegram = uci:get("banner", "banner", "contact_telegram") or "@fgnb111999"
+    local contact_qq = uci:get("banner", "banner", "contact_qq") or "183452852"
+    local font_color = uci:get("banner", "banner", "font_color") or "#FFFFFF"
+    luci.template.render("banner/display", { 
+        text = text, 
+        color = uci:get("banner", "banner", "color"), 
+        opacity = opacity, 
+        carousel_interval = uci:get("banner", "banner", "carousel_interval"), 
+        current_bg = uci:get("banner", "banner", "current_bg"), 
+        bg_enabled = "1", 
+        banner_texts = banner_texts, 
+        nav_data = nav_data, 
+        persistent = persistent, 
+        bg_path = (persistent == "1") and "/overlay/banner" or "/www/luci-static/banner", 
+        token = luci.dispatcher.context.authsession, 
+        contact_email = contact_email, 
+        contact_telegram = contact_telegram, 
+        contact_qq = contact_qq,
+        font_color = font_color
+    })
         return
     end
     local nav_data = { nav_tabs = {} }; pcall(function() nav_data = require("luci.jsonc").parse(fs.readfile("/tmp/banner_cache/nav_data.json")) end)
@@ -1494,7 +1507,17 @@ function api_set_update_url()
         json_response({ success = false, message = "Invalid URL" })
     end
 end
-
+function api_set_font_color()
+    local uci = require("uci").cursor()
+    local color = luci.http.formvalue("font_color")
+    if color and color:match("^#[A-Fa-f0-9]{6}$") then
+        uci:set("banner", "banner", "font_color", color)
+        uci:commit("banner")
+        json_response({ success = true, message = "字体颜色已更新" })
+    else
+        json_response({ success = false, message = "无效的颜色值" })
+    end
+end
 function api_reset_defaults()
     luci.sys.call("rm -f /etc/config/banner && /etc/init.d/banner restart")
     json_response({ success = true, message = "已恢复默认配置，页面即将刷新。" })
@@ -1846,7 +1869,7 @@ cat > "$PKG_DIR/root/usr/lib/lua/luci/view/banner/display.htm" <<'DISPLAYVIEW'
     .action-btn { width: 100%; }
 }
 .banner-scroll { padding: 20px; margin-bottom: 30px; text-align: center; font-weight: 700; font-size: 18px; border-radius: 10px; min-height: 60px; display: flex; align-items: center; justify-content: center;
-<% if color == 'rainbow' then %>background: linear-gradient(90deg, #ff0000, #ff7f00, #ffff00, #00ff00, #0000ff, #4b0082, #9400d3); background-size: 400% 400%; animation: rainbow 8s ease infinite; color: #fff; text-shadow: 2px 2px 4px rgba(0,0,0,.5)<% else %>background: rgba(255,255,255,.15); color: <%=color%><% end %>
+<% if color == 'rainbow' then %>background: linear-gradient(90deg, #ff0000, #ff7f00, #ffff00, #00ff00, #0000ff, #4b0082, #9400d3); background-size: 400% 400%; animation: rainbow 8s ease infinite; color: #fff; text-shadow: 2px 2px 4px rgba(0,0,0,.5)<% else %>background: rgba(255,255,255,.15); color: <%=font_color or '#FFFFFF'%><% end %>
 }
 @keyframes rainbow { 0%,100% { background-position: 0% 50% } 50% { background-position: 100% 50% } }
 .banner-contacts { display: flex; flex-direction: column; gap: 15px; margin-bottom: 30px; }
@@ -2325,6 +2348,15 @@ cat > "$PKG_DIR/root/usr/lib/lua/luci/view/banner/background.htm" <<'BGVIEW'
             </select>
             <button class="cbi-button" onclick="apiCall('api_load_group', {group: this.previousElementSibling.value}, true, this)">加载背景组</button>
         </div></div>
+        <div class="cbi-value">
+            <label class="cbi-value-title">横幅字体颜色</label>
+            <div class="cbi-value-field" style="display: flex; align-items: center; gap: 10px;">
+                <input type="color" id="font_color_picker" value="<%=luci.util.pcdata(uci:get('banner', 'banner', 'font_color') or '#FFFFFF')%>" style="height: 35px; width: 60px; padding: 2px; border-radius: 5px; cursor: pointer; border: 1px solid rgba(255,255,255,.3);">
+                <input type="text" id="font_color_text" value="<%=luci.util.pcdata(uci:get('banner', 'banner', 'font_color') or '#FFFFFF')%>" style="width: 100px; text-transform: uppercase;" maxlength="7" pattern="^#[A-Fa-f0-9]{6}$">
+                <button class="cbi-button" onclick="applyFontColor(this)">应用颜色</button>
+            </div>
+            <p style="color:#aaa;font-size:12px">🎨 选择的颜色将应用于所有页面的横幅文字</p>
+        </div>
         <div class="cbi-value"><label class="cbi-value-title">手动填写背景图链接</label><div class="cbi-value-field">
             <form id="customBgForm" method="post" action="<%=luci.dispatcher.build_url('admin/status/banner/do_apply_url')%>">
                 <input name="token" type="hidden" value="<%=token%>">
@@ -2360,7 +2392,7 @@ cat > "$PKG_DIR/root/usr/lib/lua/luci/view/banner/background.htm" <<'BGVIEW'
         for (var key in data) {
             formData.append(key, data[key]);
         }
-
+    
         fetch('<%=luci.dispatcher.build_url("admin/status/banner")%>/' + endpoint, {
             method: 'POST',
             body: formData
@@ -2394,7 +2426,30 @@ cat > "$PKG_DIR/root/usr/lib/lua/luci/view/banner/background.htm" <<'BGVIEW'
             alert('⚠️ 格式錯誤！請確保鏈接以 https:// 開頭  ，並以 .jpg 或 .jpeg 結尾。');
         }
     });
+    function applyFontColor(btn) {
+        var colorValue = document.getElementById('font_color_text').value.trim().toUpperCase();
+        if (!colorValue.match(/^#[A-Fa-f0-9]{6}$/)) {
+            alert('⚠️ 请输入有效的颜色值（如 #FFFFFF）');
+            return;
+        }
+        apiCall('api_set_font_color', { font_color: colorValue }, true, btn);
+    }
 
+    document.addEventListener('DOMContentLoaded', function() {
+        var colorPicker = document.getElementById('font_color_picker');
+        var colorText = document.getElementById('font_color_text');
+        if (colorPicker && colorText) {
+            colorPicker.addEventListener('input', function() {
+                colorText.value = this.value.toUpperCase();
+            });
+            colorText.addEventListener('input', function() {
+                var val = this.value.trim();
+                if (val.match(/^#[A-Fa-f0-9]{6}$/)) {
+                    colorPicker.value = val;
+                }
+            });
+        }
+    });
     document.getElementById('uploadForm').addEventListener('submit', function(e) {
         var file = this.bg_file.files[0];
         if (!file) {

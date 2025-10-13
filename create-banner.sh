@@ -49,10 +49,18 @@ else
     }
 fi
 # 允许 GitHub Actions Runner 路径
-if echo "$ABS_PKG_DIR" | grep -q "^/home/runner/work/ImmortalWrt-Actions"; then
-    echo "⚙ 允许 GitHub Actions 路径: $ABS_PKG_DIR"
-else
+IS_GITHUB_ACTIONS=0
+if echo "$ABS_PKG_DIR" | grep -qE "^/home/runner/work/|^/github/workspace"; then
+    echo "âš™ å…è®¸ GitHub Actions è·¯å¾„: $ABS_PKG_DIR"
+    IS_GITHUB_ACTIONS=1
+fi
 
+
+if echo "$ABS_PKG_DIR" | grep -qE "^/home/[^/]+/.*openwrt"; then
+    echo "âš™ å…è®¸æœ¬åœ°å¼€å'è·¯å¾„: $ABS_PKG_DIR"
+    IS_GITHUB_ACTIONS=1
+fi
+if [ $IS_GITHUB_ACTIONS -eq 0 ]; then
 # 黑名单检查：禁止危险的系统路径
 case "$ABS_PKG_DIR" in
     "/"|\
@@ -77,7 +85,6 @@ case "$ABS_PKG_DIR" in
         ;;
 esac
 fi
-
 # 检查路径穿越字符（所有可能的形式）
 if echo "$PKG_DIR" | grep -qE '\.\./|\.\.$|/\.\.'; then
     echo "✖ 错误：目标目录包含非法的路径穿越符 '..' ('$PKG_DIR')，已终止操作。"
@@ -233,6 +240,20 @@ config banner 'banner'
 	option contact_qq '183452852'
 UCICONF
 
+cat > "$PKG_DIR/root/usr/share/banner/timeouts.conf" <<'TIMEOUTS'
+
+LOCK_TIMEOUT=60
+
+NETWORK_WAIT_TIMEOUT=60
+
+CURL_CONNECT_TIMEOUT=10
+CURL_MAX_TIMEOUT=30
+
+RETRY_INTERVAL=5
+
+BOOT_RETRY_INTERVAL=300
+TIMEOUTS
+
 # 創建一個全局配置文件，用於存儲可配置的變數
 mkdir -p "$PKG_DIR/root/usr/share/banner"
 cat > "$PKG_DIR/root/usr/share/banner/config.sh" <<'CONFIGSH'
@@ -262,20 +283,18 @@ log() {
     local msg="$1"
     local timestamp=$(date '+%Y-%m-%d %H:%M:%S' 2>/dev/null || date)
     local log_file="${LOG:-/tmp/banner_update.log}"
-    
-    # URL和IP脱敏(如果需要)
+
     if echo "$msg" | grep -qE 'https?://|[0-9]{1,3}\.[0-9]{1,3}'; then
         msg=$(echo "$msg" | sed -E 's|https?://[^[:space:]]+|[URL]|g' | sed -E 's|[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|[IP]|g')
     fi
     
-    # 防止日志写入失败导致脚本中断
-    {
-        echo "[$timestamp] $msg" >> "$log_file" 2>/dev/null
-    } || {
-        # 写入失败,尝试写到stderr,但不中断脚本
-        echo "[$timestamp] LOG_ERROR: $msg" >&2 2>/dev/null || true
+    if ! echo "[$timestamp] $msg" >> "$log_file" 2>/dev/null; then
+
+        echo "[$timestamp] LOG_ERROR: $msg" >&2 2>/dev/null
+
+        touch "$log_file" 2>/dev/null && chmod 644 "$log_file" 2>/dev/null
         return 1
-    }
+    fi
     
     # 日志轮转(加错误保护)
     local log_size=$(wc -c < "$log_file" 2>/dev/null || echo 0)
@@ -311,26 +330,31 @@ CLEANER
 cat > "$PKG_DIR/root/usr/bin/banner_manual_update.sh" <<'MANUALUPDATE'
 LOG="/tmp/banner_update.log"
 CACHE=$(uci -q get banner.banner.cache_dir || echo "/tmp/banner_cache")
-
+# 加载超时配置
+if [ -f "/usr/share/banner/timeouts.conf" ]; then
+    . /usr/share/banner/timeouts.conf
+else
+    LOCK_TIMEOUT=60
+    CURL_CONNECT_TIMEOUT=10
+    CURL_MAX_TIMEOUT=30
+fi
 # 日志函数（保持不变）
 log() {
     local msg="$1"
     local timestamp=$(date '+%Y-%m-%d %H:%M:%S' 2>/dev/null || date)
     local log_file="${LOG:-/tmp/banner_update.log}"
-    
-    # URL和IP脱敏(如果需要)
+
     if echo "$msg" | grep -qE 'https?://|[0-9]{1,3}\.[0-9]{1,3}'; then
         msg=$(echo "$msg" | sed -E 's|https?://[^[:space:]]+|[URL]|g' | sed -E 's|[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|[IP]|g')
     fi
     
-    # 防止日志写入失败导致脚本中断
-    {
-        echo "[$timestamp] $msg" >> "$log_file" 2>/dev/null
-    } || {
-        # 写入失败,尝试写到stderr,但不中断脚本
-        echo "[$timestamp] LOG_ERROR: $msg" >&2 2>/dev/null || true
+    if ! echo "[$timestamp] $msg" >> "$log_file" 2>/dev/null; then
+
+        echo "[$timestamp] LOG_ERROR: $msg" >&2 2>/dev/null
+
+        touch "$log_file" 2>/dev/null && chmod 644 "$log_file" 2>/dev/null
         return 1
-    }
+    fi
     
     # 日志轮转(加错误保护)
     local log_size=$(wc -c < "$log_file" 2>/dev/null || echo 0)
@@ -367,29 +391,28 @@ validate_url() {
     esac
 }
 # ==================== 新的 flock 锁机制 ====================
+
 LOCK_FD=200
 LOCK_FILE="/var/lock/banner_manual_update.lock"
 
-# 获取锁（带超时）
 acquire_lock() {
     local timeout="${1:-60}"
     
-    # 确保锁文件目录存在
     mkdir -p /var/lock 2>/dev/null
+
+    eval "exec $LOCK_FD>&-" 2>/dev/null || true
     
-    # 打开文件描述符
     eval "exec $LOCK_FD>$LOCK_FILE" || {
         log "[ERROR] Failed to open lock file"
         return 1
     }
     
-    # 尝试获取独占锁（带超时）
-    if flock -w "$timeout" "$LOCK_FD"; then
+    if flock -w "$timeout" "$LOCK_FD" 2>/dev/null; then
         log "[LOCK] Successfully acquired lock (FD: $LOCK_FD)"
         return 0
     else
         log "[ERROR] Failed to acquire lock after ${timeout}s timeout"
-        eval "exec $LOCK_FD>&-"  # 关闭文件描述符
+        eval "exec $LOCK_FD>&-" 2>/dev/null || true
         return 1
     fi
 }
@@ -599,25 +622,33 @@ LOG="/tmp/banner_update.log"
 BOOT_FLAG="/tmp/banner_first_boot"
 RETRY_FLAG="/tmp/banner_retry_count"
 RETRY_TIMER="/tmp/banner_retry_timer"
-
+# 加载超时配置
+if [ -f "/usr/share/banner/timeouts.conf" ]; then
+    . /usr/share/banner/timeouts.conf
+else
+    LOCK_TIMEOUT=60
+    NETWORK_WAIT_TIMEOUT=60
+    CURL_CONNECT_TIMEOUT=10
+    CURL_MAX_TIMEOUT=30
+    RETRY_INTERVAL=5
+    BOOT_RETRY_INTERVAL=300
+fi
 log() {
     local msg="$1"
     local timestamp=$(date '+%Y-%m-%d %H:%M:%S' 2>/dev/null || date)
     local log_file="${LOG:-/tmp/banner_update.log}"
-    
-    # URL和IP脱敏(如果需要)
+
     if echo "$msg" | grep -qE 'https?://|[0-9]{1,3}\.[0-9]{1,3}'; then
         msg=$(echo "$msg" | sed -E 's|https?://[^[:space:]]+|[URL]|g' | sed -E 's|[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|[IP]|g')
     fi
     
-    # 防止日志写入失败导致脚本中断
-    {
-        echo "[$timestamp] $msg" >> "$log_file" 2>/dev/null
-    } || {
-        # 写入失败,尝试写到stderr,但不中断脚本
-        echo "[$timestamp] LOG_ERROR: $msg" >&2 2>/dev/null || true
+    if ! echo "[$timestamp] $msg" >> "$log_file" 2>/dev/null; then
+
+        echo "[$timestamp] LOG_ERROR: $msg" >&2 2>/dev/null
+
+        touch "$log_file" 2>/dev/null && chmod 644 "$log_file" 2>/dev/null
         return 1
-    }
+    fi
     
     # 日志轮转(加错误保护)
     local log_size=$(wc -c < "$log_file" 2>/dev/null || echo 0)
@@ -640,24 +671,27 @@ log() {
 }
 
 # ==================== 新的 flock 锁机制 ====================
-LOCK_FD=201  # 使用不同的文件描述符避免冲突
+
+LOCK_FD=201
 LOCK_FILE="/var/lock/banner_auto_update.lock"
 
 acquire_lock() {
     local timeout="${1:-60}"
     mkdir -p /var/lock 2>/dev/null
     
+    eval "exec $LOCK_FD>&-" 2>/dev/null || true
+    
     eval "exec $LOCK_FD>$LOCK_FILE" || {
         log "[ERROR] Failed to open lock file"
         return 1
     }
     
-    if flock -w "$timeout" "$LOCK_FD"; then
+    if flock -w "$timeout" "$LOCK_FD" 2>/dev/null; then
         log "[LOCK] Successfully acquired auto-update lock (FD: $LOCK_FD)"
         return 0
     else
         log "[ERROR] Failed to acquire lock after ${timeout}s"
-        eval "exec $LOCK_FD>&-"
+        eval "exec $LOCK_FD>&-" 2>/dev/null || true
         return 1
     fi
 }
@@ -675,13 +709,30 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 # 网络检查函数（保持不变）
+
 check_network() {
-    if ping -c 1 -W 2 8.8.8.8 >/dev/null 2>&1 || ping -c 1 -W 2 114.114.114.114 >/dev/null 2>&1; then
-        return 0
+
+    local dns_servers="8.8.8.8 114.114.114.114 1.1.1.1 223.5.5.5"
+    for dns in $dns_servers; do
+        if ping -c 1 -W 2 "$dns" >/dev/null 2>&1; then
+            return 0
+        fi
+    done
+    
+    local test_urls="https://www.baidu.com https://www.qq.com https://www.taobao.com"
+    for url in $test_urls; do
+        if curl -sL --connect-timeout 3 --max-time 5 --head "$url" >/dev/null 2>&1; then
+            return 0
+        fi
+    done
+
+    if ip route show default >/dev/null 2>&1; then
+        local gateway=$(ip route show default | awk '/default/ {print $3; exit}')
+        if [ -n "$gateway" ] && ping -c 1 -W 1 "$gateway" >/dev/null 2>&1; then
+            return 0
+        fi
     fi
-    if curl -sL --connect-timeout 5 --max-time 3 --head https://www.baidu.com >/dev/null 2>&1; then
-        return 0
-    fi
+    
     return 1
 }
 
@@ -949,26 +1000,31 @@ LOG="/tmp/banner_bg.log"
 CACHE="$CACHE_DIR"
 WEB="$DEFAULT_BG_PATH"
 PERSISTENT="$PERSISTENT_BG_PATH"
-
+# 加载超时配置
+if [ -f "/usr/share/banner/timeouts.conf" ]; then
+    . /usr/share/banner/timeouts.conf
+else
+    LOCK_TIMEOUT=60
+    CURL_CONNECT_TIMEOUT=10
+    CURL_MAX_TIMEOUT=30
+fi
 # 日志函数
 log() {
     local msg="$1"
     local timestamp=$(date '+%Y-%m-%d %H:%M:%S' 2>/dev/null || date)
     local log_file="${LOG:-/tmp/banner_update.log}"
-    
-    # URL和IP脱敏(如果需要)
+
     if echo "$msg" | grep -qE 'https?://|[0-9]{1,3}\.[0-9]{1,3}'; then
         msg=$(echo "$msg" | sed -E 's|https?://[^[:space:]]+|[URL]|g' | sed -E 's|[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|[IP]|g')
     fi
     
-    # 防止日志写入失败导致脚本中断
-    {
-        echo "[$timestamp] $msg" >> "$log_file" 2>/dev/null
-    } || {
-        # 写入失败,尝试写到stderr,但不中断脚本
-        echo "[$timestamp] LOG_ERROR: $msg" >&2 2>/dev/null || true
+    if ! echo "[$timestamp] $msg" >> "$log_file" 2>/dev/null; then
+
+        echo "[$timestamp] LOG_ERROR: $msg" >&2 2>/dev/null
+
+        touch "$log_file" 2>/dev/null && chmod 644 "$log_file" 2>/dev/null
         return 1
-    }
+    fi
     
     # 日志轮转(加错误保护)
     local log_size=$(wc -c < "$log_file" 2>/dev/null || echo 0)
@@ -1036,24 +1092,27 @@ validate_url() {
     esac
 }
 # ==================== 新的 flock 锁机制 ====================
-LOCK_FD=202  # 使用独立的文件描述符
+
+LOCK_FD=202
 LOCK_FILE="/var/lock/banner_bg_loader.lock"
 
 acquire_lock() {
     local timeout="${1:-60}"
     mkdir -p /var/lock 2>/dev/null
     
+    eval "exec $LOCK_FD>&-" 2>/dev/null || true
+    
     eval "exec $LOCK_FD>$LOCK_FILE" || {
         log "[ERROR] Failed to open lock file"
         return 1
     }
     
-    if flock -w "$timeout" "$LOCK_FD"; then
+    if flock -w "$timeout" "$LOCK_FD" 2>/dev/null; then
         log "[LOCK] Successfully acquired bg_loader lock (FD: $LOCK_FD)"
         return 0
     else
         log "[ERROR] Failed to acquire lock after ${timeout}s"
-        eval "exec $LOCK_FD>&-"
+        eval "exec $LOCK_FD>&-" 2>/dev/null || true
         return 1
     fi
 }

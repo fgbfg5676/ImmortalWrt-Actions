@@ -200,9 +200,36 @@ endef
 define Package/luci-app-banner/postinst
 #!/bin/sh
 [ -n "$${IPKG_INSTROOT}" ] || {
-	mkdir -p /www/luci-static/banner /overlay/banner 2>/dev/null
+	echo "Installing luci-app-banner..."
+	
+	# 创建必要目录
+	mkdir -p /www/luci-static/banner /overlay/banner /tmp/banner_cache /usr/share/banner 2>/dev/null
+	chmod 755 /www/luci-static/banner /overlay/banner /tmp/banner_cache /usr/share/banner
+	
+	# 🎯 关键: 立即部署内置背景图
+	if [ -f /usr/share/banner/bg0.jpg ]; then
+		cp -f /usr/share/banner/bg0.jpg /www/luci-static/banner/current_bg.jpg 2>/dev/null
+		cp -f /usr/share/banner/bg0.jpg /www/luci-static/banner/bg0.jpg 2>/dev/null
+		chmod 644 /www/luci-static/banner/*.jpg
+		echo "✓ Built-in background deployed"
+	fi
+	
+	# 确保脚本可执行
+	chmod +x /usr/bin/banner_*.sh 2>/dev/null
+	chmod +x /etc/init.d/banner 2>/dev/null
+	
+	# 确保日志文件可写
+	touch /tmp/banner_update.log /tmp/banner_bg.log
+	chmod 666 /tmp/banner_update.log /tmp/banner_bg.log
+	
+	# 重启 cron 确保任务加载
+	/etc/init.d/cron restart 2>/dev/null
+	
+	# 启用并启动服务
 	/etc/init.d/banner enable
 	/etc/init.d/banner start
+	
+	echo "✓ luci-app-banner installed successfully"
 }
 exit 0
 endef
@@ -622,363 +649,205 @@ LOG="/tmp/banner_update.log"
 BOOT_FLAG="/tmp/banner_first_boot"
 RETRY_FLAG="/tmp/banner_retry_count"
 RETRY_TIMER="/tmp/banner_retry_timer"
-# 加载超时配置
-if [ -f "/usr/share/banner/timeouts.conf" ]; then
-    . /usr/share/banner/timeouts.conf
-else
-    LOCK_TIMEOUT=60
-    NETWORK_WAIT_TIMEOUT=60
-    CURL_CONNECT_TIMEOUT=10
-    CURL_MAX_TIMEOUT=30
-    RETRY_INTERVAL=5
-    BOOT_RETRY_INTERVAL=300
-fi
+
+# ==================== 🚨 关键修复: 简化日志函数 ====================
 log() {
     local msg="$1"
     local timestamp=$(date '+%Y-%m-%d %H:%M:%S' 2>/dev/null || date)
-    local log_file="${LOG:-/tmp/banner_update.log}"
-
-    if echo "$msg" | grep -qE 'https?://|[0-9]{1,3}\.[0-9]{1,3}'; then
-        msg=$(echo "$msg" | sed -E 's|https?://[^[:space:]]+|[URL]|g' | sed -E 's|[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|[IP]|g')
+    
+    # 确保日志文件存在
+    if [ ! -f "$LOG" ]; then
+        touch "$LOG" 2>/dev/null && chmod 666 "$LOG" 2>/dev/null
     fi
     
-    if ! echo "[$timestamp] $msg" >> "$log_file" 2>/dev/null; then
-
-        echo "[$timestamp] LOG_ERROR: $msg" >&2 2>/dev/null
-
-        touch "$log_file" 2>/dev/null && chmod 644 "$log_file" 2>/dev/null
-        return 1
-    fi
+    # 直接写入,减少错误检查
+    echo "[$timestamp] $msg" >> "$LOG" 2>/dev/null || echo "[$timestamp] $msg" >&2
     
-    # 日志轮转(加错误保护)
-    local log_size=$(wc -c < "$log_file" 2>/dev/null || echo 0)
-    if [ -s "$log_file" ] && [ "$log_size" -gt 51200 ]; then
-        {
-            # 使用临时文件避免数据丢失
-            tail -n 50 "$log_file" > "${log_file}.tmp" 2>/dev/null && \
-            mv "${log_file}.tmp" "$log_file" 2>/dev/null
-        } || {
-            # 轮转失败,尝试直接截断(保留最后100行)
-            tail -n 100 "$log_file" > "${log_file}.new" 2>/dev/null && \
-            mv "${log_file}.new" "$log_file" 2>/dev/null
-        } || {
-            # 彻底失败,清空文件(最后的保护)
-            : > "$log_file" 2>/dev/null || true
-        }
-    fi
-    
-    return 0
-}
-
-# ==================== 新的 flock 锁机制 ====================
-
-LOCK_FD=201
-LOCK_FILE="/var/lock/banner_auto_update.lock"
-
-acquire_lock() {
-    local timeout="${1:-60}"
-    mkdir -p /var/lock 2>/dev/null
-    
-    eval "exec $LOCK_FD>&-" 2>/dev/null || true
-    
-    eval "exec $LOCK_FD>$LOCK_FILE" || {
-        log "[ERROR] Failed to open lock file"
-        return 1
-    }
-    
-    if flock -w "$timeout" "$LOCK_FD" 2>/dev/null; then
-        log "[LOCK] Successfully acquired auto-update lock (FD: $LOCK_FD)"
-        return 0
-    else
-        log "[ERROR] Failed to acquire lock after ${timeout}s"
-        eval "exec $LOCK_FD>&-" 2>/dev/null || true
-        return 1
+    # 简化日志轮转
+    if [ -f "$LOG" ] && [ $(wc -c < "$LOG" 2>/dev/null || echo 0) -gt 51200 ]; then
+        tail -n 50 "$LOG" > "${LOG}.tmp" 2>/dev/null && mv "${LOG}.tmp" "$LOG" 2>/dev/null
     fi
 }
 
-release_lock() {
-    if [ -n "$LOCK_FD" ]; then
-        flock -u "$LOCK_FD" 2>/dev/null
-        eval "exec $LOCK_FD>&-"
-    fi
-}
-
-cleanup() {
-    release_lock
-}
-trap cleanup EXIT INT TERM
-
-# 网络检查函数（保持不变）
-
+# ==================== 🚨 关键修复: 简化网络检查 ====================
 check_network() {
-
-    local dns_servers="8.8.8.8 114.114.114.114 1.1.1.1 223.5.5.5"
-    for dns in $dns_servers; do
-        if ping -c 1 -W 2 "$dns" >/dev/null 2>&1; then
-            return 0
-        fi
-    done
-    
-    local test_urls="https://www.baidu.com https://www.qq.com https://www.taobao.com"
-    for url in $test_urls; do
-        if curl -sL --connect-timeout 3 --max-time 5 --head "$url" >/dev/null 2>&1; then
-            return 0
-        fi
-    done
-
+    # 方法1: 检查默认路由
     if ip route show default >/dev/null 2>&1; then
-        local gateway=$(ip route show default | awk '/default/ {print $3; exit}')
-        if [ -n "$gateway" ] && ping -c 1 -W 1 "$gateway" >/dev/null 2>&1; then
-            return 0
-        fi
+        return 0
+    fi
+    
+    # 方法2: 尝试 ping 网关
+    local gateway=$(ip route show default 2>/dev/null | awk '{print $3; exit}')
+    if [ -n "$gateway" ] && ping -c 1 -W 1 "$gateway" >/dev/null 2>&1; then
+        return 0
+    fi
+    
+    # 方法3: 检查网络接口状态
+    if ip link show | grep -q 'state UP'; then
+        return 0
     fi
     
     return 1
 }
 
-# 检查 UCI
-if ! command -v uci >/dev/null 2>&1; then
-    log "[×] UCI command not found in auto_update script. Exiting."
-    exit 0
-fi
+# ==================== 🚨 关键修复: 简化锁机制 ====================
+LOCK_FD=201
+LOCK_FILE="/var/lock/banner_auto_update.lock"
+
+acquire_lock() {
+    mkdir -p /var/lock 2>/dev/null
+    
+    # 清理旧锁文件
+    if [ -f "$LOCK_FILE" ]; then
+        local lock_age=$(( $(date +%s) - $(stat -c %Y "$LOCK_FILE" 2>/dev/null || echo 0) ))
+        if [ $lock_age -gt 300 ]; then
+            rm -f "$LOCK_FILE"
+            log "[LOCK] Removed stale lock file"
+        fi
+    fi
+    
+    # 尝试获取锁
+    exec 201>"$LOCK_FILE"
+    if flock -n 201; then
+        log "[LOCK] Lock acquired"
+        return 0
+    else
+        log "[LOCK] Failed to acquire lock (another instance running)"
+        return 1
+    fi
+}
+
+release_lock() {
+    flock -u 201 2>/dev/null
+    exec 201>&-
+}
+
+cleanup() {
+    release_lock
+    log "[CLEANUP] Script exiting"
+}
+trap cleanup EXIT INT TERM
+
+# ==================== 主逻辑 ====================
+log "=========================================="
+log "Banner Auto Update Script Started"
+log "=========================================="
 
 # 获取锁
-if ! acquire_lock 60; then
-    log "[ERROR] Failed to acquire lock, exiting"
+if ! acquire_lock; then
+    log "[ERROR] Another instance is running"
+    exit 1
+fi
+
+# 检查 UCI
+if ! command -v uci >/dev/null 2>&1; then
+    log "[ERROR] UCI command not found"
     exit 1
 fi
 
 # 检查是否被禁用
 BG_ENABLED=$(uci -q get banner.banner.bg_enabled || echo "1")
 if [ "$BG_ENABLED" = "0" ]; then
-    log "[INFO] Service is disabled, auto-update skipped"
+    log "[INFO] Service is disabled, skipping update"
     exit 0
 fi
 
-# ==================== 🚀 开机首次更新机制（时间容错版） ====================
+# ==================== 🚨 关键修复: 简化首次启动逻辑 ====================
 if [ ! -f "$BOOT_FLAG" ]; then
-    log "========== 🔥 First Boot Auto Update =========="
-    log "[BOOT] Detected first boot after restart, waiting for network..."
+    log "========== First Boot Auto Update =========="
     
-    # 记录启动时系统运行时间（秒）- 不受时间跳变影响
-    BOOT_UPTIME=$(cat /proc/uptime | cut -d' ' -f1 | cut -d'.' -f1)
-    echo "$BOOT_UPTIME" > /tmp/banner_boot_uptime
-    log "[BOOT] System uptime at boot: ${BOOT_UPTIME}s"
-    
-    # 等待网络就绪（最多等待60秒）
+    # 等待网络 (最多30秒)
+    log "[BOOT] Waiting for network..."
     WAIT_COUNT=0
-    while [ $WAIT_COUNT -lt 30 ]; do
+    while [ $WAIT_COUNT -lt 15 ]; do
         if check_network; then
-            log "[BOOT] ✓ Network is ready after ${WAIT_COUNT}s"
+            log "[BOOT] ✓ Network ready after ${WAIT_COUNT} attempts"
             break
         fi
         sleep 2
         WAIT_COUNT=$((WAIT_COUNT + 1))
     done
     
-    if [ $WAIT_COUNT -ge 30 ]; then
-       log "[BOOT] ⚠ Network not ready after 60s, will retry later"
-        # 记录当前系统运行时间作为重试基准
-        CURRENT_UPTIME=$(cat /proc/uptime | cut -d' ' -f1 | cut -d'.' -f1)
-        echo "$CURRENT_UPTIME" > "$RETRY_TIMER"
+    if [ $WAIT_COUNT -ge 15 ]; then
+        log "[BOOT] ⚠ Network not ready, will retry in 5 minutes"
+        echo "$(date +%s)" > "$RETRY_TIMER"
         echo "0" > "$RETRY_FLAG"
         touch "$BOOT_FLAG"
-        log "[BOOT] Retry scheduled at uptime: ${CURRENT_UPTIME}s (will check in 5min)"
         exit 0
     fi
     
-    # 网络就绪，执行首次更新（最多3次重试）
-    RETRY_COUNT=0
-    UPDATE_SUCCESS=0
-    
-    while [ $RETRY_COUNT -lt 3 ]; do
-        RETRY_COUNT=$((RETRY_COUNT + 1))
-        log "[BOOT] Update attempt $RETRY_COUNT/3..."
-        
-        if /usr/bin/banner_manual_update.sh; then
-            log "[BOOT] ✓ First boot update successful on attempt $RETRY_COUNT"
-            UPDATE_SUCCESS=1
-            break
-        else
-            log "[BOOT] × Update attempt $RETRY_COUNT failed"
-            [ $RETRY_COUNT -lt 3 ] && sleep 5
-        fi
-    done
-    
-    if [ $UPDATE_SUCCESS -eq 1 ]; then
-        # 更新成功，清除所有标记
+    # 执行首次更新
+    log "[BOOT] Executing first boot update..."
+    if /usr/bin/banner_manual_update.sh; then
+        log "[BOOT] ✓ First boot update successful"
         touch "$BOOT_FLAG"
         rm -f "$RETRY_FLAG" "$RETRY_TIMER"
-        log "[BOOT] First boot update completed successfully"
     else
-        # 3次都失败，设置5分钟后重试
-        log "[BOOT] ⚠ All 3 attempts failed, scheduling retry in 5 minutes"
-        CURRENT_UPTIME=$(cat /proc/uptime | cut -d' ' -f1 | cut -d'.' -f1)
-        echo "$CURRENT_UPTIME" > "$RETRY_TIMER"
+        log "[BOOT] ✗ First boot update failed, will retry"
+        echo "$(date +%s)" > "$RETRY_TIMER"
         echo "0" > "$RETRY_FLAG"
         touch "$BOOT_FLAG"
-        log "[BOOT] Retry scheduled at uptime: ${CURRENT_UPTIME}s"
     fi
     
     exit 0
 fi
 
-# ==================== ⏰ 5分钟重试机制（基于系统运行时间） ====================
-# 辅助函数: 获取启动ID (用于检测重启)
-get_boot_id() {
-    # 优先使用boot_id (更可靠)
-    if [ -f /proc/sys/kernel/random/boot_id ]; then
-        cat /proc/sys/kernel/random/boot_id 2>/dev/null
-        return 0
-    fi
-    
-    # Fallback: 使用PID 1的启动时间
-    if [ -f /proc/1/stat ]; then
-        awk '{print $22}' /proc/1/stat 2>/dev/null
-        return 0
-    fi
-    
-    # 最后的fallback: 返回空
-    echo ""
-    return 1
-}
-
-# 检测系统是否重启
-detect_reboot() {
-    local saved_boot_id_file="/tmp/banner_boot_id"
-    local current_boot_id=$(get_boot_id)
-    
-    if [ -z "$current_boot_id" ]; then
-        log "[WARN] Cannot determine boot ID, skipping reboot detection"
-        return 1  # 无法确定,假设未重启
-    fi
-    
-    if [ -f "$saved_boot_id_file" ]; then
-        local saved_boot_id=$(cat "$saved_boot_id_file")
-        if [ "$current_boot_id" != "$saved_boot_id" ]; then
-            # Boot ID不同,系统已重启
-            log "[REBOOT] System reboot detected (boot_id changed)"
-            echo "$current_boot_id" > "$saved_boot_id_file"
-            return 0  # 检测到重启
-        fi
-    else
-        # 首次运行,保存boot ID
-        echo "$current_boot_id" > "$saved_boot_id_file"
-    fi
-    
-    return 1  # 未重启
-}
-
-# 重试逻辑主体
+# ==================== 重试逻辑 ====================
 if [ -f "$RETRY_TIMER" ]; then
-    # 首先检测是否重启
-    if detect_reboot; then
-        log "[RETRY] System rebooted, clearing retry schedule"
-        rm -f "$RETRY_TIMER" "$RETRY_FLAG"
-        exit 0
-    fi
+    RETRY_TIME=$(cat "$RETRY_TIMER" 2>/dev/null || echo 0)
+    CURRENT_TIME=$(date +%s)
+    TIME_DIFF=$((CURRENT_TIME - RETRY_TIME))
     
-    # 读取保存的uptime
-    RETRY_UPTIME=$(cat "$RETRY_TIMER" 2>/dev/null)
-    CURRENT_UPTIME=$(cat /proc/uptime | cut -d' ' -f1 | cut -d'.' -f1)
-    
-    # 基本合法性检查
-    if [ -z "$RETRY_UPTIME" ] || [ -z "$CURRENT_UPTIME" ]; then
-        log "[ERROR] Invalid uptime values, clearing retry"
-        rm -f "$RETRY_TIMER" "$RETRY_FLAG"
-        exit 0
-    fi
-    
-    # 检查uptime是否异常(当前uptime远小于保存的uptime)
-    # 这可能表示系统重启或时间异常
-    if [ "$CURRENT_UPTIME" -lt "$((RETRY_UPTIME - 3600))" ]; then
-        log "[RETRY] Uptime anomaly detected (current: ${CURRENT_UPTIME}s < saved: ${RETRY_UPTIME}s - 1h)"
-        log "[RETRY] Possible system reboot or time issue, clearing retry schedule"
-        rm -f "$RETRY_TIMER" "$RETRY_FLAG"
-        exit 0
-    fi
-    
-    # 计算时间差
-    TIME_DIFF=$((CURRENT_UPTIME - RETRY_UPTIME))
-    
-    # 时间差合法性检查(不应该是负数)
-    if [ $TIME_DIFF -lt 0 ]; then
-        log "[ERROR] Negative time diff: ${TIME_DIFF}s, clearing retry"
-        rm -f "$RETRY_TIMER" "$RETRY_FLAG"
-        exit 0
-    fi
-    
-    log "[DEBUG] Retry check: current=${CURRENT_UPTIME}s, saved=${RETRY_UPTIME}s, diff=${TIME_DIFF}s"
-    
-    # 检查是否到达重试时间(5分钟 = 300秒)
     if [ $TIME_DIFF -ge 300 ]; then
-        log "========== 🔄 Retry Update (5min elapsed) =========="
+        log "========== Retry Update (5min elapsed) =========="
         
-        # 检查网络
         if ! check_network; then
-            log "[RETRY] ⚠ Network still not ready, rescheduling"
-            # 重新设置重试时间
-            CURRENT_UPTIME=$(cat /proc/uptime | cut -d' ' -f1 | cut -d'.' -f1)
-            echo "$CURRENT_UPTIME" > "$RETRY_TIMER"
-            log "[RETRY] Rescheduled at uptime: ${CURRENT_UPTIME}s"
+            log "[RETRY] Network still not ready"
+            echo "$(date +%s)" > "$RETRY_TIMER"
             exit 0
         fi
         
-        # 执行重试更新
-        log "[RETRY] Executing update attempt..."
         if /usr/bin/banner_manual_update.sh; then
-            # 更新成功
             log "[RETRY] ✓ Retry update successful"
             rm -f "$RETRY_FLAG" "$RETRY_TIMER"
-            exit 0
         else
-            # 更新失败,检查重试次数
-            log "[RETRY] ✗ Retry update failed"
             RETRY_COUNT=$(cat "$RETRY_FLAG" 2>/dev/null || echo 0)
             RETRY_COUNT=$((RETRY_COUNT + 1))
             
             if [ $RETRY_COUNT -ge 3 ]; then
-                # 达到最大重试次数
-                log "[RETRY] ⚠ Max retries (3) reached, giving up until next cycle"
+                log "[RETRY] Max retries reached, giving up"
                 rm -f "$RETRY_FLAG" "$RETRY_TIMER"
-                exit 0
             else
-                # 更新重试计数和时间
+                log "[RETRY] Scheduling next retry (attempt $((RETRY_COUNT + 1))/3)"
                 echo "$RETRY_COUNT" > "$RETRY_FLAG"
-                CURRENT_UPTIME=$(cat /proc/uptime | cut -d' ' -f1 | cut -d'.' -f1)
-                echo "$CURRENT_UPTIME" > "$RETRY_TIMER"
-                log "[RETRY] Scheduled next retry (attempt $((RETRY_COUNT + 1))/3) at uptime: ${CURRENT_UPTIME}s"
-                exit 0
+                echo "$(date +%s)" > "$RETRY_TIMER"
             fi
         fi
-    else
-        # 尚未到重试时间
-        log "[DEBUG] Retry not yet due (${TIME_DIFF}s / 300s elapsed)"
     fi
+    
+    exit 0
 fi
 
-# ==================== 📅 正常3小时间隔更新 ====================
+# ==================== 定期更新逻辑 ====================
 LAST_UPDATE=$(uci -q get banner.banner.last_update || echo 0)
 CURRENT_TIME=$(date +%s)
 INTERVAL=$(uci -q get banner.banner.update_interval || echo 10800)
 
 if [ $((CURRENT_TIME - LAST_UPDATE)) -lt "$INTERVAL" ]; then
-    log "[√] 未到更新时间,跳过自动更新"
+    log "[INFO] Update interval not reached, skipping"
     exit 0
 fi
 
-log "========== Auto Update Started (3h cycle) =========="
+log "========== Scheduled Auto Update =========="
 
-# 检查网络
 if ! check_network; then
-    log "[×] Network not available, skipping scheduled update"
+    log "[ERROR] Network not available"
     exit 0
 fi
 
-# 执行更新
 /usr/bin/banner_manual_update.sh
 if [ $? -ne 0 ]; then
-    log "[×] 自动更新失败,查看 /tmp/banner_update.log 获取详情"
+    log "[ERROR] Scheduled update failed"
 fi
 AUTOUPDATE
 
@@ -1300,111 +1169,154 @@ BGLOADER
 
 # Cron jobs
 cat > "$PKG_DIR/root/etc/cron.d/banner" <<'CRON'
-0 * * * * /usr/bin/banner_auto_update.sh
-0 0 * * * /usr/bin/banner_cache_cleaner.sh
+# Banner Cron Jobs - Enhanced Version
+# 每小时执行自动更新检查
+0 * * * * /usr/bin/banner_auto_update.sh >> /tmp/banner_update.log 2>&1
+
+# 每天凌晨清理缓存
+0 0 * * * /usr/bin/banner_cache_cleaner.sh >> /tmp/banner_update.log 2>&1
+
+# 每5分钟检查一次重试任务 (关键!)
+*/5 * * * * [ -f /tmp/banner_retry_timer ] && /usr/bin/banner_auto_update.sh >> /tmp/banner_update.log 2>&1
+
+# 🆕 开机后第2分钟强制执行一次更新 (确保开机更新)
+# 这个任务会在每次开机后的第2分钟执行一次,然后自动清理
+@reboot sleep 120 && /usr/bin/banner_auto_update.sh >> /tmp/banner_update.log 2>&1 && sed -i '/@reboot.*banner_auto_update/d' /etc/crontabs/root
 CRON
 
-# --- 用這段新程式碼替換舊的 init 腳本 ---
 cat > "$PKG_DIR/root/etc/init.d/banner" <<'INIT'
 #!/bin/sh /etc/rc.common
 START=99
 USE_PROCD=1
 
 start() {
-
+    # ==================== 🚨 关键修复1: 立即初始化背景图 ====================
+    echo "[$(date)] ========== Banner Service Starting ==========" >> /tmp/banner_init.log
+    
+    # 确保目录存在
+    mkdir -p /tmp/banner_cache /www/luci-static/banner /overlay/banner /usr/share/banner
+    chmod 755 /tmp/banner_cache /www/luci-static/banner /overlay/banner /usr/share/banner
+    
+    # 🎯 核心修复: 立即部署内置背景图
+    BUILTIN_BG="/usr/share/banner/bg0.jpg"
+    TARGET_BG="/www/luci-static/banner/current_bg.jpg"
+    
+    if [ -f "$BUILTIN_BG" ]; then
+        # 强制覆盖,确保开机立即可见
+        cp -f "$BUILTIN_BG" "$TARGET_BG" 2>/dev/null
+        cp -f "$BUILTIN_BG" "/www/luci-static/banner/bg0.jpg" 2>/dev/null
+        chmod 644 "$TARGET_BG" "/www/luci-static/banner/bg0.jpg"
+        echo "[$(date)] ✓ Built-in background deployed: $TARGET_BG" >> /tmp/banner_init.log
+    else
+        echo "[$(date)] ✗ WARNING: Built-in background not found at $BUILTIN_BG" >> /tmp/banner_init.log
+    fi
+    
+    # 强制刷新 Web 服务器缓存
+    sync
+    
+    # ==================== 🚨 关键修复2: 增强 UCI 检查 ====================
     if ! command -v uci >/dev/null 2>&1; then
-        echo "[$(date)] Error: UCI command not found, cannot start banner service." >> /tmp/banner_init.log
+        echo "[$(date)] Error: UCI command not found" >> /tmp/banner_init.log
         return 1
     fi
-
-    if [ ! -f "/usr/share/banner/timeouts.conf" ]; then
-        mkdir -p /usr/share/banner
-        cat > /usr/share/banner/timeouts.conf <<'TIMEOUTS_INIT'
-LOCK_TIMEOUT=60
-NETWORK_WAIT_TIMEOUT=60
-CURL_CONNECT_TIMEOUT=10
-CURL_MAX_TIMEOUT=30
-RETRY_INTERVAL=5
-BOOT_RETRY_INTERVAL=300
-TIMEOUTS_INIT
-    fi
-
-    log_msg() {
-        echo "[$(date)] $1" >> /tmp/banner_update.log
-    }
-
-    # 获取活跃网络接口
-    get_active_interface() {
-        local iface
-        for iface in $(ubus list network.interface.* | cut -d. -f3); do
-            if ubus call network.interface."$iface" status 2>/dev/null | grep -q '"up": true'; then
-                echo "$iface"
-                return
-            fi
-        done
-        echo "lan"
-    }
-
-    INTERFACE=$(get_active_interface)
-    log_msg "Network detection: Using interface '$INTERFACE'."
-
-    # 等待网络接口上线，最多等待 30 秒
-    WAIT=0
-    while :; do
-        STATUS=$(ubus call network.interface.$INTERFACE status 2>/dev/null)
-        echo "$STATUS" | grep -q '"up": true' && break
-        sleep 2
-        WAIT=$((WAIT + 2))
-        if [ $WAIT -ge 30 ]; then
-            log_msg "Network interface '$INTERFACE' not up after 30 seconds. Proceeding anyway."
-            break
-        fi
-    done
-
-    # 创建目录并设置权限
-    mkdir -p /tmp/banner_cache /www/luci-static/banner /overlay/banner
-    chmod 755 /tmp/banner_cache /www/luci-static/banner /overlay/banner
-
-   # 确定背景图目录
-PERSISTENT=$(uci -q get banner.banner.persistent_storage || echo "0")
-if [ "$PERSISTENT" = "1" ]; then
-    BG_DIR="/overlay/banner"
-else
-    BG_DIR="/www/luci-static/banner"
-fi
-
-# 强制同步背景图到 web 目录
-if [ "$PERSISTENT" = "1" ] && [ -d "/overlay/banner" ]; then
-    for i in 0 1 2; do
-        if [ -f "/overlay/banner/bg${i}.jpg" ]; then
-            cp "/overlay/banner/bg${i}.jpg" "/www/luci-static/banner/bg${i}.jpg" 2>/dev/null
-        fi
-    done
-fi
-
-# 🪄 初始化背景机制：确保开机时总是显示初始化背景
-if [ -f "/usr/share/banner/bg0.jpg" ]; then
-    # 第一步：初始化 current_bg.jpg（无论是否存在都覆盖）
-    cp "/usr/share/banner/bg0.jpg" "/www/luci-static/banner/current_bg.jpg"
-    log_msg "[Init Background] Applied initialization background from /usr/share/banner/bg0.jpg"
     
-    # 第二步：如果启用了永久存储，也同步到 /overlay/banner/
-    if [ "$PERSISTENT" = "1" ]; then
-        mkdir -p /overlay/banner
-        cp "/usr/share/banner/bg0.jpg" "/overlay/banner/bg0.jpg" 2>/dev/null
-        log_msg "[Init Background] Synced to persistent storage"
+    # 确保配置文件存在
+    if [ ! -f "/etc/config/banner" ]; then
+        echo "[$(date)] Creating default banner config" >> /tmp/banner_init.log
+        cat > /etc/config/banner <<'UCICONF'
+config banner 'banner'
+	option text '欢迎使用 OpenWrt Banner'
+	option color 'rainbow'
+	option opacity '50'
+	option carousel_interval '5000'
+	option bg_group '1'
+	option bg_enabled '1'
+	option persistent_storage '0'
+	option current_bg '0'
+	list update_urls 'https://raw.githubusercontent.com/fgbfg5676/openwrt-banner/main/banner.json'
+	option selected_url 'https://raw.githubusercontent.com/fgbfg5676/openwrt-banner/main/banner.json'
+	option update_interval '10800'
+	option last_update '0'
+	option banner_texts ''
+	option remote_message ''
+	option cache_dir '/tmp/banner_cache'
+	option web_dir '/www/luci-static/banner'
+	option persistent_dir '/overlay/banner'
+	option contact_email 'example@email.com'
+	option contact_telegram '@fgnb111999'
+	option contact_qq '183452852'
+UCICONF
     fi
-else
-    log_msg "[Init Background] WARNING: Initialization background not found at /usr/share/banner/bg0.jpg"
-fi
-
-# 启动后台更新和加载脚本，输出到日志
-/usr/bin/banner_auto_update.sh >> /tmp/banner_update.log 2>&1 &
-sleep 2
-BG_GROUP=$(uci -q get banner.banner.bg_group || echo 1)
-/usr/bin/banner_bg_loader.sh "$BG_GROUP" >> /tmp/banner_update.log 2>&1 &
+    
+    # ==================== 🚨 关键修复3: 确保日志文件可写 ====================
+    touch /tmp/banner_update.log /tmp/banner_bg.log /tmp/banner_init.log
+    chmod 666 /tmp/banner_update.log /tmp/banner_bg.log /tmp/banner_init.log
+    
+    # 初始化日志
+    echo "[$(date)] ========== Banner Service Initialized ==========" > /tmp/banner_update.log
+    
+    # ==================== 🚨 关键修复4: 清理旧的启动标记 ====================
+    # 删除旧的首次启动标记,确保每次重启都会执行首次更新
+    rm -f /tmp/banner_first_boot /tmp/banner_retry_timer /tmp/banner_retry_count 2>/dev/null
+    echo "[$(date)] Cleared boot flags to ensure fresh start" >> /tmp/banner_init.log
+    
+    # ==================== 🚨 关键修复5: 使用 procd 管理后台脚本 ====================
+    # 方式1: 使用 procd 启动 (推荐)
+    procd_open_instance "banner_auto_update"
+    procd_set_param command /bin/sh -c "sleep 5 && /usr/bin/banner_auto_update.sh >> /tmp/banner_update.log 2>&1"
+    procd_set_param respawn 3600 5 0  # 每小时最多重启5次
+    procd_set_param stdout 1
+    procd_set_param stderr 1
+    procd_close_instance
+    
+    echo "[$(date)] Started auto-update via procd (5s delay)" >> /tmp/banner_init.log
+    
+    # 方式2: 同时使用 at 命令作为备份 (如果 procd 失败)
+    if command -v at >/dev/null 2>&1; then
+        echo "/usr/bin/banner_auto_update.sh >> /tmp/banner_update.log 2>&1" | at now + 10 seconds 2>/dev/null
+        echo "[$(date)] Scheduled auto-update via 'at' command (10s delay)" >> /tmp/banner_init.log
+    fi
+    
+    # 方式3: 使用 cron 作为最终备份
+    # 在 /etc/crontabs/root 中添加一次性任务
+    BOOT_TIME=$(date +%M)
+    NEXT_MIN=$(( (BOOT_TIME + 1) % 60 ))
+    if ! grep -q "banner_boot_update" /etc/crontabs/root 2>/dev/null; then
+        echo "$NEXT_MIN * * * * /usr/bin/banner_auto_update.sh >> /tmp/banner_update.log 2>&1 # banner_boot_update" >> /etc/crontabs/root
+        /etc/init.d/cron restart 2>/dev/null
+        echo "[$(date)] Added one-time cron job for boot update" >> /tmp/banner_init.log
+    fi
+    
+    # ==================== 🚨 关键修复6: 延迟启动背景加载 ====================
+    # 给网络和更新脚本留出时间
+    (
+        sleep 15
+        BG_GROUP=$(uci -q get banner.banner.bg_group || echo 1)
+        echo "[$(date)] Starting background loader for group $BG_GROUP..." >> /tmp/banner_init.log
+        /usr/bin/banner_bg_loader.sh "$BG_GROUP" >> /tmp/banner_bg.log 2>&1
+    ) &
+    
+    echo "[$(date)] ========== Banner Service Started ==========" >> /tmp/banner_init.log
 }
 
+stop() {
+    echo "[$(date)] Stopping banner service..." >> /tmp/banner_init.log
+    
+    # 停止 procd 管理的实例
+    killall banner_auto_update.sh banner_bg_loader.sh 2>/dev/null
+    
+    # 清理 cron 中的一次性任务
+    if [ -f /etc/crontabs/root ]; then
+        sed -i '/banner_boot_update/d' /etc/crontabs/root
+        /etc/init.d/cron restart 2>/dev/null
+    fi
+}
+
+restart() {
+    stop
+    sleep 2
+    start
+}
 
 status() {
     local uci_enabled=$(uci -q get banner.banner.bg_enabled || echo 1)
@@ -1421,8 +1333,22 @@ status() {
     if [ "$last_update" = "0" ]; then
         echo "Last Update: Never"
     else
-        echo "Last Update: $(date -d "@$last_update" '+%Y-%m-%d %H:%M:%S')"
+        echo "Last Update: $(date -d "@$last_update" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || date)"
     fi
+    
+    echo ""
+    echo "Boot flags status:"
+    echo "  - First boot flag: $([ -f /tmp/banner_first_boot ] && echo 'EXISTS' || echo 'NOT SET')"
+    echo "  - Retry timer: $([ -f /tmp/banner_retry_timer ] && cat /tmp/banner_retry_timer || echo 'NONE')"
+    
+    echo ""
+    echo "Recent init logs:"
+    tail -n 5 /tmp/banner_init.log 2>/dev/null || echo "No init logs"
+    
+    echo ""
+    echo "Recent update logs:"
+    tail -n 10 /tmp/banner_update.log 2>/dev/null || echo "No update logs available"
+    
     echo "========================"
 }
 INIT

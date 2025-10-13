@@ -240,7 +240,7 @@ echo "调试：Makefile 生成成功，大小 $(wc -c < "$PKG_DIR/Makefile") 字
 # UCI Configuration
 cat > "$PKG_DIR/root/etc/config/banner" <<'UCICONF'
 config banner 'banner'
-	option text '🎉 新春特惠 · 技术支持24/7 · 已服务500+用户 · 安全稳定运行'
+	option text '🎉 福利导航的内容会不定时更新，关注作者不迷路'
 	option color 'rainbow'
 	option opacity '50' # 0-100
 	option carousel_interval '5000' # 1000-30000 (ms)
@@ -262,7 +262,7 @@ config banner 'banner'
 	option wait_timeout '5' # seconds
 	option cleanup_age '3' # days
 	option restart_delay '15' # seconds
-	option contact_email 'example@email.com'
+	option contact_email 'niwo5507@gmail.com'
 	option contact_telegram '@fgnb111999'
 	option contact_qq '183452852'
 UCICONF

@@ -2429,41 +2429,7 @@ cat > "$PKG_DIR/root/usr/lib/lua/luci/view/banner/background.htm" <<'BGVIEW'
     </div>
 </div>
 <script type="text/javascript">
-    // 统一的 API 调用函数
-    function apiCall(endpoint, data, reloadOnSuccess, btn) {
-        if (btn) btn.classList.add('spinning');
-        document.getElementById('loadingOverlay').classList.add('active');
 
-        var formData = new URLSearchParams();
-        formData.append('token', '<%=token%>');
-        for (var key in data) {
-            formData.append(key, data[key]);
-        }
-    
-        fetch('<%=luci.dispatcher.build_url("admin/status/banner")%>/' + endpoint, {
-            method: 'POST',
-            body: formData
-        })
-        .then(response => {
-            if (!response.ok) { throw new Error('Network response was not ok: ' + response.statusText); }
-            return response.json();
-        })
-        .then(result => {
-            if (btn) btn.classList.remove('spinning');
-            document.getElementById('loadingOverlay').classList.remove('active');
-            alert(result.message || (result.success ? '操作成功' : '操作失败'));
-            if (result.success && reloadOnSuccess) {
-                // 针对背景组加载，增加延迟确保文件完全写入
-                var delay = (endpoint === 'api_load_group') ? 3000 : 1500;
-                setTimeout(function() { window.location.reload(); }, delay);
-            }
-        })
-        .catch(error => {
-            if (btn) btn.classList.remove('spinning');
-            document.getElementById('loadingOverlay').classList.remove('active');
-            alert('请求失败: ' + error);
-        });
-    }
 
     // 本地表单验证 (保持不变)
     document.getElementById('customBgForm').addEventListener('submit', function(e) {

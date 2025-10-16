@@ -1987,7 +1987,7 @@ input:checked + .toggle-slider:before { transform: translateX(26px); }
 	</script>
 	<% end %>
 	<%+footer%>
-	SETTINGSVIEW
+SETTINGSVIEW
 
 
 # Make scripts executable

@@ -1,4 +1,3 @@
-
 #!/bin/bash
 # OpenWrt Banner Plugin - Final Optimized Version v2.7
 # All potential issues addressed for maximum reliability and compatibility.
@@ -37,14 +36,14 @@ fi
 # 获取规范化的绝对路径
 if command -v realpath >/dev/null 2>&1; then
     ABS_PKG_DIR=$(realpath -m "$PKG_DIR" 2>/dev/null) || {
-        echo "✖ 错误：无法规范化路径 '$PKG_DIR'"
+        echo "✖ 错误：无法规范化路径 \'$PKG_DIR\'"
         exit 1
     }
 else
     echo "⚠ 警告：系统未安装 realpath，路径安全检查可能不够完善。"
     # Fallback: 手动规范化（不完美但聊胜于无）
     ABS_PKG_DIR=$(cd "$(dirname "$PKG_DIR")" 2>/dev/null && pwd)/$(basename "$PKG_DIR") || {
-        echo "✖ 错误：路径无效 '$PKG_DIR'"
+        echo "✖ 错误：路径无效 \'$PKG_DIR\'"
         exit 1
     }
 fi
@@ -57,7 +56,7 @@ fi
 
 
 if echo "$ABS_PKG_DIR" | grep -qE "^/home/[^/]+/.*openwrt"; then
-    echo "âš™ å…è®¸æœ¬åœ°å¼€å'è·¯å¾„: $ABS_PKG_DIR"
+    echo "âš™ å…è®¸æœ¬åœ°å¼€å\'è·¯å¾„: $ABS_PKG_DIR"
     IS_GITHUB_ACTIONS=1
 fi
 if [ $IS_GITHUB_ACTIONS -eq 0 ]; then
@@ -76,18 +75,19 @@ case "$ABS_PKG_DIR" in
     "/sbin/"*|\
     "/lib"|\
     "/lib/"*|\
+    "/lib/"*|\
     "/boot"|\
     "/boot/"*|\
     "$HOME"|\
     "$HOME/"*)
-        echo "✖ 错误：目标目录指向了危险的系统路径 ('$ABS_PKG_DIR')，已终止操作。"
+        echo "✖ 错误：目标目录指向了危险的系统路径 (\'$ABS_PKG_DIR\')，已终止操作。"
         exit 1
         ;;
 esac
 fi
 # 检查路径穿越字符（所有可能的形式）
-if echo "$PKG_DIR" | grep -qE '\.\./|\.\.$|/\.\.'; then
-    echo "✖ 错误：目标目录包含非法的路径穿越符 '..' ('$PKG_DIR')，已终止操作。"
+if echo "$PKG_DIR" | grep -qE \'\.\./|\.\.$|/\.\.\'; then
+    echo "✖ 错误：目标目录包含非法的路径穿越符 \'..\' (\'$PKG_DIR\')，已终止操作。"
     exit 1
 fi
 
@@ -118,7 +118,7 @@ for allowed_base in $ALLOWED_BASE_DIRS; do
 done
 
 if [ $PATH_ALLOWED -eq 0 ]; then
-    echo "✖ 错误：目标路径 '$ABS_PKG_DIR' 不在允许的目录范围内。"
+    echo "✖ 错误：目标路径 \'$ABS_PKG_DIR\' 不在允许的目录范围内。"
     echo "   允许的基础目录: $ALLOWED_BASE_DIRS"
     exit 1
 fi
@@ -147,7 +147,7 @@ echo "Offline background image downloaded successfully."
 
 # Create Makefile
 echo "[2/3] Creating Makefile..."
-cat > "$PKG_DIR/Makefile" <<'MAKEFILE'
+cat > "$PKG_DIR/Makefile" <<\'MAKEFILE\'
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=luci-app-banner
@@ -236,39 +236,38 @@ endef
 
 $(eval $(call BuildPackage,luci-app-banner))
 MAKEFILE
-echo "调试：Makefile 生成成功，大小 $(wc -c < "$PKG_DIR/Makefile") 字节"
+echo "调试：Makefile 生成成功，大小 $(wc -c < \"$PKG_DIR/Makefile\") 字节"
 # UCI Configuration
-cat > "$PKG_DIR/root/etc/config/banner" <<'UCICONF'
-config banner 'banner'
-	option text '🎉 福利导航的内容会不定时更新，关注作者不迷路'
-	option color 'rainbow'
-                option font_color '#FFFFFF'
-	option opacity '50' # 0-100
-	option carousel_interval '5000' # 1000-30000 (ms)
-	option bg_group '1' # 1-4
-	option bg_enabled '1' # 0 or 1
-	option persistent_storage '0' # 0 or 1
-	option current_bg '0' # 0-2
-	list update_urls 'https://raw.githubusercontent.com/fgbfg5676/openwrt-banner/main/banner.json'
-	list update_urls 'https://gitee.com/fgbfg5676/openwrt-banner/raw/main/banner.json'
-	option selected_url 'https://raw.githubusercontent.com/fgbfg5676/openwrt-banner/main/banner.json'
-	option update_interval '10800' # seconds
-	option last_update '0'
-	option banner_texts ''
-	option remote_message ''
-	option cache_dir '/tmp/banner_cache' # Cache directory
-	option web_dir '/www/luci-static/banner' # Web directory
-	option persistent_dir '/overlay/banner' # Persistent storage directory
-	option curl_timeout '15' # seconds
-	option wait_timeout '5' # seconds
-	option cleanup_age '3' # days
-	option restart_delay '15' # seconds
-	option contact_email 'niwo5507@gmail.com'
-	option contact_telegram '@fgnb111999'
-	option contact_qq '183452852'
+cat > "$PKG_DIR/root/etc/config/banner" <<\'UCICONF\'
+config banner \'banner\'
+	option text \'🎉 福利导航的内容会不定时更新，关注作者不迷路\'
+	option color \'rainbow\'
+	option opacity \'50\' # 0-100
+	option carousel_interval \'5000\' # 1000-30000 (ms)
+	option bg_group \'1\' # 1-4
+	option bg_enabled \'1\' # 0 or 1
+	option persistent_storage \'0\' # 0 or 1
+	option current_bg \'0\' # 0-2
+	list update_urls \'https://raw.githubusercontent.com/fgbfg5676/openwrt-banner/main/banner.json\'
+	list update_urls \'https://gitee.com/fgbfg5676/openwrt-banner/raw/main/banner.json\'
+	option selected_url \'https://raw.githubusercontent.com/fgbfg5676/openwrt-banner/main/banner.json\'
+	option update_interval \'10800\' # seconds
+	option last_update \'0\'
+	option banner_texts \'\'
+	option remote_message \'\'
+	option cache_dir \'/tmp/banner_cache\' # Cache directory
+	option web_dir \'/www/luci-static/banner\' # Web directory
+	option persistent_dir \'/overlay/banner\' # Persistent storage directory
+	option curl_timeout \'15\' # seconds
+	option wait_timeout \'5\' # seconds
+	option cleanup_age \'3\' # days
+	option restart_delay \'15\' # seconds
+	option contact_email \'niwo5507@gmail.com\'
+	option contact_telegram \'@fgnb111999\'
+	option contact_qq \'183452852\'
 UCICONF
 
-cat > "$PKG_DIR/root/usr/share/banner/timeouts.conf" <<'TIMEOUTS'
+cat > "$PKG_DIR/root/usr/share/banner/timeouts.conf" <<\'TIMEOUTS\'
 
 LOCK_TIMEOUT=60
 
@@ -284,7 +283,7 @@ TIMEOUTS
 
 # 創建一個全局配置文件，用於存儲可配置的變數
 mkdir -p "$PKG_DIR/root/usr/share/banner"
-cat > "$PKG_DIR/root/usr/share/banner/config.sh" <<'CONFIGSH'
+cat > "$PKG_DIR/root/usr/share/banner/config.sh" <<\'CONFIGSH\'
 #!/bin/sh
 # Banner 全局配置
 
@@ -303,17 +302,17 @@ PERSISTENT_BG_PATH=$(uci -q get banner.banner.persistent_dir || echo "/overlay/b
 CONFIGSH
 
 # Cache cleaner script
-cat > "$PKG_DIR/root/usr/bin/banner_cache_cleaner.sh" <<'CLEANER'
+cat > "$PKG_DIR/root/usr/bin/banner_cache_cleaner.sh" <<\'CLEANER\'
 #!/bin/sh
 LOG="/tmp/banner_update.log"
 
 log() {
     local msg="$1"
-    local timestamp=$(date '+%Y-%m-%d %H:%M:%S' 2>/dev/null || date)
+    local timestamp=$(date \'+%Y-%m-%d %H:%M:%S\' 2>/dev/null || date)
     local log_file="${LOG:-/tmp/banner_update.log}"
 
-    if echo "$msg" | grep -qE 'https?://|[0-9]{1,3}\.[0-9]{1,3}'; then
-        msg=$(echo "$msg" | sed -E 's|https?://[^[:space:]]+|[URL]|g' | sed -E 's|[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|[IP]|g')
+    if echo "$msg" | grep -qE \'https?://|[0-9]{1,3}\.[0-9]{1,3}\'; then
+        msg=$(echo "$msg" | sed -E \'s|https?://[^[:space:]]+|[URL]|g\' | sed -E \'s|[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|[IP]|g\')
     fi
     
     if ! echo "[$timestamp] $msg" >> "$log_file" 2>/dev/null; then
@@ -351,29 +350,38 @@ if [ ! -d "$CACHE_DIR" ]; then
     log "[!] Cache directory $CACHE_DIR not found, skipping cleanup."
     exit 0
 fi
-find "$CACHE_DIR" -type f -name '*.jpg' -mtime +"$CLEANUP_AGE" -delete
-log "[√] Removed JPEG files older than $CLEANUP_AGE days from $CACHE_DIR"
+find "$CACHE_DIR" -type f -name \'*.jpg\' -mtime +"$CLEANUP_AGE" -delete
+if [ $? -eq 0 ]; then
+    log "✓ Old JPG files in cache cleaned up successfully."
+else
+    log "✖ Failed to clean up old JPG files in cache."
+fi
+
+# 清理旧的JSON文件
+find "$CACHE_DIR" -type f -name \'*.json\' -mtime +"$CLEANUP_AGE" -delete
+if [ $? -eq 0 ]; then
+    log "✓ Old JSON files in cache cleaned up successfully."
+else
+    log "✖ Failed to clean up old JSON files in cache.""
+fi
+
+log "========== Cache Cleanup Finished =========="
 CLEANER
 
-cat > "$PKG_DIR/root/usr/bin/banner_manual_update.sh" <<'MANUALUPDATE'
-LOG="/tmp/banner_update.log"
-CACHE=$(uci -q get banner.banner.cache_dir || echo "/tmp/banner_cache")
-# 加载超时配置
-if [ -f "/usr/share/banner/timeouts.conf" ]; then
-    . /usr/share/banner/timeouts.conf
-else
-    LOCK_TIMEOUT=60
-    CURL_CONNECT_TIMEOUT=10
-    CURL_MAX_TIMEOUT=30
-fi
-# 日志函数（保持不变）
+# Update script
+cat > "$PKG_DIR/root/usr/bin/banner_update.sh" <<\'UPDATER\'
+#!/bin/sh
+
+. /usr/share/banner/config.sh
+. /usr/share/banner/timeouts.conf
+
 log() {
     local msg="$1"
-    local timestamp=$(date '+%Y-%m-%d %H:%M:%S' 2>/dev/null || date)
-    local log_file="${LOG:-/tmp/banner_update.log}"
+    local timestamp=$(date \'+%Y-%m-%d %H:%M:%S\' 2>/dev/null || date)
+    local log_file="${LOG_FILE:-/tmp/banner_update.log}"
 
-    if echo "$msg" | grep -qE 'https?://|[0-9]{1,3}\.[0-9]{1,3}'; then
-        msg=$(echo "$msg" | sed -E 's|https?://[^[:space:]]+|[URL]|g' | sed -E 's|[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|[IP]|g')
+    if echo "$msg" | grep -qE \'https?://|[0-9]{1,3}\.[0-9]{1,3}\'; then
+        msg=$(echo "$msg" | sed -E \'s|https?://[^[:space:]]+|[URL]|g\' | sed -E \'s|[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|[IP]|g\')
     fi
     
     if ! echo "[$timestamp] $msg" >> "$log_file" 2>/dev/null; then
@@ -403,489 +411,272 @@ log() {
     
     return 0
 }
-# ==================== 🔐 URL验证函数 ====================
-validate_url() {
-    local url="$1"
-    # 检查URL格式
-    case "$url" in
-        http://*|https://*) 
-            # URL必须以http或https开头
-            return 0
-            ;;
-        *)
-            log "[✗] Invalid URL format: $url"
-            return 1
-            ;;
-    esac
-}
-# ==================== 新的 flock 锁机制 ====================
 
-LOCK_FD=200
-LOCK_FILE="/var/lock/banner_manual_update.lock"
 
-acquire_lock() {
-    local timeout="${1:-60}"
-    
-    mkdir -p /var/lock 2>/dev/null
 
-    eval "exec $LOCK_FD>&-" 2>/dev/null || true
-    
-    eval "exec $LOCK_FD>$LOCK_FILE" || {
-        log "[ERROR] Failed to open lock file"
-        return 1
-    }
-    
-    if flock -w "$timeout" "$LOCK_FD" 2>/dev/null; then
-        log "[LOCK] Successfully acquired lock (FD: $LOCK_FD)"
-        return 0
-    else
-        log "[ERROR] Failed to acquire lock after ${timeout}s timeout"
-        eval "exec $LOCK_FD>&-" 2>/dev/null || true
-        return 1
-    fi
+# --- 辅助函数 --- START
+
+# 获取一个随机的缓存文件名
+get_random_cache_filename() {
+    head /dev/urandom | tr -dc A-Za-z0-9 | head -c 16
 }
 
-# 释放锁
-release_lock() {
-    if [ -n "$LOCK_FD" ]; then
-        log "[LOCK] Releasing lock (FD: $LOCK_FD)"
-        flock -u "$LOCK_FD" 2>/dev/null
-        eval "exec $LOCK_FD>&-"  # 关闭文件描述符
-    fi
-}
-
-# 设置清理陷阱
-cleanup() {
-    release_lock
-    log "[CLEANUP] Script exiting"
-}
-trap cleanup EXIT INT TERM
-
-# ==================== 主逻辑开始 ====================
-
-# 检查 UCI 配置
-if [ ! -f "/etc/config/banner" ]; then
-    log "[×] UCI 配置文件 /etc/config/banner 不存在，创建默认配置"
-    cat > /etc/config/banner <<'EOF'
-config banner 'banner'
-    option text '默认横幅文本'
-    option color 'white'
-    option opacity '50'
-    option carousel_interval '5000'
-    option bg_group '1'
-    option bg_enabled '1'
-    option persistent_storage '0'
-    option current_bg '0'
-    list update_urls 'https://raw.githubusercontent.com/fgbfg5676/openwrt-banner/main/banner.json'
-    list update_urls 'https://gitee.com/fgbfg5676/openwrt-banner/raw/main/banner.json'
-    option selected_url 'https://raw.githubusercontent.com/fgbfg5676/openwrt-banner/main/banner.json'
-    option update_interval '10800'
-    option last_update '0'
-    option banner_texts ''
-    option remote_message ''
-EOF
-fi
-
-mkdir -p "$CACHE"
-
-if ! command -v uci >/dev/null 2>&1; then
-    log "[×] UCI command not found. This script requires UCI to function. Exiting."
-    exit 1
-fi
-
-# 获取锁（60秒超时）
-if ! acquire_lock 60; then
-    log "[ERROR] Another instance is running or lock acquisition failed"
-    exit 1
-fi
-
-# 如果存在 auto_update 锁，清理它（手动更新优先）
-AUTO_LOCK_FILE="/var/lock/banner_auto_update.lock"
-if [ -f "$AUTO_LOCK_FILE" ]; then
-    log "[INFO] Manual update overriding auto-update lock."
-    rm -f "$AUTO_LOCK_FILE"
-fi
-
-log "========== Manual Update Started =========="
-
-validate_url() {
-    case "$1" in
-        http://*|https://*  ) return 0;;
-        *) log "[×] Invalid URL format: $1"; return 1;;
-    esac
-}
-
-URLS=$(uci -q get banner.banner.update_urls | tr ' ' '\n')
-SELECTED_URL=$(uci -q get banner.banner.selected_url)
-SUCCESS=0
-CURL_TIMEOUT=$(uci -q get banner.banner.curl_timeout || echo 15)
-
-if [ -n "$SELECTED_URL" ] && validate_url "$SELECTED_URL"; then
-    for i in 1 2 3; do
-        log "Attempt $i/3 with selected URL: $SELECTED_URL"
-        curl -sL --connect-timeout 10 --max-time "$CURL_TIMEOUT" "$SELECTED_URL" -o "$CACHE/banner_new.json" 2>/dev/null
-        if [ -s "$CACHE/banner_new.json" ] && jq empty "$CACHE/banner_new.json" 2>/dev/null; then
-            log "[√] Selected URL download successful (valid JSON)."
-            SUCCESS=1
-            break
-        fi
-        rm -f "$CACHE/banner_new.json"
-        sleep 2
-    done
-fi
-
-if [ $SUCCESS -eq 0 ]; then
-    for url in $URLS; do
-        if [ "$url" != "$SELECTED_URL" ] && validate_url "$url"; then
-            for i in 1 2 3; do
-                log "Attempt $i/3 with fallback URL: $url"
-                curl -sL --connect-timeout 10 --max-time "$CURL_TIMEOUT" "$url" -o "$CACHE/banner_new.json" 2>/dev/null
-                if [ -s "$CACHE/banner_new.json" ] && jq empty "$CACHE/banner_new.json" 2>/dev/null; then
-                    log "[√] Fallback URL download successful (valid JSON). Updating selected URL."
-                    uci set banner.banner.selected_url="$url"
-                    uci commit banner
-                    SUCCESS=1
-                    break 2
-                fi
-                rm -f "$CACHE/banner_new.json"
-                sleep 2
-            done
-        fi
-    done
-fi
-
-if ! command -v jq >/dev/null 2>&1; then
-    log "[×] jq not found, skipping JSON parsing."
-    exit 0
-fi
-
-if [ $SUCCESS -eq 1 ] && [ -s "$CACHE/banner_new.json" ]; then
-    ENABLED=$(jq -r '.enabled' "$CACHE/banner_new.json")
-    log "[DEBUG] Remote control - enabled field raw value: '$ENABLED'"
-    
-   if [ "$ENABLED" = "false" ] || [ "$ENABLED" = "0" ]; then
-        MSG=$(jq -r '.disable_message // "服务已被管理员远程关闭"' "$CACHE/banner_new.json")
-        
-        # 设置禁用状态
-        uci set banner.banner.bg_enabled='0'
-        uci set banner.banner.remote_message="$MSG"
-        
-        # 清空横幅文本和导航数据(保留背景和联系方式)
-        uci set banner.banner.text=""
-        uci set banner.banner.banner_texts=""
-        uci commit banner
-        
-        # 删除导航数据缓存(保留背景图缓存)
-        rm -f "$CACHE/nav_data.json" 2>/dev/null
-        rm -f "$CACHE/banner_new.json" 2>/dev/null
-        
-        VERIFY=$(uci get banner.banner.bg_enabled)
-        log "[!] Service remotely DISABLED. Reason: $MSG"
-        log "[DEBUG] Verification - bg_enabled is now: $VERIFY"
-        log "[INFO] Banner text and navigation cleared, backgrounds preserved"
-        
-        log "Restarting uhttpd service to apply changes..."
-        /etc/init.d/uhttpd restart >/dev/null 2>&1
-        
-        # 等待服务完全重启
-        sleep 3
-        
-        exit 0
-   else
-        log "[DEBUG] Service remains ENABLED (enabled=$ENABLED)"
-        TEXT=$(jsonfilter -i "$CACHE/banner_new.json" -e '@.text' 2>/dev/null)
-        if [ -n "$TEXT" ]; then
-            cp "$CACHE/banner_new.json" "$CACHE/nav_data.json"
-            uci set banner.banner.text="$TEXT"
-            
-            CONTACT_EMAIL=$(jsonfilter -i "$CACHE/banner_new.json" -e '@.contact_info.email' 2>/dev/null)
-            CONTACT_TG=$(jsonfilter -i "$CACHE/banner_new.json" -e '@.contact_info.telegram' 2>/dev/null)
-            CONTACT_QQ=$(jsonfilter -i "$CACHE/banner_new.json" -e '@.contact_info.qq' 2>/dev/null)
-            
-            if [ -n "$CONTACT_EMAIL" ]; then uci set banner.banner.contact_email="$CONTACT_EMAIL"; fi
-            if [ -n "$CONTACT_TG" ]; then uci set banner.banner.contact_telegram="$CONTACT_TG"; fi
-            if [ -n "$CONTACT_QQ" ]; then uci set banner.banner.contact_qq="$CONTACT_QQ"; fi
-            
-            uci set banner.banner.color="$(jsonfilter -i "$CACHE/banner_new.json" -e '@.color' 2>/dev/null || echo 'rainbow')"
-            uci set banner.banner.banner_texts="$(jsonfilter -i "$CACHE/banner_new.json" -e '@.banner_texts[*]' 2>/dev/null | tr '\n' '|')"
-            
-            # 关键修复: 确保启用状态
-            uci set banner.banner.bg_enabled='1'
-            uci delete banner.banner.remote_message >/dev/null 2>&1
-            
-            uci set banner.banner.last_update=$(date +%s)
-            uci commit banner
-           # 清除可能残留的锁文件
-            rm -f /tmp/banner_manual_update.lock /tmp/banner_auto_update.lock 2>/dev/null
-            uci set banner.banner.last_update=$(date +%s)
-            uci commit banner
-           # 清除可能残留的锁文件
-            rm -f /tmp/banner_manual_update.lock /tmp/banner_auto_update.lock 2>/dev/null
-            
-            # 🪄 触发背景组加载，自动更新初始化背景
-            BG_GROUP=$(uci -q get banner.banner.bg_group || echo 1)
-            /usr/bin/banner_bg_loader.sh "$BG_GROUP" >> /tmp/banner_update.log 2>&1 &
-            
-            log "[√] Manual update applied successfully."
-        else
-            log "[×] Update failed: Invalid JSON content (missing 'text' field)."
-            rm -f "$CACHE/banner_new.json"
-        fi
-    fi
-else
-    log "[×] Update failed: All sources are unreachable or provided invalid data."
-    if [ ! -f "$CACHE/nav_data.json" ]; then
-        log "[!] No local cache found. Attempting to use built-in default JSON data."
-        DEFAULT_JSON_PATH=$(grep -oE '/default/banner_default.json' /usr/lib/ipkg/info/luci-app-banner.list | sed 's|/default/banner_default.json||' | head -n1)/default/banner_default.json
-        if [ -f "$DEFAULT_JSON_PATH" ]; then
-            cp "$DEFAULT_JSON_PATH" "$CACHE/nav_data.json"
-        fi
-    fi
-fi
-MANUALUPDATE
-
-cat > "$PKG_DIR/root/usr/bin/banner_auto_update.sh" <<'AUTOUPDATE'
-#!/bin/sh
-LOG="/tmp/banner_update.log"
-BOOT_FLAG="/tmp/banner_first_boot"
-RETRY_FLAG="/tmp/banner_retry_count"
-RETRY_TIMER="/tmp/banner_retry_timer"
-
-# ==================== 🚨 关键修复: 简化日志函数 ====================
-log() {
-    local msg="$1"
-    local timestamp=$(date '+%Y-%m-%d %H:%M:%S' 2>/dev/null || date)
-    
-    # 确保日志文件存在
-    if [ ! -f "$LOG" ]; then
-        touch "$LOG" 2>/dev/null && chmod 666 "$LOG" 2>/dev/null
-    fi
-    
-    # 直接写入,减少错误检查
-    echo "[$timestamp] $msg" >> "$LOG" 2>/dev/null || echo "[$timestamp] $msg" >&2
-    
-    # 简化日志轮转
-    if [ -f "$LOG" ] && [ $(wc -c < "$LOG" 2>/dev/null || echo 0) -gt 51200 ]; then
-        tail -n 50 "$LOG" > "${LOG}.tmp" 2>/dev/null && mv "${LOG}.tmp" "$LOG" 2>/dev/null
-    fi
-}
-
-# ==================== 🚨 关键修复: 简化网络检查 ====================
+# 检查网络连接
 check_network() {
-    # 方法1: 检查默认路由
-    if ip route show default >/dev/null 2>&1; then
-        return 0
-    fi
-    
-    # 方法2: 尝试 ping 网关
-    local gateway=$(ip route show default 2>/dev/null | awk '{print $3; exit}')
-    if [ -n "$gateway" ] && ping -c 1 -W 1 "$gateway" >/dev/null 2>&1; then
-        return 0
-    fi
-    
-    # 方法3: 检查网络接口状态
-    if ip link show | grep -q 'state UP'; then
-        return 0
-    fi
-    
+    log "Checking network connectivity..."
+    local timeout=$NETWORK_WAIT_TIMEOUT
+    local count=0
+    while [ $count -lt $timeout ]; do
+        if ping -c 1 -W 1 8.8.8.8 >/dev/null 2>&1; then
+            log "Network is up."
+            return 0
+        fi
+        sleep 1
+        count=$((count + 1))
+    done
+    log "Network is down after $timeout seconds."
     return 1
 }
 
-# ==================== 🚨 关键修复: 简化锁机制 ====================
-LOCK_FD=201
-LOCK_FILE="/var/lock/banner_auto_update.lock"
+# 获取并验证 JSON 数据
+fetch_and_validate_json() {
+    local url="$1"
+    local cache_file="$2"
+    log "Fetching JSON from: $url"
 
-acquire_lock() {
-    mkdir -p /var/lock 2>/dev/null
-    
-    # 清理旧锁文件
-    if [ -f "$LOCK_FILE" ]; then
-        local lock_age=$(( $(date +%s) - $(stat -c %Y "$LOCK_FILE" 2>/dev/null || echo 0) ))
-        if [ $lock_age -gt 300 ]; then
-            rm -f "$LOCK_FILE"
-            log "[LOCK] Removed stale lock file"
-        fi
-    fi
-    
-    # 尝试获取锁
-    exec 201>"$LOCK_FILE"
-    if flock -n 201; then
-        log "[LOCK] Lock acquired"
-        return 0
-    else
-        log "[LOCK] Failed to acquire lock (another instance running)"
+    local tmp_json_file="$CACHE_DIR/$(get_random_cache_filename).json"
+
+    if ! curl -fLsS --connect-timeout "$CURL_CONNECT_TIMEOUT" --max-time "$CURL_MAX_TIMEOUT" "$url" -o "$tmp_json_file"; then
+        log "✖ Failed to download JSON from $url"
+        rm -f "$tmp_json_file"
         return 1
     fi
-}
 
-release_lock() {
-    flock -u 201 2>/dev/null
-    exec 201>&-
-}
-
-cleanup() {
-    release_lock
-    log "[CLEANUP] Script exiting"
-}
-trap cleanup EXIT INT TERM
-
-# ==================== 主逻辑 ====================
-log "=========================================="
-log "Banner Auto Update Script Started"
-log "=========================================="
-
-# 获取锁
-if ! acquire_lock; then
-    log "[ERROR] Another instance is running"
-    exit 1
-fi
-
-# 检查 UCI
-if ! command -v uci >/dev/null 2>&1; then
-    log "[ERROR] UCI command not found"
-    exit 1
-fi
-
-# 检查是否被禁用
-BG_ENABLED=$(uci -q get banner.banner.bg_enabled || echo "1")
-if [ "$BG_ENABLED" = "0" ]; then
-    log "[INFO] Service is disabled, skipping update"
-    exit 0
-fi
-
-# ==================== 🚨 关键修复: 简化首次启动逻辑 ====================
-if [ ! -f "$BOOT_FLAG" ]; then
-    log "========== First Boot Auto Update =========="
-    
-    # 等待网络 (最多30秒)
-    log "[BOOT] Waiting for network..."
-    WAIT_COUNT=0
-    while [ $WAIT_COUNT -lt 15 ]; do
-        if check_network; then
-            log "[BOOT] ✓ Network ready after ${WAIT_COUNT} attempts"
-            break
-        fi
-        sleep 2
-        WAIT_COUNT=$((WAIT_COUNT + 1))
-    done
-    
-    if [ $WAIT_COUNT -ge 15 ]; then
-        log "[BOOT] ⚠ Network not ready, will retry in 5 minutes"
-        echo "$(date +%s)" > "$RETRY_TIMER"
-        echo "0" > "$RETRY_FLAG"
-        touch "$BOOT_FLAG"
-        exit 0
+    # 检查文件大小
+    local file_size=$(wc -c < "$tmp_json_file" 2>/dev/null || echo 0)
+    if [ "$file_size" -eq 0 ]; then
+        log "✖ Downloaded JSON file is empty: $url"
+        rm -f "$tmp_json_file"
+        return 1
     fi
-    
-    # 执行首次更新
-    log "[BOOT] Executing first boot update..."
-    if /usr/bin/banner_manual_update.sh; then
-        log "[BOOT] ✓ First boot update successful"
-        touch "$BOOT_FLAG"
-        rm -f "$RETRY_FLAG" "$RETRY_TIMER"
+    if [ "$file_size" -gt "$MAX_FILE_SIZE" ]; then
+        log "✖ Downloaded JSON file is too large ($file_size bytes): $url"
+        rm -f "$tmp_json_file"
+        return 1
+    fi
+
+    # 验证 JSON 格式
+    if ! jq -e . >/dev/null 2>&1 < "$tmp_json_file"; then
+        log "✖ Invalid JSON format for $url"
+        rm -f "$tmp_json_file"
+        return 1
+    fi
+
+    mv "$tmp_json_file" "$cache_file"
+    log "✓ Successfully fetched and validated JSON from $url"
+    return 0
+}
+
+# 更新 UCI 配置
+update_uci_config() {
+    local key="$1"
+    local value="$2"
+    local current_value=$(uci -q get banner.banner."$key")
+
+    if [ "$current_value" != "$value" ]; then
+        uci set banner.banner."$key"="$value"
+        log "Updated UCI: banner.banner.$key = $value"
+        return 0
+    fi
+    return 1
+}
+
+# 更新 UCI 列表配置
+update_uci_list() {
+    local key="$1"
+    shift
+    local new_values=("$@")
+    local current_values=($(uci -q get banner.banner."$key"))
+
+    # 比较数组内容
+    local changed=0
+    if [ ${#new_values[@]} -ne ${#current_values[@]} ]; then
+        changed=1
     else
-        log "[BOOT] ✗ First boot update failed, will retry"
-        echo "$(date +%s)" > "$RETRY_TIMER"
-        echo "0" > "$RETRY_FLAG"
-        touch "$BOOT_FLAG"
+        for i in "${!new_values[@]}"; do
+            if [ "${new_values[$i]}" != "${current_values[$i]}" ]; then
+                changed=1
+                break
+            fi
+        done
     fi
-    
-    exit 0
+
+    if [ $changed -eq 1 ]; then
+        uci del_list banner.banner."$key" 2>/dev/null
+        for val in "${new_values[@]}"; do
+            uci add_list banner.banner."$key"="$val"
+        done
+        log "Updated UCI list: banner.banner.$key = ${new_values[*]}"
+        return 0
+    fi
+    return 1
+}
+
+# --- 辅助函数 --- END
+
+
+log "========== Banner Update Script Started =========="
+
+# 确保缓存目录存在
+mkdir -p "$CACHE_DIR"
+chmod 755 "$CACHE_DIR"
+
+# 检查网络连接
+if ! check_network; then
+    log "✖ Network is not available, exiting."
+    exit 1
 fi
 
-# ==================== 重试逻辑 ====================
-if [ -f "$RETRY_TIMER" ]; then
-    RETRY_TIME=$(cat "$RETRY_TIMER" 2>/dev/null || echo 0)
-    CURRENT_TIME=$(date +%s)
-    TIME_DIFF=$((CURRENT_TIME - RETRY_TIME))
-    
-    if [ $TIME_DIFF -ge 300 ]; then
-        log "========== Retry Update (5min elapsed) =========="
-        
-        if ! check_network; then
-            log "[RETRY] Network still not ready"
-            echo "$(date +%s)" > "$RETRY_TIMER"
-            exit 0
-        fi
-        
-        if /usr/bin/banner_manual_update.sh; then
-            log "[RETRY] ✓ Retry update successful"
-            rm -f "$RETRY_FLAG" "$RETRY_TIMER"
-        else
-            RETRY_COUNT=$(cat "$RETRY_FLAG" 2>/dev/null || echo 0)
-            RETRY_COUNT=$((RETRY_COUNT + 1))
-            
-            if [ $RETRY_COUNT -ge 3 ]; then
-                log "[RETRY] Max retries reached, giving up"
-                rm -f "$RETRY_FLAG" "$RETRY_TIMER"
-            else
-                log "[RETRY] Scheduling next retry (attempt $((RETRY_COUNT + 1))/3)"
-                echo "$RETRY_COUNT" > "$RETRY_FLAG"
-                echo "$(date +%s)" > "$RETRY_TIMER"
+# 获取配置的更新 URL 列表
+UPDATE_URLS=($(uci -q get banner.banner.update_urls))
+SELECTED_URL=$(uci -q get banner.banner.selected_url)
+
+if [ -z "$SELECTED_URL" ]; then
+    log "⚠ No selected_url found in UCI config, trying first available URL."
+    if [ ${#UPDATE_URLS[@]} -gt 0 ]; then
+        SELECTED_URL="${UPDATE_URLS[0]}"
+        uci set banner.banner.selected_url="$SELECTED_URL"
+        uci commit banner
+        log "Set selected_url to: $SELECTED_URL"
+    else
+        log "✖ No update URLs configured, exiting."
+        exit 1
+    fi
+fi
+
+# 尝试从 SELECTED_URL 获取 JSON
+JSON_CACHE_FILE="$CACHE_DIR/banner_config.json"
+if ! fetch_and_validate_json "$SELECTED_URL" "$JSON_CACHE_FILE"; then
+    log "✖ Failed to fetch from selected URL: $SELECTED_URL. Trying other URLs."
+    # 如果选定的 URL 失败，尝试其他 URL
+    for url in "${UPDATE_URLS[@]}"; do
+        if [ "$url" != "$SELECTED_URL" ]; then
+            if fetch_and_validate_json "$url" "$JSON_CACHE_FILE"; then
+                log "✓ Successfully fetched from alternative URL: $url"
+                update_uci_config "selected_url" "$url" && uci commit banner
+                break
             fi
         fi
+    done
+    # 如果所有 URL 都失败
+    if [ ! -f "$JSON_CACHE_FILE" ]; then
+        log "✖ All configured URLs failed to provide valid JSON, exiting."
+        exit 1
     fi
-    
-    exit 0
 fi
 
-# ==================== 定期更新逻辑 ====================
-LAST_UPDATE=$(uci -q get banner.banner.last_update || echo 0)
-CURRENT_TIME=$(date +%s)
-INTERVAL=$(uci -q get banner.banner.update_interval || echo 10800)
+# 解析 JSON 数据并更新 UCI 配置
+log "Parsing JSON and updating UCI config..."
 
-if [ $((CURRENT_TIME - LAST_UPDATE)) -lt "$INTERVAL" ]; then
-    log "[INFO] Update interval not reached, skipping"
-    exit 0
+# 文本内容
+REMOTE_TEXT=$(jq -r ".text // \'\'" "$JSON_CACHE_FILE")
+if [ -n "$REMOTE_TEXT" ]; then
+    update_uci_config "text" "$REMOTE_TEXT" && uci commit banner
 fi
 
-log "========== Scheduled Auto Update =========="
-
-if ! check_network; then
-    log "[ERROR] Network not available"
-    exit 0
+# 文本颜色
+REMOTE_COLOR=$(jq -r ".color // \'\'" "$JSON_CACHE_FILE")
+if [ -n "$REMOTE_COLOR" ]; then
+    update_uci_config "color" "$REMOTE_COLOR" && uci commit banner
 fi
 
-/usr/bin/banner_manual_update.sh
-if [ $? -ne 0 ]; then
-    log "[ERROR] Scheduled update failed"
+# 不透明度
+REMOTE_OPACITY=$(jq -r ".opacity // \'\'" "$JSON_CACHE_FILE")
+if [ -n "$REMOTE_OPACITY" ]; then
+    update_uci_config "opacity" "$REMOTE_OPACITY" && uci commit banner
 fi
-AUTOUPDATE
 
-cat > "$PKG_DIR/root/usr/bin/banner_bg_loader.sh" <<'BGLOADER'
+# 轮播间隔
+REMOTE_CAROUSEL_INTERVAL=$(jq -r ".carousel_interval // \'\'" "$JSON_CACHE_FILE")
+if [ -n "$REMOTE_CAROUSEL_INTERVAL" ]; then
+    update_uci_config "carousel_interval" "$REMOTE_CAROUSEL_INTERVAL" && uci commit banner
+fi
+
+# 背景组
+REMOTE_BG_GROUP=$(jq -r ".bg_group // \'\'" "$JSON_CACHE_FILE")
+if [ -n "$REMOTE_BG_GROUP" ]; then
+    update_uci_config "bg_group" "$REMOTE_BG_GROUP" && uci commit banner
+fi
+
+# 背景启用状态
+REMOTE_BG_ENABLED=$(jq -r ".bg_enabled // \'\'" "$JSON_CACHE_FILE")
+if [ -n "$REMOTE_BG_ENABLED" ]; then
+    update_uci_config "bg_enabled" "$REMOTE_BG_ENABLED" && uci commit banner
+fi
+
+# 持久化存储
+REMOTE_PERSISTENT_STORAGE=$(jq -r ".persistent_storage // \'\'" "$JSON_CACHE_FILE")
+if [ -n "$REMOTE_PERSISTENT_STORAGE" ]; then
+    update_uci_config "persistent_storage" "$REMOTE_PERSISTENT_STORAGE" && uci commit banner
+fi
+
+# 当前背景图
+REMOTE_CURRENT_BG=$(jq -r ".current_bg // \'\'" "$JSON_CACHE_FILE")
+if [ -n "$REMOTE_CURRENT_BG" ]; then
+    update_uci_config "current_bg" "$REMOTE_CURRENT_BG" && uci commit banner
+fi
+
+# 更新 URL 列表
+REMOTE_UPDATE_URLS=($(jq -r ".update_urls[] // \'\'" "$JSON_CACHE_FILE"))
+if [ ${#REMOTE_UPDATE_URLS[@]} -gt 0 ]; then
+    update_uci_list "update_urls" "${REMOTE_UPDATE_URLS[@]}" && uci commit banner
+fi
+
+# 联系方式 (新的动态列表)
+REMOTE_CONTACTS=($(jq -c ".contacts[] // \'\'" "$JSON_CACHE_FILE"))
+if [ ${#REMOTE_CONTACTS[@]} -gt 0 ]; then
+    update_uci_list "contacts" "${REMOTE_CONTACTS[@]}" && uci commit banner
+fi
+
+# 轮播内容 (新的动态列表)
+REMOTE_CAROUSEL_ITEMS=($(jq -c ".carousel_items[] // \'\'" "$JSON_CACHE_FILE"))
+if [ ${#REMOTE_CAROUSEL_ITEMS[@]} -gt 0 ]; then
+    update_uci_list "carousel_items" "${REMOTE_CAROUSEL_ITEMS[@]}" && uci commit banner
+fi
+
+# 快速导航 (新的动态列表)
+REMOTE_QUICK_NAV_GROUPS=($(jq -c ".quick_nav_groups[] // \'\'" "$JSON_CACHE_FILE"))
+if [ ${#REMOTE_QUICK_NAV_GROUPS[@]} -gt 0 ]; then
+    update_uci_list "quick_nav_groups" "${REMOTE_QUICK_NAV_GROUPS[@]}" && uci commit banner
+fi
+
+# 更新时间
+update_uci_config "last_update" "$(date +%s)" && uci commit banner
+
+log "✓ UCI config updated from remote JSON."
+
+# 重新启动 banner 服务以应用更改
+log "Restarting banner service to apply changes..."
+/etc/init.d/banner restart
+log "✓ Banner service restarted."
+
+log "========== Banner Update Script Finished =========="
+UPDATER
+
+# Background update script
+cat > "$PKG_DIR/root/usr/bin/banner_bg_update.sh" <<\'BGUPDATER\'
 #!/bin/sh
-BG_GROUP=${1:-1}
 
-# 首先加载配置文件（如果存在）
-if [ -f "/usr/share/banner/config.sh" ]; then
-    . /usr/share/banner/config.sh
-else
-    MAX_FILE_SIZE=3145728
-    CACHE_DIR="/tmp/banner_cache"
-    DEFAULT_BG_PATH="/www/luci-static/banner"
-    PERSISTENT_BG_PATH="/overlay/banner"
-fi
+. /usr/share/banner/config.sh
+. /usr/share/banner/timeouts.conf
 
-LOG="/tmp/banner_bg.log"
-CACHE="$CACHE_DIR"
-WEB="$DEFAULT_BG_PATH"
-PERSISTENT="$PERSISTENT_BG_PATH"
-# 加载超时配置
-if [ -f "/usr/share/banner/timeouts.conf" ]; then
-    . /usr/share/banner/timeouts.conf
-else
-    LOCK_TIMEOUT=60
-    CURL_CONNECT_TIMEOUT=10
-    CURL_MAX_TIMEOUT=30
-fi
-# 日志函数
 log() {
     local msg="$1"
-    local timestamp=$(date '+%Y-%m-%d %H:%M:%S' 2>/dev/null || date)
-    local log_file="${LOG:-/tmp/banner_update.log}"
+    local timestamp=$(date \'+%Y-%m-%d %H:%M:%S\' 2>/dev/null || date)
+    local log_file="${LOG_FILE:-/tmp/banner_bg.log}"
 
-    if echo "$msg" | grep -qE 'https?://|[0-9]{1,3}\.[0-9]{1,3}'; then
-        msg=$(echo "$msg" | sed -E 's|https?://[^[:space:]]+|[URL]|g' | sed -E 's|[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|[IP]|g')
+    if echo "$msg" | grep -qE \'https?://|[0-9]{1,3}\.[0-9]{1,3}\'; then
+        msg=$(echo "$msg" | sed -E \'s|https?://[^[:space:]]+|[URL]|g\' | sed -E \'s|[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|[IP]|g\')
     fi
     
     if ! echo "[$timestamp] $msg" >> "$log_file" 2>/dev/null; then
@@ -915,1631 +706,1093 @@ log() {
     
     return 0
 }
-# ==================== 🔍 JPEG验证函数 ====================
-validate_jpeg() {
-    local file="$1"
-    
-    # 检查文件是否存在且非空
-    if [ ! -s "$file" ]; then
-        log "[✗] File is empty or does not exist: $file"
-        return 1
-    fi
-    
-    # 使用 file 命令检查文件类型
-    if command -v file >/dev/null 2>&1; then
-        if file "$file" 2>/dev/null | grep -qiE 'JPEG|JPG'; then
-            log "[✓] Valid JPEG file: $file"
-            return 0
-        else
-            log "[✗] Not a valid JPEG file: $file"
-            return 1
-        fi
-    else
-        # 如果没有 file 命令，检查文件头部魔术字节
-        # JPEG文件以 FF D8 FF 开头
-        local header=$(hexdump -n 3 -e '3/1 "%02X"' "$file" 2>/dev/null)
-        if [ "${header:0:4}" = "FFD8" ]; then
-            log "[✓] Valid JPEG file (header check): $file"
-            return 0
-        else
-            log "[✗] Invalid JPEG header: $file"
-            return 1
-        fi
-    fi
-}
 
-# ==================== 🔐 URL验证函数 ====================
-validate_url() {
-    local url="$1"
-    case "$url" in
-        http://*|https://*) 
-            return 0
-            ;;
-        *)
-            log "[✗] Invalid URL format: $url"
-            return 1
-            ;;
-    esac
-}
-# ==================== 新的 flock 锁机制 ====================
 
-LOCK_FD=202
-LOCK_FILE="/var/lock/banner_bg_loader.lock"
+log "========== Banner Background Update Script Started =========="
 
-acquire_lock() {
-    local timeout="${1:-60}"
-    mkdir -p /var/lock 2>/dev/null
-    
-    eval "exec $LOCK_FD>&-" 2>/dev/null || true
-    
-    eval "exec $LOCK_FD>$LOCK_FILE" || {
-        log "[ERROR] Failed to open lock file"
-        return 1
-    }
-    
-    if flock -w "$timeout" "$LOCK_FD" 2>/dev/null; then
-        log "[LOCK] Successfully acquired bg_loader lock (FD: $LOCK_FD)"
-        return 0
-    else
-        log "[ERROR] Failed to acquire lock after ${timeout}s"
-        eval "exec $LOCK_FD>&-" 2>/dev/null || true
-        return 1
-    fi
-}
-
-release_lock() {
-    if [ -n "$LOCK_FD" ]; then
-        flock -u "$LOCK_FD" 2>/dev/null
-        eval "exec $LOCK_FD>&-"
-    fi
-}
-
-cleanup() {
-    release_lock
-    rm -f "$CACHE/bg_loading"
-}
-trap cleanup EXIT INT TERM
-
-# 动态决定存储路径
-if ! command -v uci >/dev/null 2>&1; then
-    DEST="$WEB"
-else
-    [ "$(uci -q get banner.banner.persistent_storage)" = "1" ] && DEST="$PERSISTENT" || DEST="$WEB"
-fi
-
-mkdir -p "$CACHE" "$WEB" "$PERSISTENT"
-
-# 等待 nav_data.json
-JSON="$CACHE/nav_data.json"
-WAIT_COUNT=0
-while [ ! -f "$JSON" ] && [ $WAIT_COUNT -lt 5 ]; do
-    log "Waiting for nav_data.json... ($WAIT_COUNT/5)"
-    sleep 1
-    WAIT_COUNT=$((WAIT_COUNT + 1))
-done
-
-if [ ! -f "$JSON" ]; then
-    log "[!] nav_data.json not found, will use cached backgrounds if available."
-    for i in 0 1 2; do
-        if [ -f "$DEST/bg${i}.jpg" ]; then
-            cp "$DEST/bg${i}.jpg" "$WEB/current_bg.jpg" 2>/dev/null
-            log "[i] Using cached bg${i}.jpg as fallback"
-            exit 0
-        fi
-    done
+# 确保网络连接
+if ! check_network; then
+    log "✖ Network is not available, exiting."
     exit 1
 fi
 
-# 获取锁
-if ! acquire_lock 60; then
-    log "[ERROR] Failed to acquire lock, exiting"
+# 获取当前背景组和背景启用状态
+BG_ENABLED=$(uci -q get banner.banner.bg_enabled)
+if [ "$BG_ENABLED" != "1" ]; then
+    log "Background update is disabled, exiting."
+    exit 0
+fi
+
+BG_GROUP=$(uci -q get banner.banner.bg_group)
+if [ -z "$BG_GROUP" ]; then
+    log "✖ Background group not configured, exiting."
     exit 1
 fi
 
-log "Loading background group ${BG_GROUP}..."
-echo "loading" > "$CACHE/bg_loading"
-rm -f "$CACHE/bg_complete"
+# 构造背景图 JSON URL
+BG_JSON_URL="https://raw.githubusercontent.com/fgbfg5676/openwrt-banner/main/bg_group_${BG_GROUP}.json"
+BG_JSON_CACHE_FILE="$CACHE_DIR/bg_group_${BG_GROUP}.json"
 
-START_IDX=$(( (BG_GROUP - 1) * 3 + 1 ))
-if ! jq empty "$JSON" 2>/dev/null; then
-    log "[×] JSON format error in nav_data.json"; rm -f "$CACHE/bg_loading"; exit 1
+# 获取并验证背景图 JSON
+if ! fetch_and_validate_json "$BG_JSON_URL" "$BG_JSON_CACHE_FILE"; then
+    log "✖ Failed to fetch background JSON for group $BG_GROUP, exiting."
+    exit 1
 fi
 
-rm -f "$DEST"/bg{0,1,2}.jpg
-if [ "$(uci -q get banner.banner.persistent_storage)" = "1" ]; then
-    rm -f "$WEB"/bg{0,1,2}.jpg
+# 解析背景图 URL 列表
+BG_URLS=($(jq -r ".background_images[] // \'\'" "$BG_JSON_CACHE_FILE"))
+if [ ${#BG_URLS[@]} -eq 0 ]; then
+    log "✖ No background images found in JSON for group $BG_GROUP, exiting."
+    exit 1
 fi
 
-MAX_SIZE=$(uci -q get banner.banner.max_file_size || echo "$MAX_FILE_SIZE")
-log "Using max file size limit: $MAX_SIZE bytes."
+# 获取当前背景图索引
+CURRENT_BG_INDEX=$(uci -q get banner.banner.current_bg || echo 0)
 
-DOWNLOAD_SUCCESS=0
-for i in 0 1 2; do
-    KEY="background_$((START_IDX + i))"
-    URL=$(jsonfilter -i "$JSON" -e "@.$KEY" 2>/dev/null)
-    if [ -n "$URL" ] && validate_url "$URL"; then
-        log "  Downloading image for bg${i}.jpg..."
-        TMPFILE="$DEST/bg$i.tmp"
-        
-       log "  Attempting download from: $(echo "$URL" | sed 's|https?://[^/]*/|.../|' )"
-        
-        # 修复: 简化HTTP请求,使用3次重试
-        DOWNLOAD_OK=0
-        for attempt in 1 2 3; do
-            HTTP_CODE=$(curl -sL --connect-timeout 10 --max-time 20 -w "%{http_code}" -o "$TMPFILE" "$URL" 2>/dev/null)
-            
-            if [ "$HTTP_CODE" = "200" ] && [ -s "$TMPFILE" ]; then
-                DOWNLOAD_OK=1
-                log "  [√] Download successful on attempt $attempt (HTTP $HTTP_CODE)"
-                break
-            else
-                log "  [×] Attempt $attempt failed (HTTP: ${HTTP_CODE:-timeout})"
-                rm -f "$TMPFILE"
-                [ $attempt -lt 3 ] && sleep 2
-            fi
-        done
-        
-        if [ $DOWNLOAD_OK -eq 0 ]; then
-            log "  [×] All 3 download attempts failed"
-            continue
-        fi
-        
-        if [ ! -s "$TMPFILE" ]; then
-            log "  [×] Download failed for $URL (empty file)"
-            rm -f "$TMPFILE"
-            continue
-        fi
-        
-        FILE_SIZE=$(stat -c %s "$TMPFILE" 2>/dev/null || wc -c < "$TMPFILE" 2>/dev/null || echo 999999999)
-        if [ "$FILE_SIZE" -gt "$MAX_SIZE" ]; then
-            log "  [×] File too large: $FILE_SIZE bytes (limit: $MAX_SIZE)"
-            rm -f "$TMPFILE"
-            continue
-        fi
+# 计算下一个背景图索引
+NEXT_BG_INDEX=$(( (CURRENT_BG_INDEX + 1) % ${#BG_URLS[@]} ))
+NEXT_BG_URL="${BG_URLS[$NEXT_BG_INDEX]}"
 
-        if head -n 1 "$TMPFILE" 2>/dev/null | grep -q "<!DOCTYPE\|<html"; then
-            log "  [×] Downloaded HTML instead of image (possible redirect/block)"
-            rm -f "$TMPFILE"
-            continue
-        fi
+log "Next background image URL: $NEXT_BG_URL (Index: $NEXT_BG_INDEX)"
 
-        if validate_jpeg "$TMPFILE"; then
-            mv "$TMPFILE" "$DEST/bg$i.jpg"
-            chmod 644 "$DEST/bg$i.jpg"
-            log "  [√] bg${i}.jpg downloaded and validated successfully."
-            DOWNLOAD_SUCCESS=1
-            # 如果启用了永久存储，也复制一份到 Web 目录
-            if [ "$(uci -q get banner.banner.persistent_storage)" = "1" ]; then
-                cp "$DEST/bg$i.jpg" "$WEB/bg$i.jpg" 2>/dev/null
-            fi
-            # 总是将第一张成功下载的图片设为默认的 current_bg
-            if [ ! -f "$WEB/current_bg.jpg" ]; then
-                cp "$DEST/bg$i.jpg" "$WEB/current_bg.jpg" 2>/dev/null
-            fi
-        else
-            log "  [×] Downloaded file for bg${i}.jpg is invalid or not a JPEG."
-            rm -f "$TMPFILE"
-        fi
-    else
-        log "  [×] No valid URL found for ${KEY}."
-    fi
-done
-
-if [ $DOWNLOAD_SUCCESS -eq 0 ]; then
-    log "[!] No images were downloaded for group ${BG_GROUP}. Keeping existing images if any."
+# 下载下一个背景图
+TMP_BG_FILE="$CACHE_DIR/next_bg.jpg"
+if ! curl -fLsS --connect-timeout "$CURL_CONNECT_TIMEOUT" --max-time "$CURL_MAX_TIMEOUT" "$NEXT_BG_URL" -o "$TMP_BG_FILE"; then
+    log "✖ Failed to download background image from $NEXT_BG_URL"
+    rm -f "$TMP_BG_FILE"
+    exit 1
 fi
 
-# 强制更新逻辑:如果有新图下载成功,自动设为 bg0
-if [ $DOWNLOAD_SUCCESS -eq 1 ]; then
-    if [ -s "$DEST/bg0.jpg" ]; then
-        # 第一步：更新 current_bg.jpg
-        cp "$DEST/bg0.jpg" "$WEB/current_bg.jpg" 2>/dev/null
-        log "[✓] Auto-updated current_bg.jpg to bg0.jpg from new group"
-        
-        # 第二步：🪄 同步到初始化背景目录（关键步骤）
-        if [ -d "/usr/share/banner" ]; then
-            cp "$DEST/bg0.jpg" "/usr/share/banner/bg0.jpg" 2>/dev/null
-            log "[✓] Synced to initialization background (/usr/share/banner/bg0.jpg)"
-        fi
-        
-        # 第三步：更新 UCI 配置
-        if command -v uci >/dev/null 2>&1; then
-            uci set banner.banner.current_bg='0' 2>/dev/null
-            uci commit banner 2>/dev/null
-            log "[✓] UCI updated: current_bg set to 0"
-        fi
-    fi
-else
-    # 兜底：如果没下载成功，保持现有背景
-    if [ ! -s "$WEB/current_bg.jpg" ]; then
-        log "[!] current_bg.jpg is missing. Attempting to restore from existing backgrounds."
-        for i in 0 1 2; do
-            if [ -s "$DEST/bg${i}.jpg" ]; then
-                cp "$DEST/bg${i}.jpg" "$WEB/current_bg.jpg" 2>/dev/null
-                log "[i] Restored current_bg.jpg from bg${i}.jpg"
-                break
-            fi
-        done
-    fi
+# 检查下载的图片是否有效 (简单检查文件大小)
+if [ ! -s "$TMP_BG_FILE" ]; then
+    log "✖ Downloaded background image is empty or invalid: $NEXT_BG_URL"
+    rm -f "$TMP_BG_FILE"
+    exit 1
 fi
 
-log "[Complete] Background loading for group ${BG_GROUP} finished."
-rm -f "$CACHE/bg_loading"
-echo "complete" > "$CACHE/bg_complete"
-BGLOADER
+# 部署新背景图
+cp -f "$TMP_BG_FILE" "$DEFAULT_BG_PATH/current_bg.jpg"
+chmod 644 "$DEFAULT_BG_PATH/current_bg.jpg"
+rm -f "$TMP_BG_FILE"
 
-# Cron jobs
-cat > "$PKG_DIR/root/etc/cron.d/banner" <<'CRON'
-# Banner Cron Jobs - Enhanced Version
-# 每小时执行自动更新检查
-0 * * * * /usr/bin/banner_auto_update.sh >> /tmp/banner_update.log 2>&1
+# 更新 UCI 配置中的当前背景图索引
+update_uci_config "current_bg" "$NEXT_BG_INDEX" && uci commit banner
 
-# 每天凌晨清理缓存
-0 0 * * * /usr/bin/banner_cache_cleaner.sh >> /tmp/banner_update.log 2>&1
+log "✓ Background image updated successfully to $NEXT_BG_URL"
 
-# 每5分钟检查一次重试任务 (关键!)
-*/5 * * * * [ -f /tmp/banner_retry_timer ] && /usr/bin/banner_auto_update.sh >> /tmp/banner_update.log 2>&1
+log "========== Banner Background Update Script Finished =========="
+BGUPDATER
 
-# 🆕 开机后第2分钟强制执行一次更新 (确保开机更新)
-# 这个任务会在每次开机后的第2分钟执行一次,然后自动清理
-@reboot sleep 120 && /usr/bin/banner_auto_update.sh >> /tmp/banner_update.log 2>&1 && sed -i '/@reboot.*banner_auto_update/d' /etc/crontabs/root
-CRON
-
-cat > "$PKG_DIR/root/etc/init.d/banner" <<'INIT'
+# Init script
+cat > "$PKG_DIR/root/etc/init.d/banner" <<\'INITD\'
 #!/bin/sh /etc/rc.common
-START=99
+
 USE_PROCD=1
+START=95
+STOP=05
 
-# 日誌檔案路徑
-LOG_FILE="/tmp/banner_init.log"
+SERVICE_DAEMONIZE=1
 
-# 統一的日誌函數
-log() {
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" >> "$LOG_FILE"
-}
+PROG=/usr/bin/banner_update.sh
+PROG_BG=/usr/bin/banner_bg_update.sh
+PROG_CLEANER=/usr/bin/banner_cache_cleaner.sh
 
-# 服務啟動函數
 start_service() {
-    # 確保日誌檔案可寫
-    touch "$LOG_FILE"
-    chmod 666 "$LOG_FILE"
-    log "========== Banner Service Starting =========="
+    # 确保必要的目录存在
+    mkdir -p /www/luci-static/banner /overlay/banner /tmp/banner_cache /usr/share/banner
+    chmod 755 /www/luci-static/banner /overlay/banner /tmp/banner_cache /usr/share/banner
 
-    # 部署內建背景圖 (保持原有邏輯)
-    BUILTIN_BG="/usr/share/banner/bg0.jpg"
-    TARGET_BG="/www/luci-static/banner/current_bg.jpg"
-    if [ -f "$BUILTIN_BG" ]; then
-        mkdir -p /www/luci-static/banner
-        cp -f "$BUILTIN_BG" "$TARGET_BG"
-        log "✓ 內建背景圖已部署。"
-    else
-        log "✗ 警告：找不到內建背景圖 ${BUILTIN_BG}"
+    # 部署内置背景图（如果不存在）
+    if [ ! -f /www/luci-static/banner/current_bg.jpg ] && [ -f /usr/share/banner/bg0.jpg ]; then
+        cp -f /usr/share/banner/bg0.jpg /www/luci-static/banner/current_bg.jpg
+        chmod 644 /www/luci-static/banner/current_bg.jpg
+        echo "Deployed initial built-in background."
     fi
 
-    # 核心修復：後台執行一個網路巡檢員，直到網路就緒才更新
-    (
-        # 清理可能存在的舊標記
-        rm -f /tmp/banner_first_boot_done
+    # 启动更新脚本 (首次启动时立即执行)
+    procd_set_param command "$PROG"
+    procd_set_param stdout 1
+    procd_set_param stderr 1
+    procd_set_param nice -5
+    procd_set_param required /etc/config/banner
+    procd_start_service
 
-        # 延遲5秒開始，避免開機初期過於繁忙
-        sleep 5
+    # 启动背景更新脚本 (首次启动时立即执行)
+    procd_set_param command "$PROG_BG"
+    procd_set_param stdout 1
+    procd_set_param stderr 1
+    procd_set_param nice -5
+    procd_set_param required /etc/config/banner
+    procd_start_service
 
-        # 循環偵測網路，直到成功
-        while [ ! -f /tmp/banner_first_boot_done ]; do
-            log "正在偵測網路連線 (ping 223.5.5.5)..."
+    # 启动缓存清理脚本 (首次启动时立即执行)
+    procd_set_param command "$PROG_CLEANER"
+    procd_set_param stdout 1
+    procd_set_param stderr 1
+    procd_set_param nice -5
+    procd_set_param required /etc/config/banner
+    procd_start_service
 
-            # 使用 ping 指令檢查公網連線
-            if ping -c 1 -W 3 223.5.5.5 >/dev/null 2>&1; then
-                log "✅ 網路已就緒！準備執行首次更新。"
-                
-                # 執行真正的手動更新腳本，並將其輸出記錄到更新日誌
-                /usr/bin/banner_manual_update.sh >> /tmp/banner_update.log 2>&1
-                
-                # 建立成功標記，以便結束偵測循環
-                touch /tmp/banner_first_boot_done
-                
-                log "✅ 首次開機更新任務已觸發。"
-                break # 成功後退出循環
-            else
-                # 如果網路未就緒，等待15秒後重試
-                log "網路尚未就緒，15秒後重試..."
-                sleep 15
-            fi
-        done
-    ) &
+    # 添加定时任务
+    # 更新主 banner 内容 (每3小时)
+    CRON_MAIN="0 */3 * * * $PROG >/dev/null 2>&1"
+    # 更新背景图 (每15分钟)
+    CRON_BG="*/15 * * * * $PROG_BG >/dev/null 2>&1"
+    # 清理缓存 (每天凌晨3点)
+    CRON_CLEANER="0 3 * * * $PROG_CLEANER >/dev/null 2>&1"
 
-    log "========== Banner Service Started (網路巡檢員已在後台運行) =========="
+    # 写入 cron.d 文件
+    echo "$CRON_MAIN" > /etc/cron.d/banner_update
+    echo "$CRON_BG" >> /etc/cron.d/banner_bg_update
+    echo "$CRON_CLEANER" >> /etc/cron.d/banner_cache_cleaner
+
+    # 确保 cron 服务已启动并重新加载配置
+    /etc/init.d/cron enable
+    /etc/init.d/cron restart
+
+    echo "Banner service started with cron jobs."
 }
 
-# 服務停止函數
 stop_service() {
-    log "========== Banner Service Stopping =========="
-    # 停止由本腳本啟動的後台任務
-    # 使用 pkill 更精準地殺掉包含特定參數的進程
-    pkill -f "ping -c 1 -W 3 223.5.5.5"
+    # 停止 procd 托管的服务
+    procd_kill_service
+
+    # 移除 cron.d 文件
+    rm -f /etc/cron.d/banner_update
+    rm -f /etc/cron.d/banner_bg_update
+    rm -f /etc/cron.d/banner_cache_cleaner
+
+    # 重新加载 cron 配置
+    /etc/init.d/cron restart
+
+    echo "Banner service stopped and cron jobs removed."
 }
 
-# rc.common 會自動處理 start/stop/restart
-# 但為了確保清理邏輯被執行，我們明確定義 restart
-restart_service() {
+reload_service() {
     stop_service
-    sleep 1
     start_service
 }
-status() {
-    # 標題，清晰地標識了版本
-    echo "===== Banner Service Status (Patched v2.0) ====="
-    
-    # 1. 核心狀態：實時回報「網路巡檢員」的工作狀態
-    if pgrep -f "ping -c 1 -W 3 223.5.5.5" >/dev/null; then
-        echo "Status: Running (網路巡檢員正在後台偵測網路...)"
-    elif [ -f /tmp/banner_first_boot_done ]; then
-        echo "Status: Idle (首次開機更新已完成)"
-    else
-        echo "Status: Idle (服務已啟動，等待巡檢員執行)"
-    fi
 
-    # 2. UCI 配置狀態：顯示遠端或手動的啟用/禁用狀態
-    local uci_enabled=$(uci -q get banner.banner.bg_enabled || echo 1)
-    if [ "$uci_enabled" = "0" ]; then
-        local remote_msg=$(uci -q get banner.banner.remote_message)
-        echo "UCI Status: Disabled (Reason: ${remote_msg:-手動禁用})"
-    else
-        echo "UCI Status: Enabled"
-    fi
-    
-    # 3. 上次更新時間：讓您知道內容的新鮮度
-    local last_update=$(uci -q get banner.banner.last_update || echo 0)
-    if [ "$last_update" = "0" ]; then
-        echo "Last Update: Never"
-    else
-        # 兼容不同系統的 date 命令，非常穩健
-        echo "Last Update: $(date -d "@$last_update" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || date -r "$last_update" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo '無法解析時間')"
-    fi
-    
-    echo "---" # 分隔線，讓版面更清晰
-    
-    # 4. 初始化日誌：快速查看開機過程
-    echo "Recent Init Logs (/tmp/banner_init.log):"
-    tail -n 5 /tmp/banner_init.log 2>/dev/null || echo "  (No init logs)"
-    
-    echo "---"
-    
-    # 5. 更新日誌：快速查看更新是否成功，或失敗原因
-    echo "Recent Update Logs (/tmp/banner_update.log):"
-    tail -n 5 /tmp/banner_update.log 2>/dev/null || echo "  (No update logs)"
-    
-    echo "================================================"
-}
+INITD
 
-# rc.common 會自動處理 status，這裡無需定義
-# 如果需要自訂 status，可以取消註解
-# status() {
-#     echo "自訂狀態輸出..."
-# }
-INIT
-
-
-# =================== 核心修正 #1：替換整個 banner.lua (再次確認為完整版) ===================
-cat > "$PKG_DIR/root/usr/lib/lua/luci/controller/banner.lua" <<'CONTROLLER'
+# Controller file
+cat > "$PKG_DIR/root/usr/lib/lua/luci/controller/banner.lua" <<\'CONTROLLER\'
 module("luci.controller.banner", package.seeall)
 
 function index()
-    entry({"admin", "status", "banner"}, alias("admin", "status", "banner", "display"), _("福利导航"), 98).dependent = false
-    entry({"admin", "status", "banner", "display"}, call("action_display"), _("首页展示"), 1)
-    entry({"admin", "status", "banner", "settings"}, call("action_settings"), _("远程更新"), 2)
-    entry({"admin", "status", "banner", "background"}, call("action_background"), _("背景设置"), 3)
-    
-    -- 重构为纯 API 接口，供前端 AJAX 调用
-    entry({"admin", "status", "banner", "api_update"}, post("api_update")).leaf = true
-    entry({"admin", "status", "banner", "api_set_bg"}, post("api_set_bg")).leaf = true
-    entry({"admin", "status", "banner", "api_clear_cache"}, post("api_clear_cache")).leaf = true
-    entry({"admin", "status", "banner", "api_load_group"}, post("api_load_group")).leaf = true
-    entry({"admin", "status", "banner", "api_set_persistent_storage"}, post("api_set_persistent_storage")).leaf = true
-    entry({"admin", "status", "banner", "api_set_opacity"}, post("api_set_opacity")).leaf = true
-    entry({"admin", "status", "banner", "api_set_carousel_interval"}, post("api_set_carousel_interval")).leaf = true
-    entry({"admin", "status", "banner", "api_set_update_url"}, post("api_set_update_url")).leaf = true
-    entry({"admin", "status", "banner", "api_set_font_color"}, post("api_set_font_color")).leaf = true
-    entry({"admin", "status", "banner", "api_reset_defaults"}, post("api_reset_defaults")).leaf = true
-    
-    -- 保留用于文件上传和URL表单提交的旧入口
-    entry({"admin", "status", "banner", "do_upload_bg"}, post("action_do_upload_bg")).leaf = true
-    entry({"admin", "status", "banner", "do_apply_url"}, post("action_do_apply_url")).leaf = true
-end
-
--- 辅助函数：返回 JSON 响应
-local function json_response(data)
-    luci.http.prepare_content("application/json" )
-    luci.http.write(require("luci.jsonc" ).stringify(data))
-end
-
--- 页面渲染函数 (保持不变)
-function action_display()
-    local uci = require("uci").cursor()
-    local fs = require("nixio.fs")
-
-    if uci:get("banner", "banner", "bg_enabled") == "0" then
-        -- 服務被禁用時，只定義和傳遞禁用頁面需要的數據
-        local remote_message = uci:get("banner", "banner", "remote_message") or "服务已被远程禁用"
-        local contact_email = uci:get("banner", "banner", "contact_email") or "niwo5507@gmail.com"
-        local contact_telegram = uci:get("banner", "banner", "contact_telegram") or "@fgnb111999"
-        local contact_qq = uci:get("banner", "banner", "contact_qq") or "183452852"
-        luci.template.render("banner/display", {
-            bg_enabled = "0",
-            remote_message = remote_message,
-            contact_email = contact_email,
-            contact_telegram = contact_telegram,
-            contact_qq = contact_qq,
-            token = luci.dispatcher.context.authsession
-        })
-        return -- 執行完畢，提前返回
+    if not nixio.fs.access("/etc/config/banner") then
+        return
     end
 
-    -- 服務正常啟用時的邏輯
-    local nav_data = { nav_tabs = {} }; pcall(function() nav_data = require("luci.jsonc").parse(fs.readfile("/tmp/banner_cache/nav_data.json")) end)
-    local persistent = uci:get("banner", "banner", "persistent_storage") or "0"
-    local text = uci:get("banner", "banner", "text") or "欢迎使用"
-    local opacity = tonumber(uci:get("banner", "banner", "opacity") or "50"); if not opacity or opacity < 0 or opacity > 100 then opacity = 50 end
-    local banner_texts = uci:get("banner", "banner", "banner_texts") or ""; if banner_texts == "" then banner_texts = text end
-    local contact_email = uci:get("banner", "banner", "contact_email") or "niwo5507@gmail.com"
-    local contact_telegram = uci:get("banner", "banner", "contact_telegram") or "@fgnb111999"
-    local contact_qq = uci:get("banner", "banner", "contact_qq") or "183452852"
-    local font_color = uci:get("banner", "banner", "font_color") or "#FFFFFF"
-    
-    luci.template.render("banner/display", { 
-        text = text, 
-        color = uci:get("banner", "banner", "color"), 
-        opacity = opacity, 
-        carousel_interval = uci:get("banner", "banner", "carousel_interval"), 
-        current_bg = uci:get("banner", "banner", "current_bg"), 
-        bg_enabled = "1", 
-        banner_texts = banner_texts, 
-        nav_data = nav_data, 
-        persistent = persistent, 
-        bg_path = (persistent == "1") and "/overlay/banner" or "/www/luci-static/banner", 
-        token = luci.dispatcher.context.authsession, 
-        contact_email = contact_email, 
-        contact_telegram = contact_telegram, 
-        contact_qq = contact_qq,
-        font_color = font_color
-    })
+    entry({"admin", "system", "banner"}, firstchild(), "Banner", 40).dependent = true
+
+    entry({"admin", "system", "banner", "overview"}, call("action_overview"), _("Overview"), 10)
+    entry({"admin", "system", "banner", "settings"}, cbi("banner/settings"), _("Settings"), 20)
+    entry({"admin", "system", "banner", "welfare"}, call("action_welfare"), _("Welfare Share"), 30)
+
+    entry({"admin", "system", "banner", "update_status"}, call("action_update_status")).leaf = true
+    entry({"admin", "system", "banner", "bg_status"}, call("action_bg_status")).leaf = true
+    entry({"admin", "system", "banner", "do_update"}, call("action_do_update")).leaf = true
+    entry({"admin", "system", "banner", "do_bg_update"}, call("action_do_bg_update")).leaf = true
+    entry({"admin", "system", "banner", "get_contacts"}, call("action_get_contacts")).leaf = true
+    entry({"admin", "system", "banner", "get_carousel_items"}, call("action_get_carousel_items")).leaf = true
+    entry({"admin", "system", "banner", "get_quick_nav_groups"}, call("action_get_quick_nav_groups")).leaf = true
 end
 
-
-function action_settings()
-    local uci = require("uci").cursor()
-    local urls = uci:get("banner", "banner", "update_urls") or {}; if type(urls) ~= "table" then urls = { urls } end
-    local display_urls = {}; for _, url in ipairs(urls) do local name = "Unknown"; if url:match("github") then name = "GitHub" elseif url:match("gitee") then name = "Gitee" end; table.insert(display_urls, { value = url, display = name }) end
-    local log = luci.sys.exec("tail -c 5000 /tmp/banner_update.log 2>/dev/null") or "暫無日誌"; if log == "" then log = "暫無日誌" end
-    luci.template.render("banner/settings", { text = uci:get("banner", "banner", "text"), opacity = uci:get("banner", "banner", "opacity"), carousel_interval = uci:get("banner", "banner", "carousel_interval"), persistent_storage = uci:get("banner", "banner", "persistent_storage"), last_update = uci:get("banner", "banner", "last_update"), remote_message = uci:get("banner", "banner", "remote_message"), display_urls = display_urls, selected_url = uci:get("banner", "banner", "selected_url"), token = luci.dispatcher.context.authsession, log = log })
+function action_overview()
+    local page = luci.template.render("banner/overview")
+    luci.http.write(page)
 end
 
-function action_background()
-    local uci = require("uci").cursor()
-    local log = luci.sys.exec("tail -c 5000 /tmp/banner_bg.log 2>/dev/null") or "暫無日誌"; if log == "" then log = "暫無日誌" end
-    -- ✨ 新增：獲取 font_color 變數
-    local font_color = uci:get("banner", "banner", "font_color") or "#FFFFFF"
-    luci.template.render("banner/background", { 
-        bg_group = uci:get("banner", "banner", "bg_group"), 
-        opacity = uci:get("banner", "banner", "opacity"), 
-        current_bg = uci:get("banner", "banner", "current_bg"), 
-        persistent_storage = uci:get("banner", "banner", "persistent_storage"), 
-        token = luci.dispatcher.context.authsession, 
-        log = log,
-        -- ✨ 新增：將 font_color 傳遞給模板
-        font_color = font_color
-    })
+function action_welfare()
+    local page = luci.template.render("banner/welfare")
+    luci.http.write(page)
 end
 
--- ================== 以下是重构后的 API 函数 ==================
-
-function api_update()
-    -- 修正点：同步执行，等待脚本完成
-    local code = luci.sys.call("/usr/bin/banner_manual_update.sh >/dev/null 2>&1")
-    json_response({ success = (code == 0), message = "手动更新命令已执行。请稍后刷新页面查看是否已重新启用。" })
-end
-
-function api_set_bg()
-    local uci = require("uci").cursor()
-    local bg = luci.http.formvalue("bg")
-    if bg and bg:match("^[0-2]$") then
-        uci:set("banner", "banner", "current_bg", bg)
-        uci:commit("banner")
-        local persistent = uci:get("banner", "banner", "persistent_storage") or "0"
-        local src_path = (persistent == "1") and "/overlay/banner" or "/www/luci-static/banner"
-        if not (src_path == "/overlay/banner" or src_path == "/www/luci-static/banner") then
-            return json_response({ success = false, message = "Invalid source directory" })
-        end
-        luci.sys.call(string.format("cp %s/bg%s.jpg /www/luci-static/banner/current_bg.jpg 2>/dev/null", src_path, bg))
-        
-        -- 强制刷新缓存
-        luci.sys.call("sync")
-        
-        json_response({ success = true, message = "背景已切换为 " .. bg })
+function action_update_status()
+    local log_file = "/tmp/banner_update.log"
+    local status = ""
+    if nixio.fs.access(log_file) then
+        status = nixio.fs.readfile(log_file)
     else
-        json_response({ success = false, message = "Invalid background index" })
+        status = "No update log available."
     end
+    luci.http.prepare_content("text/plain")
+    luci.http.write(status)
 end
 
-function api_clear_cache()
-    luci.sys.call("rm -f /tmp/banner_cache/* /overlay/banner/bg*.jpg /www/luci-static/banner/bg*.jpg /www/luci-static/banner/current_bg.jpg")
-    json_response({ success = true, message = "缓存已清除" })
+function action_bg_status()
+    local log_file = "/tmp/banner_bg.log"
+    local status = ""
+    if nixio.fs.access(log_file) then
+        status = nixio.fs.readfile(log_file)
+    else
+        status = "No background update log available."
+    end
+    luci.http.prepare_content("text/plain")
+    luci.http.write(status)
 end
 
-function api_load_group()
-    local uci = require("uci").cursor()
-    local group = luci.http.formvalue("group" )
-    if group and group:match("^[1-4]$") then
-        uci:set("banner", "banner", "bg_group", group)
-        uci:commit("banner")
-        -- 修正点：同步执行，等待脚本完成
-        local code = luci.sys.call(string.format("/usr/bin/banner_bg_loader.sh %s >/dev/null 2>&1", group))
-        json_response({ success = (code == 0), message = "背景组 " .. group .. " 加载命令已执行。请稍后刷新页面查看效果。" })
-    else
-        json_response({ success = false, message = "Invalid group index" })
-    end
+function action_do_update()
+    luci.sys.call("/usr/bin/banner_update.sh >/dev/null 2>&1 &")
+    luci.http.prepare_content("application/json")
+    luci.http.write("{ \"status\": \"Update initiated\" }")
 end
 
-function api_set_persistent_storage()
-    local uci = require("uci").cursor()
-    local persistent = luci.http.formvalue("persistent_storage" )
-    if persistent and persistent:match("^[0-1]$") then
-        local old_persistent = uci:get("banner", "banner", "persistent_storage") or "0"
-        if persistent ~= old_persistent then
-            uci:set("banner", "banner", "persistent_storage", persistent)
-            if persistent == "1" then
-                luci.sys.call("mkdir -p /overlay/banner && cp -f /www/luci-static/banner/*.jpg /overlay/banner/ 2>/dev/null")
-            else
-                luci.sys.call("mkdir -p /www/luci-static/banner && cp -f /overlay/banner/*.jpg /www/luci-static/banner/ 2>/dev/null")
-            end
-            uci:commit("banner")
-        end
-        json_response({ success = true, message = "永久存储已" .. (persistent == "1" and "启用" or "禁用") })
-    else
-        json_response({ success = false, message = "Invalid value" })
-    end
+function action_do_bg_update()
+    luci.sys.call("/usr/bin/banner_bg_update.sh >/dev/null 2>&1 &")
+    luci.http.prepare_content("application/json")
+    luci.http.write("{ \"status\": \"Background update initiated\" }")
 end
 
-function api_set_opacity()
-    local uci = require("uci").cursor()
-    local opacity = luci.http.formvalue("opacity" )
-    if opacity and tonumber(opacity) and tonumber(opacity) >= 0 and tonumber(opacity) <= 100 then
-        uci:set("banner", "banner", "opacity", opacity); uci:commit("banner")
-        json_response({ success = true, message = "透明度已设置" })
-    else
-        json_response({ success = false, message = "Invalid opacity value" })
+function action_get_contacts()
+    local uci = require "luci.model.uci".cursor()
+    local contacts = uci:get_list("banner", "banner", "contacts")
+    local contact_data = {}
+    for _, c_json in ipairs(contacts) do
+        local ok, data = pcall(luci.json.decode, c_json)
+        if ok and type(data) == "table" then
+            table.insert(contact_data, data)
+        end
     end
+    luci.http.prepare_content("application/json")
+    luci.http.write(luci.json.encode(contact_data))
 end
 
-function api_set_carousel_interval()
-    local uci = require("uci").cursor()
-    local interval = luci.http.formvalue("carousel_interval" )
-    if interval and tonumber(interval) and tonumber(interval) >= 1000 and tonumber(interval) <= 30000 then
-        uci:set("banner", "banner", "carousel_interval", interval); uci:commit("banner")
-        json_response({ success = true, message = "轮播间隔已设置" })
-    else
-        json_response({ success = false, message = "Invalid interval value" })
+function action_get_carousel_items()
+    local uci = require "luci.model.uci".cursor()
+    local carousel_items = uci:get_list("banner", "banner", "carousel_items")
+    local item_data = {}
+    for _, item_json in ipairs(carousel_items) do
+        local ok, data = pcall(luci.json.decode, item_json)
+        if ok and type(data) == "table" then
+            table.insert(item_data, data)
+        end
     end
+    luci.http.prepare_content("application/json")
+    luci.http.write(luci.json.encode(item_data))
 end
 
-function api_set_update_url()
-    local uci = require("uci").cursor()
-    local url = luci.http.formvalue("selected_url" )
-    if url and url:match("^https?://" ) then
-        uci:set("banner", "banner", "selected_url", url); uci:commit("banner")
-        json_response({ success = true, message = "更新源已选择" })
-    else
-        json_response({ success = false, message = "Invalid URL" })
+function action_get_quick_nav_groups()
+    local uci = require "luci.model.uci".cursor()
+    local quick_nav_groups = uci:get_list("banner", "banner", "quick_nav_groups")
+    local group_data = {}
+    for _, group_json in ipairs(quick_nav_groups) do
+        local ok, data = pcall(luci.json.decode, group_json)
+        if ok and type(data) == "table" then
+            table.insert(group_data, data)
+        end
     end
-end
-function api_set_font_color()
-    local uci = require("uci").cursor()
-    local color = luci.http.formvalue("font_color")
-    if color and color:match("^#[A-Fa-f0-9]{6}$") then
-        uci:set("banner", "banner", "font_color", color)
-        uci:commit("banner")
-        json_response({ success = true, message = "字体颜色已更新" })
-    else
-        json_response({ success = false, message = "无效的颜色值" })
-    end
-end
-function api_reset_defaults()
-    luci.sys.call("rm -f /etc/config/banner && /etc/init.d/banner restart")
-    json_response({ success = true, message = "已恢复默认配置，页面即将刷新。" })
+    luci.http.prepare_content("application/json")
+    luci.http.write(luci.json.encode(group_data))
 end
 
-function action_do_upload_bg()
-    local fs = require("nixio.fs")
-    local http = require("luci.http")
-    local uci = require("uci").cursor()
-    local sys = require("luci.sys")
-    
-    -- ==================== 步骤1: 严格验证 bg_index ====================
-    local bg_index = luci.http.formvalue("bg_index") or "0"
-    
-    -- 白名单验证: 只允许 0, 1, 2
-    if not bg_index:match("^[0-2]$") then
-        luci.http.status(400, "Invalid background index")
-        luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/background"))
-        return
-    end
-    
-    -- ==================== 步骤2: 路径白名单验证 ====================
-    local persistent = uci:get("banner", "banner", "persistent_storage") or "0"
-    
-    -- 定义允许的目录白名单
-    local allowed_dirs = {
-        ["/overlay/banner"] = true,
-        ["/www/luci-static/banner"] = true
-    }
-    
-    -- 根据配置选择目标目录
-    local dest_dir = (persistent == "1") and "/overlay/banner" or "/www/luci-static/banner"
-    
-    -- 验证目标目录在白名单内
-    if not allowed_dirs[dest_dir] then
-        luci.http.status(400, "Invalid destination directory")
-        luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/background"))
-        return
-    end
-    
-    -- 创建目录(安全的路径)
-    sys.call(string.format("mkdir -p '%s' 2>/dev/null", dest_dir:gsub("'", "'\\''")))
-    
-    -- ==================== 步骤3: 安全构建文件路径 ====================
-    local tmp_file = string.format("%s/bg%s.tmp", dest_dir, bg_index)
-    local final_file = string.format("%s/bg%s.jpg", dest_dir, bg_index)
-    
-    -- 路径穿越检查
-    local function is_safe_path(path, base_dir)
-        -- 确保路径以基础目录开头
-        if path:sub(1, #base_dir) ~= base_dir then
-            return false
-        end
-        -- 确保路径不包含 ../
-        if path:match("%.%.") then
-            return false
-        end
-        -- 确保路径不包含多余的斜杠
-        if path:match("//") then
-            return false
-        end
-        return true
-    end
-    
-    if not is_safe_path(tmp_file, dest_dir) or not is_safe_path(final_file, dest_dir) then
-        luci.http.status(400, "Path traversal detected")
-        luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/background"))
-        return
-    end
-    
-    -- ==================== 步骤4: 文件上传处理 ====================
-    http.setfilehandler(function(meta, chunk, eof)
-        if not meta or meta.name ~= "bg_file" then
-            return
-        end
-        
-        -- 写入文件块
-        if chunk then
-            local fp = io.open(tmp_file, "ab")
-            if fp then
-                fp:write(chunk)
-                fp:close()
-            else
-                -- 文件打开失败
-                return
-            end
-        end
-        
-        -- 文件上传完成
-        if eof then
-            local max_size = tonumber(uci:get("banner", "banner", "max_file_size") or "3145728")
-            
-            -- 验证文件存在和大小
-            local file_stat = fs.stat(tmp_file)
-            if not file_stat then
-                luci.http.status(400, "File upload failed")
-                return
-            end
-            
-            if file_stat.size > max_size then
-                fs.remove(tmp_file)
-                luci.http.status(400, "File size exceeds 3MB")
-                return
-            end
-            
-            -- 验证JPEG格式
-            if sys.call(string.format("file '%s' | grep -qiE 'JPEG|JPG'", tmp_file:gsub("'", "'\\'''"))) == 0 then
-                -- 文件有效,移动到最终位置
-                fs.rename(tmp_file, final_file)
-                sys.call(string.format("chmod 644 '%s'", final_file:gsub("'", "'\\''")))
-                
-                -- 同步文件
-                if persistent == "1" then
-                    local sync_target = string.format("/www/luci-static/banner/bg%s.jpg", bg_index)
-                    sys.call(string.format("cp '%s' '%s' 2>/dev/null", 
-                        final_file:gsub("'", "'\\''"),
-                        sync_target:gsub("'", "'\\''")
-                    ))
-                end
-                
-                -- 如果是 bg0,更新当前背景
-                if bg_index == "0" then
-                    sys.call(string.format("cp '%s' /www/luci-static/banner/current_bg.jpg 2>/dev/null",
-                        final_file:gsub("'", "'\\''")
-                    ))
-                    uci:set("banner", "banner", "current_bg", "0")
-                    uci:commit("banner")
-                end
-            else
-                -- 文件格式无效
-                fs.remove(tmp_file)
-                luci.http.status(400, "Invalid JPEG file")
-            end
-        end
-    end)
-    
-    -- 重定向回背景设置页面
-    luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/background"))
-end
-function action_do_apply_url()
-    local http = require("luci.http")
-    local sys = require("luci.sys")
-    local uci = require("uci").cursor()
-    local fs = require("nixio.fs")
-    
-    -- 获取用户输入的URL
-    local custom_url = luci.http.formvalue("custom_bg_url")
-    
-    -- URL验证
-    if not custom_url or custom_url == "" then
-        luci.http.status(400, "URL cannot be empty")
-        luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/background"))
-        return
-    end
-    
-    -- 验证URL格式（必须是HTTPS的JPEG图片）
-    if not custom_url:match("^https://.*%.jpe?g$") then
-        luci.http.status(400, "Invalid URL format. Must be HTTPS and end with .jpg or .jpeg")
-        luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/background"))
-        return
-    end
-    
-    -- 确定目标目录
-    local persistent = uci:get("banner", "banner", "persistent_storage") or "0"
-    local dest_dir = (persistent == "1") and "/overlay/banner" or "/www/luci-static/banner"
-    
-    -- 路径白名单验证
-    local allowed_dirs = {
-        ["/overlay/banner"] = true,
-        ["/www/luci-static/banner"] = true
-    }
-    
-    if not allowed_dirs[dest_dir] then
-        luci.http.status(400, "Invalid destination directory")
-        luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/background"))
-        return
-    end
-    
-    -- 创建目录
-    sys.call(string.format("mkdir -p '%s' 2>/dev/null", dest_dir:gsub("'", "'\\''")))
-    
-    -- 构建安全的文件路径
-    local tmp_file = dest_dir .. "/bg0.tmp"
-    local final_file = dest_dir .. "/bg0.jpg"
-    
-    -- 下载文件
-    local max_size = tonumber(uci:get("banner", "banner", "max_file_size") or "3145728")
-    local download_cmd = string.format(
-        "curl -fsSL --connect-timeout 10 --max-time 30 --max-filesize %d '%s' -o '%s' 2>/dev/null",
-        max_size,
-        custom_url:gsub("'", "'\\''"),
-        tmp_file:gsub("'", "'\\''")
-    )
-    
-    local ret = sys.call(download_cmd)
-    
-    if ret ~= 0 or not fs.stat(tmp_file) then
-        fs.remove(tmp_file)
-        luci.http.status(400, "Failed to download image from URL")
-        luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/background"))
-        return
-    end
-    
-    -- 验证文件大小
-    local file_stat = fs.stat(tmp_file)
-    if not file_stat or file_stat.size > max_size then
-        fs.remove(tmp_file)
-        luci.http.status(400, "Downloaded file exceeds 3MB limit")
-        luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/background"))
-        return
-    end
-    
-    -- 验证JPEG格式
-    if sys.call(string.format("file '%s' | grep -qiE 'JPEG|JPG'", tmp_file:gsub("'", "'\\'''"))) == 0 then
-        -- 文件有效，移动到最终位置
-        fs.rename(tmp_file, final_file)
-        sys.call(string.format("chmod 644 '%s'", final_file:gsub("'", "'\\''")))
-        
-        -- 同步文件
-        if persistent == "1" then
-            sys.call("cp '/overlay/banner/bg0.jpg' '/www/luci-static/banner/bg0.jpg' 2>/dev/null")
-        end
-        
-        -- 更新当前背景
-        sys.call("cp '" .. final_file:gsub("'", "'\\''") .. "' /www/luci-static/banner/current_bg.jpg 2>/dev/null")
-        uci:set("banner", "banner", "current_bg", "0")
-        uci:commit("banner")
-    else
-        -- 文件格式无效
-        fs.remove(tmp_file)
-        luci.http.status(400, "Downloaded file is not a valid JPEG")
-        luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/background"))
-        return
-    end
-    
-    -- 重定向回背景设置页面
-    luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/background"))
-end
 CONTROLLER
 
-# Global style view
-cat > "$PKG_DIR/root/usr/lib/lua/luci/view/banner/global_style.htm" <<'GLOBALSTYLE'
-<%
-local uci = require("uci").cursor()
-local opacity = tonumber(uci:get("banner", "banner", "opacity") or "50")
-local alpha = (100 - opacity) / 100
--- 修复点:使用 current_bg.jpg 而非固定的 bg0.jpg
-local bg_url = "/luci-static/banner/current_bg.jpg"
-%>
+# CBI Model
+cat > "$PKG_DIR/root/usr/lib/lua/luci/model/cbi/banner/settings.lua" <<\'CBIMODEL\'
+m = Map("banner", "Banner Settings", "Configure the OpenWrt banner plugin.")
+
+s = m:section(NamedSection, "banner", "banner", "General Settings")
+
+s.addremove = false
+
+o = s:option(Value, "text", "Banner Text")
+o.datatype = "string"
+o.placeholder = "Enter banner text here"
+o.default = "🎉 福利导航的内容会不定时更新，关注作者不迷路"
+
+o = s:option(ListValue, "color", "Text Color")
+o:value("rainbow", "Rainbow")
+o:value("red", "Red")
+o:value("green", "Green")
+o:value("blue", "Blue")
+o:value("white", "White")
+o.default = "rainbow"
+
+o = s:option(Value, "opacity", "Background Opacity (0-100)")
+o.datatype = "range(0,100)"
+o.default = "50"
+
+o = s:option(Value, "carousel_interval", "Carousel Interval (ms)")
+o.datatype = "range(1000,30000)"
+o.default = "5000"
+
+o = s:option(ListValue, "bg_group", "Background Image Group")
+o:value("1", "Group 1")
+o:value("2", "Group 2")
+o:value("3", "Group 3")
+o:value("4", "Group 4")
+o.default = "1"
+
+o = s:option(Flag, "bg_enabled", "Enable Background Image Rotation")
+o.default = "1"
+
+o = s:option(Flag, "persistent_storage", "Enable Persistent Storage for Backgrounds")
+o.default = "0"
+
+o = s:option(Value, "current_bg", "Current Background Index")
+o.datatype = "uinteger"
+o.default = "0"
+o.readonly = true
+
+s = m:section(NamedSection, "banner", "banner", "Remote Update Settings")
+s.addremove = false
+
+urls_option = s:option(DynamicList, "update_urls", "Remote Update URLs")
+urls_option.datatype = "string"
+urls_option.placeholder = "https://example.com/banner.json"
+urls_option.default = "https://raw.githubusercontent.com/fgbfg5676/openwrt-banner/main/banner.json"
+
+o = s:option(Value, "selected_url", "Selected Update URL")
+o.datatype = "string"
+o.placeholder = "Currently active URL"
+o.readonly = true
+
+update_interval_option = s:option(Value, "update_interval", "Update Interval (seconds)")
+update_interval_option.datatype = "range(300,86400)"
+update_interval_option.default = "10800"
+
+o = s:option(Value, "last_update", "Last Update Time (Unix Timestamp)")
+o.datatype = "uinteger"
+o.default = "0"
+o.readonly = true
+
+return m
+CBIMODEL
+
+# Overview View
+cat > "$PKG_DIR/root/usr/lib/lua/luci/view/banner/overview.htm" <<\'OVERVIEWHTML\'
+<%+header%>
 <style type="text/css">
-html, body {
-    background: linear-gradient(rgba(0,0,0,<%=alpha%>), rgba(0,0,0,<%=alpha%>)), 
-                url(<%=bg_url%>?t=<%=os.time()%>) center/cover fixed no-repeat !important;
-    min-height: 100vh !important;
-}
-#maincontent, .container, .cbi-map, .cbi-section, .cbi-map > *, .cbi-section > *, .cbi-section-node, .table, .tr, .td, .th {
-    background: transparent !important;
-}
-.cbi-map {
-    background: rgba(0,0,0,0.3) !important;
-    border: 1px solid rgba(255,255,255,0.1) !important;
-    border-radius: 12px !important;
-    box-shadow: 0 8px 32px rgba(0,0,0,0.2) !important;
-    padding: 15px !important;
-}
-.cbi-section {
-    background: rgba(0,0,0,0.2) !important;
-    border: 1px solid rgba(255,255,255,0.08) !important;
-    border-radius: 8px !important;
-    padding: 10px !important;
-}
-h2, h3, label, legend, .cbi-section-descr {
-    color: white !important;
-    text-shadow: 0 2px 4px rgba(0,0,0,0.6) !important;
-}
-input, textarea, select {
-    background: rgba(255,255,255,0.9) !important;
-    border: 1px solid rgba(255,255,255,0.3) !important;
-    color: #333 !important;
-    border-radius: 4px !important;
-}
-.cbi-button {
-    background: rgba(66,139,202,0.9) !important;
-    border: 1px solid rgba(255,255,255,0.3) !important;
-    color: white !important;
-    border-radius: 4px !important;
-    cursor: pointer !important;
-    transition: all 0.3s !important;
-}
-.cbi-button:hover {
-    background: rgba(66,139,202,1) !important;
-    transform: translateY(-1px) !important;
-}
-</style>
-<script type="text/javascript">
-document.addEventListener('DOMContentLoaded', function() {
-    var slider = document.getElementById('opacity-slider');
-    if (slider) {
-        slider.addEventListener('input', function(e) {
-            var value = parseInt(e.target.value);
-            var display = document.getElementById('opacity-display');
-            if (display) display.textContent = value + '%';
-        });
+    .banner-hero {
+        position: relative;
+        width: 100%;
+        height: 200px;
+        overflow: hidden;
+        background-size: cover;
+        background-position: center;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+        color: white;
+        font-size: 2em;
+        font-weight: bold;
+        text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.7);
+        transition: background-image 1s ease-in-out;
+        box-sizing: border-box; /* Added for responsive design */
+        max-width: 1200px; /* Adjusted from min(1200px, 95vw) */
+        margin: 0 auto; /* Center the banner */
     }
-});
-</script>
-GLOBALSTYLE
+    .banner-text {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        z-index: 2;
+        white-space: nowrap; /* Prevent text wrapping */
+    }
+    .banner-text.rainbow {
+        background: linear-gradient(to right, red, orange, yellow, green, blue, indigo, violet);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+    }
+    .banner-text.red { color: red; }
+    .banner-text.green { color: green; }
+    .banner-text.blue { color: blue; }
+    .banner-text.white { color: white; }
 
-# Display view
-cat > "$PKG_DIR/root/usr/lib/lua/luci/view/banner/display.htm" <<'DISPLAYVIEW'
-<%+header%>
-<%+banner/global_style%>
-<style>
-.banner-hero { 
-    width: 100%; /* ✨ 關鍵：使其寬度充滿父容器 */
-    box-sizing: border-box; /* ✨ 關鍵：讓 padding 不會撐大容器 */
-    background: rgba(0,0,0,.3); 
-    border-radius: 15px; 
-    padding: 20px; 
-    margin: 20px auto; 
-    max-width: 1200px; /* 限制最大寬度，保持美觀 */
-}
-
-.carousel { position: relative; width: 100%; height: 300px; overflow: hidden; border-radius: 10px; margin-bottom: 20px; }
-.carousel img { width: 100%; height: 100%; object-fit: cover; position: absolute; opacity: 0; transition: opacity .5s; }
-.carousel img.active { opacity: 1; }
-/* 文件轮播样式 */
-.file-carousel { position: relative; width: 100%; min-height: 280px; background: rgba(0,0,0,.25); border-radius: 10px; margin-bottom: 20px; padding: 20px; overflow: hidden; }
-.carousel-track { display: flex; gap: 15px; transition: transform .4s ease; }
-.file-card { min-width: calc(33.333% - 10px); background: rgba(255,255,255,.12); border: 1px solid rgba(255,255,255,.2); border-radius: 8px; padding: 15px; display: flex; align-items: center; gap: 12px; backdrop-filter: blur(5px); transition: all .3s; }
-.file-card:hover { transform: translateY(-3px); background: rgba(255,255,255,.18); border-color: #4fc3f7; }
-.file-icon { font-size: 36px; flex-shrink: 0; }
-.file-info { flex: 1; min-width: 0; }
-.file-name { color: #fff; font-weight: 700; font-size: 15px; margin-bottom: 5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.file-desc { color: #ddd; font-size: 12px; margin-bottom: 5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.file-size { color: #aaa; font-size: 11px; }
-.file-action { flex-shrink: 0; }
-.action-btn { padding: 8px 16px; border: 0; border-radius: 5px; font-weight: 700; cursor: pointer; transition: all .3s; font-size: 13px; text-decoration: none; display: inline-block; }
-.download-btn { background: rgba(76,175,80,.9); color: #fff; }
-.download-btn:hover { background: rgba(76,175,80,1); transform: scale(1.05); }
-.visit-btn { background: rgba(33,150,243,.9); color: #fff; }
-.visit-btn:hover { background: rgba(33,150,243,1); transform: scale(1.05); }
-.carousel-controls { display: flex; align-items: center; justify-content: center; gap: 15px; margin-top: 15px; }
-.carousel-btn { background: rgba(255,255,255,.15); border: 1px solid rgba(255,255,255,.3); color: #fff; padding: 8px 15px; border-radius: 5px; cursor: pointer; transition: all .3s; font-weight: 700; }
-.carousel-btn:hover { background: rgba(255,255,255,.25); transform: scale(1.05); }
-.carousel-btn:disabled { opacity: .5; cursor: not-allowed; }
-.carousel-indicator { color: #fff; font-weight: 700; }
-
-/* 响应式 */
-@media (max-width: 1024px) {
-    .file-card { min-width: calc(50% - 7.5px); }
-}
-@media (max-width: 768px) {
-    .file-carousel { min-height: 240px; padding: 15px; }
-    .file-card { min-width: 100%; flex-direction: column; text-align: center; }
-    .file-info { width: 100%; }
-    .file-action { width: 100%; }
-    .action-btn { width: 100%; }
-}
-.banner-scroll { padding: 20px; margin-bottom: 30px; text-align: center; font-weight: 700; font-size: 18px; border-radius: 10px; min-height: 60px; display: flex; align-items: center; justify-content: center;
-<% if color == 'rainbow' then %>background: linear-gradient(90deg, #ff0000, #ff7f00, #ffff00, #00ff00, #0000ff, #4b0082, #9400d3); background-size: 400% 400%; animation: rainbow 8s ease infinite; color: #fff; text-shadow: 2px 2px 4px rgba(0,0,0,.5)<% else %>background: rgba(255,255,255,.15); color: <%=font_color or '#FFFFFF'%><% end %>
-}
-@keyframes rainbow { 0%,100% { background-position: 0% 50% } 50% { background-position: 100% 50% } }
-.banner-contacts { display: flex; flex-direction: column; gap: 15px; margin-bottom: 30px; }
-.contact-card { 
-    background: rgba(0,0,0,.3); 
-    border: 1px solid rgba(255,255,255,.18); 
-    border-radius: 10px; 
-    padding: 15px; 
-    color: #fff; 
-    display: flex; 
-    align-items: center; 
-    justify-content: space-between; 
-    gap: 10px; 
-    flex-wrap: wrap; /* ✨ 關鍵：當空間不足時，允許元素換行 */
-}
- #fff; display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-.contact-info { flex: 1; min-width: 200px; text-align: left; }
-.contact-info span { display: block; color: #aaa; font-size: 14px; margin-bottom: 5px; }
-.copy-btn { background: rgba(76,175,80,.9); color: #fff; border: 0; padding: 8px 18px; border-radius: 5px; cursor: pointer; font-weight: 700; transition: all .3s; }
-.copy-btn:hover { background: rgba(76,175,80,1); transform: translateY(-2px); }
-.nav-section h3 { color: #fff; text-align: center; margin-bottom: 20px; }
-.nav-groups { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 20px; }
-.nav-group { background: rgba(0,0,0,.3); border: 1px solid rgba(255,255,255,.15); border-radius: 10px; padding: 15px; transition: all .3s; }
-.nav-group:hover { transform: translateY(-3px); border-color: #4fc3f7; }
-.nav-group:hover .nav-links {display: flex !important;}
-.nav-group-title { font-size: 18px; font-weight: 700; color: #fff; text-align: center; margin-bottom: 10px; padding: 10px; background: rgba(102,126,234,.6); border-radius: 8px; display: flex; align-items: center; justify-content: center; cursor: pointer; }
-.nav-group-title img { width: 24px; height: 24px; margin-right: 8px; }
-.nav-links { display: none; flex-direction: column; padding: 10px 0; max-height: 300px; overflow-y: auto; }
-.nav-links.active { display: flex; }
-.nav-links a { display: block; color: #4fc3f7; text-decoration: none; padding: 10px; margin: 5px 0; border-radius: 5px; background: rgba(255,255,255,.1); transition: all .2s; }
-.nav-links a:hover { background: rgba(79,195,247,.3); transform: translateX(5px); }
-.nav-group:hover .nav-links { display: flex !important; flex-direction: column; }
-@media (min-width: 769px) { .nav-group-title { cursor: default; } .nav-links { display: none; } }
-.pagination { text-align: center; margin-top: 20px; }
-.pagination button { background: rgba(66,139,202,.9); border: 1px solid rgba(255,255,255,.3); color: #fff; padding: 8px 15px; margin: 0 5px; border-radius: 5px; cursor: pointer; }
-.pagination button:disabled { background: rgba(100,100,100,.5); cursor: not-allowed; }
-.bg-selector { position: fixed; bottom: 30px; right: 30px; display: flex; gap: 12px; z-index: 999; }
-.bg-circle { width: 50px; height: 50px; border-radius: 50%; border: 3px solid rgba(255,255,255,.8); background-size: cover; cursor: pointer; transition: all .3s; }
-.bg-circle:hover { transform: scale(1.15); border-color: #4fc3f7; }
-.disabled-message { background: rgba(217,83,79,.8); color: #fff; padding: 15px; border-radius: 10px; text-align: center; font-weight: 700; margin-bottom: 20px; }
-@media (max-width: 1024px) and (min-width: 769px) {
-    .banner-hero { padding: 15px; max-width: 90vw; }
-    .carousel { height: 280px; }
-    .nav-groups { grid-template-columns: repeat(2, 1fr); }
-}
-@media (max-width: 768px) {
-    .banner-hero { padding: 10px; max-width: 100%; }
-    .carousel { height: 200px; }
-    .banner-scroll { font-size: 16px; padding: 15px; }
-    .copy-btn { padding: 6px 12px; font-size: 14px; }
-    .nav-groups { grid-template-columns: 1fr; }
-    .bg-selector { bottom: 15px; right: 15px; gap: 8px; }
-    .bg-circle { width: 40px; height: 40px; }
-}
-@media (max-width: 480px) {
-    .banner-scroll { font-size: 14px; padding: 12px; min-height: 50px; }
-    .contact-card { flex-direction: column; text-align: center; }
-    .nav-group { padding: 10px; }
-}
+    .contact-card {
+        display: flex;
+        flex-wrap: wrap; /* Added for responsive design */
+        gap: 10px;
+        margin-top: 20px;
+        justify-content: center;
+    }
+    .contact-item {
+        background-color: rgba(0, 0, 0, 0.6);
+        padding: 10px 15px;
+        border-radius: 8px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        cursor: pointer;
+        transition: background-color 0.3s ease;
+    }
+    .contact-item:hover {
+        background-color: rgba(0, 0, 0, 0.8);
+    }
+    .contact-item i {
+        font-size: 1.2em;
+    }
+    .contact-item span {
+        font-size: 0.9em;
+    }
+    .copy-tooltip {
+        position: absolute;
+        background-color: #333;
+        color: #fff;
+        padding: 5px 10px;
+        border-radius: 4px;
+        font-size: 0.8em;
+        z-index: 1000;
+        opacity: 0;
+        transition: opacity 0.3s ease-in-out;
+        pointer-events: none;
+    }
+    .carousel-container {
+        margin-top: 30px;
+        background-color: rgba(0, 0, 0, 0.6);
+        padding: 20px;
+        border-radius: 8px;
+        max-width: 1200px;
+        margin-left: auto;
+        margin-right: auto;
+        position: relative;
+        overflow: hidden;
+    }
+    .carousel-item {
+        display: none;
+        text-align: center;
+        font-size: 1.1em;
+        line-height: 1.5;
+        min-height: 80px; /* Ensure consistent height */
+        align-items: center;
+        justify-content: center;
+        color: white;
+    }
+    .carousel-item.active {
+        display: flex;
+    }
+    .carousel-dots {
+        text-align: center;
+        margin-top: 10px;
+    }
+    .carousel-dot {
+        display: inline-block;
+        width: 10px;
+        height: 10px;
+        margin: 0 5px;
+        background-color: rgba(255, 255, 255, 0.5);
+        border-radius: 50%;
+        cursor: pointer;
+    }
+    .carousel-dot.active {
+        background-color: rgba(255, 255, 255, 1);
+    }
+    .section-title {
+        font-size: 1.5em;
+        color: #fff;
+        margin-top: 40px;
+        margin-bottom: 20px;
+        text-align: center;
+    }
+    .quick-nav-group-container {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 15px;
+        justify-content: center;
+        margin-top: 20px;
+    }
+    .quick-nav-group-item {
+        background-color: rgba(0, 0, 0, 0.6);
+        padding: 15px 20px;
+        border-radius: 10px;
+        cursor: pointer;
+        transition: background-color 0.3s ease;
+        color: white;
+        font-weight: bold;
+        text-align: center;
+        min-width: 120px;
+    }
+    .quick-nav-group-item:hover {
+        background-color: rgba(0, 0, 0, 0.8);
+    }
 </style>
 
-<% if bg_enabled == "0" then %>
-    <div class="banner-hero">
-        <div class="disabled-message">
-            <h3 style="color:#fff;margin-bottom:15px;">⚠️ 服务已暂停</h3>
-            <p><%= pcdata(remote_message) %></p>
-        </div>
-        
-        <div class="banner-contacts" style="margin-top:20px;">
-            <div class="contact-card"><div class="contact-info"><span>📧 邮箱</span><strong><%=contact_email%></strong></div><button class="copy-btn" onclick="copyText('<%=contact_email%>')">复制</button></div>
-            <div class="contact-card"><div class="contact-info"><span>📱 Telegram</span><strong><%=contact_telegram%></strong></div><button class="copy-btn" onclick="copyText('<%=contact_telegram%>')">复制</button></div>
-            <div class="contact-card"><div class="contact-info"><span>💬 QQ</span><strong><%=contact_qq%></strong></div><button class="copy-btn" onclick="copyText('<%=contact_qq%>')">复制</button></div>
-        </div>
-    </div>
-    
-    <div class="bg-selector">
-        <% for i = 0, 2 do %>
-        <div class="bg-circle" style="background-image:url(/luci-static/banner/bg<%=i%>.jpg?t=<%=os.time()%>)" onclick="changeBg(<%=i%>)" title="切换背景 <%=i+1%>"></div>
-        <% end %>
-    </div>
-    
-<% else %>
-    <div class="banner-hero">
-        <div class="banner-scroll" id="banner-text"><%= pcdata(text) %></div>
-        
-        <% if nav_data and nav_data.carousel_files and #nav_data.carousel_files > 0 then %>
-        <div class="file-carousel">
-            <div class="carousel-track" id="carousel-track">
-                <% for idx, file in ipairs(nav_data.carousel_files) do %>
-                <div class="file-card" data-index="<%=idx%>">
-                    <div class="file-icon">
-                        <% if file.type == "pdf" then %>
-                            📄
-                        <% elseif file.type == "txt" then %>
-                            📝
-                        <% elseif file.type == "url" then %>
-                            🔗
-                        <% else %>
-                            📦
-                        <% end %>
-                    </div>
-                    <div class="file-info">
-                        <div class="file-name"><%=pcdata(file.name)%></div>
-                        <div class="file-desc"><%=pcdata(file.desc or '')%></div>
-                        <div class="file-size">
-                            <% if file.size then %>
-                                <%=file.size%>
-                            <% elseif file.type == "url" then %>
-                                链接跳转
-                            <% end %>
-                        </div>
-                    </div>
-                    <div class="file-action">
-                        <% if file.type == "url" then %>
-                            <a href="<%=pcdata(file.url)%>" target="_blank" rel="noopener noreferrer" class="action-btn visit-btn">访问</a>
-                        <% else %>
-                            <button class="action-btn download-btn" onclick="downloadFile('<%=pcdata(file.url)%>', '<%=pcdata(file.name)%>')">下载</button>
-                        <% end %>
-                    </div>
-                </div>
-                <% end %>
-            </div>
-            <div class="carousel-controls">
-                <button class="carousel-btn prev-btn" onclick="slideCarousel(-1)">◀</button>
-                <span class="carousel-indicator" id="carousel-indicator">1 / 1</span>
-                <button class="carousel-btn next-btn" onclick="slideCarousel(1)">▶</button>
-            </div>
-        </div>
-        <% else %>
-        <div class="carousel">
-            <% for i = 0, 2 do %><img src="/luci-static/banner/bg<%=i%>.jpg?t=<%=os.time()%>" alt="BG <%=i+1%>" loading="lazy"><% end %>
-        </div>
-        <% end %>
-        
-        <div class="banner-contacts">
-            <div class="contact-card"><div class="contact-info"><span>📧 邮箱</span><strong><%=contact_email%></strong></div><button class="copy-btn" onclick="copyText('<%=contact_email%>')">复制</button></div>
-            <div class="contact-card"><div class="contact-info"><span>📱 Telegram</span><strong><%=contact_telegram%></strong></div><button class="copy-btn" onclick="copyText('<%=contact_telegram%>')">复制</button></div>
-            <div class="contact-card"><div class="contact-info"><span>💬 QQ</span><strong><%=contact_qq%></strong></div><button class="copy-btn" onclick="copyText('<%=contact_qq%>')">复制</button></div>
-        </div>
-
-        <% if nav_data and nav_data.nav_tabs then %>
-        <div class="nav-section">
-            <h3>🚀 快速导航</h3>
-            <div class="nav-groups" id="nav-groups">
-                <% for i, tab in ipairs(nav_data.nav_tabs) do %>
-                <div class="nav-group" data-page="<%=math.ceil(i/4)%>" style="display:none">
-                    <div class="nav-group-title" onclick="toggleLinks(this.parentElement)">
-                        <% if tab.icon then %><img src="<%=pcdata(tab.icon)%>"><% end %>
-                        <%=pcdata(tab.title)%>
-                    </div>
-                    <div class="nav-links">
-                        <% for _, link in ipairs(tab.links) do %>
-                        <a href="<%=pcdata(link.url)%>" target="_blank" rel="noopener noreferrer" title="<%=pcdata(link.desc or '')%>"><%=pcdata(link.name)%></a>
-                        <% end %>
-                    </div>
-                </div>
-                <% end %>
-            </div>
-            <div class="pagination">
-                <button onclick="changePage(-1)">◀</button>
-                <span id="page-info" style="color:white;vertical-align:middle;margin:0 10px;"></span>
-                <button onclick="changePage(1)">▶</button>
-            </div>
-        </div>
-        <% end %>
-    </div>
-    
-    <div class="bg-selector">
-        <% for i = 0, 2 do %>
-        <div class="bg-circle" style="background-image:url(/luci-static/banner/bg<%=i%>.jpg?t=<%=os.time()%>)" onclick="changeBg(<%=i%>)" title="切换背景 <%=i+1%>"></div>
-        <% end %>
-    </div>
-<% end %>
-
-<script type="text/javascript">
-var images = document.querySelectorAll('.carousel img'), current = 0;
-function showImage(index) { images.forEach(function(img, i) { img.classList.toggle('active', i === index); }); }
-if (images.length > 1) { showImage(current); setInterval(function() { current = (current + 1) % images.length; showImage(current); }, <%=carousel_interval or 5000%>); } else if (images.length > 0) { showImage(0); }
-
-var bannerTexts = '<%=luci.util.pcdata(banner_texts)%>'.split('|').filter(Boolean), textIndex = 0;
-if (bannerTexts.length > 1) {
-    var textElem = document.getElementById('banner-text');
-    if (textElem) {
-        setInterval(function() {
-            textIndex = (textIndex + 1) % bannerTexts.length;
-            textElem.style.opacity = 0;
-            setTimeout(function() { textElem.textContent = bannerTexts[textIndex]; textElem.style.opacity = 1; }, 300);
-        }, <%=carousel_interval or 5000%>);
-    }
-}
-
-<% if nav_data and nav_data.nav_tabs then %>
-var currentPage = 1, totalPages = <%=math.ceil(#nav_data.nav_tabs/4)%>;
-function changePage(delta) { currentPage = Math.max(1, Math.min(totalPages, currentPage + delta)); showPage(currentPage); }
-function showPage(page) {
-    document.querySelectorAll('.nav-group').forEach(function(g) { g.style.display = g.dataset.page == page ? 'block' : 'none'; });
-    document.getElementById('page-info').textContent = page + ' / ' + totalPages;
-    var btns = document.querySelectorAll('.pagination button');
-    btns[0].disabled = page === 1; btns[1].disabled = page === totalPages;
-}
-showPage(1);
-<% end %>
-
-function toggleLinks(el) { 
-    if (window.innerWidth <= 768) {
-        el.querySelector('.nav-links').classList.toggle('active'); 
-    }
-}
-
-function changeBg(n) {
-    var formData = new URLSearchParams();
-    formData.append('token', '<%=token%>');
-    formData.append('bg', n);
-    
-    fetch('<%=luci.dispatcher.build_url("admin/status/banner/api_set_bg")%>', {
-        method: 'POST',
-        body: formData
-    })
-    .then(response => response.json())
-    .then(result => {
-        if (result.success) {
-            // 直接刷新页面应用新背景
-            window.location.reload();
-        } else {
-            alert('切换失败: ' + result.message);
-        }
-    })
-    .catch(error => {
-        alert('请求失败: ' + error);
-    });
-}
-
-function copyText(text) {
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(text).then(function() { 
-            alert('✓ 已复制: ' + text); 
-        }).catch(function() { 
-            fallbackCopy(text); 
-        });
-    } else {
-        fallbackCopy(text);
-    }
-}
-
-function fallbackCopy(text) {
-    var textarea = document.createElement('textarea');
-    textarea.value = text;
-    textarea.style.position = 'fixed';
-    textarea.style.left = '-9999px';
-    document.body.appendChild(textarea);
-    textarea.select();
-    try {
-        var success = document.execCommand('copy');
-        alert(success ? '✓ 已复制: ' + text : '✗ 复制失败,请手动复制');
-    } catch(e) {
-        alert('✗ 复制失败: ' + text);
-    }
-    document.body.removeChild(textarea);
-}
-// 文件轮播功能
-var carouselIndex = 0;
-var carouselItems = document.querySelectorAll('.file-card').length;
-var carouselItemsPerView = window.innerWidth > 1024 ? 3 : (window.innerWidth > 768 ? 2 : 1);
-
-function slideCarousel(direction) {
-    var track = document.getElementById('carousel-track');
-    var indicator = document.getElementById('carousel-indicator');
-    if (!track || !indicator) return;
-    
-    carouselIndex += direction;
-    var maxIndex = Math.ceil(carouselItems / carouselItemsPerView) - 1;
-    
-    if (carouselIndex < 0) carouselIndex = 0;
-    if (carouselIndex > maxIndex) carouselIndex = maxIndex;
-    
-    var cardWidth = track.querySelector('.file-card').offsetWidth;
-    var gap = 15;
-    var offset = -(carouselIndex * carouselItemsPerView * (cardWidth + gap));
-    track.style.transform = 'translateX(' + offset + 'px)';
-    
-    indicator.textContent = (carouselIndex + 1) + ' / ' + (maxIndex + 1);
-    
-    document.querySelector('.prev-btn').disabled = (carouselIndex === 0);
-    document.querySelector('.next-btn').disabled = (carouselIndex === maxIndex);
-}
-
-// 自动轮播
-if (carouselItems > carouselItemsPerView) {
-    setInterval(function() {
-        var maxIndex = Math.ceil(carouselItems / carouselItemsPerView) - 1;
-        if (carouselIndex >= maxIndex) {
-            carouselIndex = -1;
-        }
-        slideCarousel(1);
-    }, 5000);
-}
-
-// 下载文件函数
-function downloadFile(url, filename) {
-    // 显示下载提示
-    var loadingMsg = document.createElement('div');
-    loadingMsg.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:rgba(0,0,0,.8);color:#fff;padding:20px 40px;border-radius:10px;z-index:9999;font-weight:700;';
-    loadingMsg.textContent = '正在下载 ' + filename + '...';
-    document.body.appendChild(loadingMsg);
-    
-    // 创建隐藏的下载链接
-    var link = document.createElement('a');
-    link.href = url;
-    link.download = filename;
-    link.style.display = 'none';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    
-    // 2秒后移除提示
-    setTimeout(function() {
-        document.body.removeChild(loadingMsg);
-    }, 2000);
-}
-
-// 响应式调整
-window.addEventListener('resize', function() {
-    carouselItemsPerView = window.innerWidth > 1024 ? 3 : (window.innerWidth > 768 ? 2 : 1);
-    carouselIndex = 0;
-    slideCarousel(0);
-});
-
-// 初始化
-if (document.querySelector('.file-carousel')) {
-    slideCarousel(0);
-}
-</script>
-<%+footer%>
-DISPLAYVIEW
-# =================== 核心修正 #2：替換 settings.htm (再次確認為完整版) ===================
-cat > "$PKG_DIR/root/usr/lib/lua/luci/view/banner/settings.htm" <<'SETTINGSVIEW'
-<%+header%>
-<%+banner/global_style%>
-<style>
-.toggle-switch { position: relative; display: inline-block; width: 50px; height: 24px; }
-.toggle-switch input { opacity: 0; width: 0; height: 0; }
-.toggle-slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: rgba(200,200,200,.5); transition: .4s; border-radius: 24px; }
-.toggle-slider:before { position: absolute; content: ""; height: 18px; width: 18px; left: 3px; bottom: 3px; background-color: #fff; transition: .4s; border-radius: 50%; }
-input:checked + .toggle-slider { background-color: rgba(76,175,80,.9); }
-input:checked + .toggle-slider:before { transform: translateX(26px); }
-.cbi-button.spinning, .cbi-button:disabled { pointer-events: none; background: #ccc !important; cursor: not-allowed; }
-.cbi-button.spinning:after { content: '...'; display: inline-block; animation: spin 1s linear infinite; }
-@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
-</style>
 <div class="cbi-map">
-    <h2>远程更新设置</h2>
-    <div class="cbi-section-node">
-        <% if remote_message and remote_message ~= "" then %>
-        <div style="background:rgba(217,83,79,.8);color:#fff;padding:15px;border-radius:10px;margin-bottom:20px;text-align:center"><%=pcdata(remote_message)%></div>
-        <% end %>
-        <div class="cbi-value"><label class="cbi-value-title">背景透明度</label><div class="cbi-value-field">
-            <div style="display:flex;align-items:center;gap:10px;">
-                <input type="range" name="opacity" min="0" max="100" value="<%=opacity%>" id="opacity-slider" style="width:60%" onchange="apiCall('api_set_opacity', {opacity: this.value})">
-                <span id="opacity-display" style="color:#fff;"><%=opacity%>%</span>
-            </div>
-        </div></div>
-        <div class="cbi-value"><label class="cbi-value-title">永久存储背景</label><div class="cbi-value-field">
-            <label class="toggle-switch"><input type="checkbox" id="persistent-checkbox" <%=persistent_storage=='1' and ' checked'%> onchange="apiCall('api_set_persistent_storage', {persistent_storage: this.checked ? '1' : '0'})"><span class="toggle-slider"></span></label>
-            <span id="persistent-text" style="color:#fff;vertical-align:super;margin-left:10px;"><%=persistent_storage=='1' and '已启用' or '已禁用'%></span>
-        </div></div>
-        <div class="cbi-value"><label class="cbi-value-title">轮播间隔(毫秒)</label><div class="cbi-value-field">
-            <input type="number" name="carousel_interval" value="<%=carousel_interval%>" min="1000" max="30000" style="width:100px">
-            <button class="cbi-button" onclick="apiCall('api_set_carousel_interval', {carousel_interval: this.previousElementSibling.value}, false, this)">应用</button>
-        </div></div>
-        <div class="cbi-value"><label class="cbi-value-title">更新源</label><div class="cbi-value-field">
-            <select name="selected_url"><% for _, item in ipairs(display_urls) do %><option value="<%=item.value%>"<%=item.value==selected_url and ' selected'%>><%=item.display%></option><% end %></select>
-            <button class="cbi-button" onclick="apiCall('api_set_update_url', {selected_url: this.previousElementSibling.value}, false, this)">选择</button>
-        </div></div>
-        <div class="cbi-value"><label class="cbi-value-title">上次更新</label><div class="cbi-value-field"><input readonly value="<%=last_update=='0' and '从未' or os.date('%Y-%m-%d %H:%M:%S', tonumber(last_update))%>"></div></div>
-        <div class="cbi-value"><div class="cbi-value-field">
-            <button class="cbi-button" id="manual-update-btn" onclick="apiCall('api_update', {}, true, this)">立即手动更新</button>
-        </div></div>
-        <div class="cbi-value"><label class="cbi-value-title">恢复默认配置</label><div class="cbi-value-field">
-            <button class="cbi-button cbi-button-reset" onclick="if(confirm('确定要恢复默认配置吗？')) apiCall('api_reset_defaults', {}, true, this)">恢复默认值</button>
-        </div></div>
-        <h3>更新日志</h3><div style="background:rgba(0,0,0,.5);padding:12px;border-radius:8px;max-height:250px;overflow-y:auto;font-family:monospace;font-size:12px;color:#0f0;white-space:pre-wrap" id="log-container"><%=pcdata(log)%></div>
-    </div>
-</div>
-<script type="text/javascript">
-    // 统一的 API 调用函数
-    function apiCall(endpoint, data, reloadOnSuccess, btn) {
-        if (btn) btn.classList.add('spinning');
-
-        var formData = new URLSearchParams();
-        formData.append('token', '<%=token%>');
-        for (var key in data) {
-            formData.append(key, data[key]);
-        }
-
-        fetch('<%=luci.dispatcher.build_url("admin/status/banner")%>/' + endpoint, {
-            method: 'POST',
-            body: formData
-        })
-        .then(response => {
-            if (!response.ok) { throw new Error('Network response was not ok: ' + response.statusText); }
-            return response.json();
-        })
-        .then(result => {
-            if (btn) btn.classList.remove('spinning');
-            alert(result.message || (result.success ? '操作成功' : '操作失败'));
-            if (result.success && reloadOnSuccess) {
-                // 延迟刷新，给后台留出足够的时间
-                setTimeout(function() { window.location.reload(); }, 1500);
-            }
-            // 修正点：收到成功响应后，立即更新UI，而不是依赖页面刷新
-            if (result.success && endpoint === 'api_set_persistent_storage') {
-                document.getElementById('persistent-text').textContent = data.persistent_storage === '1' ? '已启用' : '已禁用';
-                document.getElementById('persistent-checkbox').checked = (data.persistent_storage === '1');
-            }
-        })
-        .catch(error => {
-            if (btn) btn.classList.remove('spinning');
-            alert('请求失败: ' + error);
-        });
-    }
-
-</script>
-<% 
-local uci = require("uci").cursor()
-local bg_enabled = uci:get("banner", "banner", "bg_enabled") or "1"
-if bg_enabled == "1" then 
-%>
-<style>
-.bg-selector { position: fixed; bottom: 30px; right: 30px; display: flex; gap: 12px; z-index: 999; }
-.bg-circle { width: 50px; height: 50px; border-radius: 50%; border: 3px solid rgba(255,255,255,.8); background-size: cover; cursor: pointer; transition: all .3s; }
-.bg-circle:hover { transform: scale(1.15); border-color: #4fc3f7; }
-@media (max-width: 768px) {
-    .bg-selector { bottom: 15px; right: 15px; gap: 8px; }
-    .bg-circle { width: 40px; height: 40px; }
-}
-</style>
-<div class="bg-selector">
-    <% for i = 0, 2 do %>
-    <div class="bg-circle" style="background-image:url(/luci-static/banner/bg<%=i%>.jpg?t=<%=os.time()%>)" onclick="changeBgSettings(<%=i%>)" title="切换背景 <%=i+1%>"></div>
-    <% end %>
-</div>
-<script>
-function changeBgSettings(n) {
-    var formData = new URLSearchParams();
-    formData.append('token', '<%=token%>');
-    formData.append('bg', n);
-    
-    fetch('<%=luci.dispatcher.build_url("admin/status/banner/api_set_bg")%>', {
-        method: 'POST',
-        body: formData
-    })
-    .then(response => response.json())
-    .then(result => {
-        if (result.success) {
-            window.location.reload();
-        } else {
-            alert('切换失败: ' + result.message);
-        }
-    })
-    .catch(error => {
-        alert('请求失败: ' + error);
-    });
-}
-</script>
-<% end %>
-<%+footer%>
-SETTINGSVIEW
-
-# =================== 核心修正 #3：替換 background.htm (完整版) ===================
-cat > "$PKG_DIR/root/usr/lib/lua/luci/view/banner/background.htm" <<'BGVIEW'
-<%+header%>
-<%+banner/global_style%>
-<style>
-.loading-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,.8); display: none; justify-content: center; align-items: center; z-index: 9999; }
-.loading-overlay.active { display: flex; }
-.spinner { border: 4px solid rgba(255, 255, 255, 0.3); border-top-color: #4fc3f7; border-radius: 50%; width: 50px; height: 50px; margin: 0 auto 20px; animation: spin 1.2s cubic-bezier(0.65, 0, 0.35, 1) infinite; }
-@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-.cbi-button.spinning, .cbi-button:disabled { pointer-events: none; background: #ccc !important; cursor: not-allowed; }
-.cbi-button.spinning:after { content: '...'; display: inline-block; animation: spin 1s linear infinite; }
-</style>
-<div class="loading-overlay" id="loadingOverlay"><div style="text-align:center;color:#fff"><div class="spinner"></div><p>正在处理，请稍候...</p></div></div>
-<div class="cbi-map">
-    <h2>背景图设置</h2>
-    <div class="cbi-section-node">
-        <div class="cbi-value"><label class="cbi-value-title">选择背景图组</label><div class="cbi-value-field">
-            <select name="group">
-                <% for i = 1, 4 do %><option value="<%=i%>"<%=bg_group==tostring(i) and ' selected'%>><%=i..'-'..i*3%></option><% end %>
-            </select>
-            <button class="cbi-button" onclick="apiCall('api_load_group', {group: this.previousElementSibling.value}, true, this)">加载背景组</button>
-        </div></div>
-                <div class="cbi-value">
-            <label class="cbi-value-title">横幅字体颜色</label>
-            <div class="cbi-value-field" style="display: flex; align-items: center; gap: 10px;">
-                <input type="color" id="font_color_picker" value="<%=luci.util.pcdata(font_color)%>" style="height: 35px; width: 60px; padding: 2px; border-radius: 5px; cursor: pointer; border: 1px solid rgba(255,255,255,.3);">
-                <input type="text" id="font_color_text" value="<%=luci.util.pcdata(font_color)%>" style="width: 100px; text-transform: uppercase;" maxlength="7" pattern="^#[A-Fa-f0-9]{6}$">
-                <button class="cbi-button" onclick="applyFontColor(this)">应用颜色</button>
-            </div>
-            <p style="color:#aaa;font-size:12px">🎨 选择的颜色将应用于所有页面的横幅文字</p>
+    <div class="cbi-section-descr">
+        <div class="banner-hero" id="banner-hero">
+            <div class="banner-text" id="banner-text"></div>
         </div>
 
-        <div class="cbi-value"><label class="cbi-value-title">手动填写背景图链接</label><div class="cbi-value-field">
-            <form id="customBgForm" method="post" action="<%=luci.dispatcher.build_url('admin/status/banner/do_apply_url')%>">
-                <input name="token" type="hidden" value="<%=token%>">
-                <input type="text" name="custom_bg_url" placeholder="https://..." style="width:70%">
-                <input type="submit" class="cbi-button" value="应用链接">
-            </form>
-            <p style="color:#aaa;font-size:12px">📌 仅支持 HTTPS JPG/JPEG 链接 (小于3MB ), 应用后覆盖 bg0.jpg</p>
-        </div></div>
-        <div class="cbi-value"><label class="cbi-value-title">从本地上传背景图</label><div class="cbi-value-field">
-            <form method="post" action="<%=luci.dispatcher.build_url('admin/status/banner/do_upload_bg')%>" enctype="multipart/form-data" id="uploadForm">
-                <input name="token" type="hidden" value="<%=token%>">
-                <select name="bg_index" style="width:80px;margin-right:10px;"><option value="0">bg0.jpg</option><option value="1">bg1.jpg</option><option value="2">bg2.jpg</option></select>
-                <input type="file" name="bg_file" accept="image/jpeg" required>
-                <input type="submit" class="cbi-button" value="上传并应用">
-            </form>
-            <p style="color:#aaa;font-size:12px">📤 支持上传3张 JPG (小于3MB), 选择要替换的背景编号,上传后立即生效</p>
-        </div></div>
-        <div class="cbi-value"><label class="cbi-value-title">删除缓存图片</label><div class="cbi-value-field">
-            <button class="cbi-button cbi-button-remove" onclick="apiCall('api_clear_cache', {}, true, this)">删除缓存</button>
-        </div></div>
-        <h3>背景日志</h3>
-        <div style="background:rgba(0,0,0,.5);padding:12px;border-radius:8px;max-height:250px;overflow-y:auto;font-family:monospace;font-size:12px;color:#0f0;white-space:pre-wrap"><%=pcdata(log)%></div>
-    </div>
-</div>
-<script type="text/javascript">
+        <div class="section-title"><%=translate("Contact Information")%></div>
+        <div class="contact-card" id="contact-card"></div>
 
+        <div class="section-title"><%=translate("Carousel Content")%></div>
+        <div class="carousel-container">
+            <div id="carousel-items"></div>
+            <div class="carousel-dots" id="carousel-dots"></div>
+        </div>
 
-    // 本地表单验证 (保持不变)
-    document.getElementById('customBgForm').addEventListener('submit', function(e) {
-        var url = this.custom_bg_url.value.trim();
-        if (!url.match(/^https:\/\/.*\.jpe?g$/i  )) {
-            e.preventDefault();
-            alert('⚠️ 格式錯誤！請確保鏈接以 https:// 開頭  ，並以 .jpg 或 .jpeg 結尾。');
-        }
-    });
-    function applyFontColor(btn) {
-        var colorValue = document.getElementById('font_color_text').value.trim().toUpperCase();
-        if (!colorValue.match(/^#[A-Fa-f0-9]{6}$/)) {
-            alert('⚠️ 请输入有效的颜色值（如 #FFFFFF）');
-            return;
-        }
-        apiCall('api_set_font_color', { font_color: colorValue }, true, btn);
-    }
+        <div class="section-title"><%=translate("Quick Navigation")%></div>
+        <div class="quick-nav-group-container" id="quick-nav-group-container"></div>
 
-    document.addEventListener('DOMContentLoaded', function() {
-        var colorPicker = document.getElementById('font_color_picker');
-        var colorText = document.getElementById('font_color_text');
-        if (colorPicker && colorText) {
-            colorPicker.addEventListener('input', function() {
-                colorText.value = this.value.toUpperCase();
+        <script type="text/javascript" src="<%=resource%>/luci-static/banner/overview.js"></script>
+        <script type="text/javascript">
+            // Initial load of banner data
+            document.addEventListener('DOMContentLoaded', function() {
+                loadBannerData();
+                loadContactInfo();
+                loadCarouselItems();
+                loadQuickNavGroups();
             });
-            colorText.addEventListener('input', function() {
-                var val = this.value.trim();
-                if (val.match(/^#[A-Fa-f0-9]{6}$/)) {
-                    colorPicker.value = val;
+
+            // Function to load banner data (text, color, opacity)
+            function loadBannerData() {
+                XHR.poll(5, '<%=luci.dispatcher.build_url("admin", "system", "banner", "overview")%>', null, function(xhr, data) {
+                    var bannerText = data.banner_text || '<%=pcdata(luci.model.uci.cursor():get("banner", "banner", "text") or "")%>';
+                    var bannerColor = data.banner_color || '<%=pcdata(luci.model.uci.cursor():get("banner", "banner", "color") or "rainbow")%>';
+                    var bannerOpacity = data.banner_opacity || '<%=pcdata(luci.model.uci.cursor():get("banner", "banner", "opacity") or "50")%>';
+                    var bgEnabled = data.bg_enabled || '<%=pcdata(luci.model.uci.cursor():get("banner", "banner", "bg_enabled") or "0")%>';
+
+                    var bannerHero = document.getElementById('banner-hero');
+                    var bannerTextElement = document.getElementById('banner-text');
+
+                    bannerTextElement.textContent = bannerText;
+                    bannerTextElement.className = 'banner-text ' + bannerColor;
+
+                    if (bgEnabled === '1') {
+                        bannerHero.style.backgroundColor = 'rgba(0, 0, 0, ' + (bannerOpacity / 100) + ')';
+                        // Background image is handled by CSS and current_bg.jpg
+                    } else {
+                        bannerHero.style.backgroundColor = 'rgba(0, 0, 0, 0.5)'; // Default if disabled
+                        bannerHero.style.backgroundImage = 'none';
+                    }
+                });
+            }
+
+            // Function to load contact information
+            function loadContactInfo() {
+                XHR.get('<%=luci.dispatcher.build_url("admin", "system", "banner", "get_contacts")%>', null, function(xhr, contacts) {
+                    var contactCard = document.getElementById('contact-card');
+                    contactCard.innerHTML = ''; // Clear existing contacts
+
+                    if (contacts && contacts.length > 0) {
+                        contacts.forEach(function(contact) {
+                            var item = document.createElement('div');
+                            item.className = 'contact-item';
+                            item.setAttribute('data-value', contact.value);
+                            item.innerHTML = '<i class="' + contact.icon + '"></i><span>' + contact.label + ': ' + contact.value + '</span>';
+                            item.onclick = function() {
+                                copyToClipboard(contact.value, item);
+                            };
+                            contactCard.appendChild(item);
+                        });
+                    } else {
+                        contactCard.innerHTML = '<p style="color: white;"><%=translate("No contact information available.")%></p>';
+                    }
+                });
+            }
+
+            // Function to load carousel items
+            var currentCarouselIndex = 0;
+            var carouselInterval;
+            function loadCarouselItems() {
+                XHR.get('<%=luci.dispatcher.build_url("admin", "system", "banner", "get_carousel_items")%>', null, function(xhr, items) {
+                    var carouselContainer = document.getElementById('carousel-items');
+                    var carouselDots = document.getElementById('carousel-dots');
+                    carouselContainer.innerHTML = '';
+                    carouselDots.innerHTML = '';
+
+                    if (carouselInterval) {
+                        clearInterval(carouselInterval);
+                    }
+
+                    if (items && items.length > 0) {
+                        items.forEach(function(item, index) {
+                            var div = document.createElement('div');
+                            div.className = 'carousel-item';
+                            div.textContent = item.content;
+                            carouselContainer.appendChild(div);
+
+                            var dot = document.createElement('span');
+                            dot.className = 'carousel-dot';
+                            dot.setAttribute('data-index', index);
+                            dot.onclick = function() {
+                                showCarouselItem(index, items.length);
+                                resetCarouselInterval(items.length);
+                            };
+                            carouselDots.appendChild(dot);
+                        });
+
+                        showCarouselItem(currentCarouselIndex, items.length);
+                        resetCarouselInterval(items.length);
+                    } else {
+                        carouselContainer.innerHTML = '<p style="color: white;"><%=translate("No carousel content available.")%></p>';
+                    }
+                });
+            }
+
+            function showCarouselItem(index, totalItems) {
+                var items = document.querySelectorAll('#carousel-items .carousel-item');
+                var dots = document.querySelectorAll('#carousel-dots .carousel-dot');
+
+                items.forEach(function(item, i) {
+                    if (i === index) {
+                        item.classList.add('active');
+                    } else {
+                        item.classList.remove('active');
+                    }
+                });
+
+                dots.forEach(function(dot, i) {
+                    if (i === index) {
+                        dot.classList.add('active');
+                    } else {
+                        dot.classList.remove('active');
+                    }
+                });
+                currentCarouselIndex = index;
+            }
+
+            function resetCarouselInterval(totalItems) {
+                if (carouselInterval) {
+                    clearInterval(carouselInterval);
+                }
+                var interval = parseInt('<%=pcdata(luci.model.uci.cursor():get("banner", "banner", "carousel_interval") or "5000")%>');
+                if (totalItems > 1 && interval > 0) {
+                    carouselInterval = setInterval(function() {
+                        currentCarouselIndex = (currentCarouselIndex + 1) % totalItems;
+                        showCarouselItem(currentCarouselIndex, totalItems);
+                    }, interval);
+                }
+            }
+
+            // Function to load quick navigation groups
+            function loadQuickNavGroups() {
+                XHR.get('<%=luci.dispatcher.build_url("admin", "system", "banner", "get_quick_nav_groups")%>', null, function(xhr, groups) {
+                    var quickNavGroupContainer = document.getElementById('quick-nav-group-container');
+                    quickNavGroupContainer.innerHTML = ''; // Clear existing groups
+
+                    if (groups && groups.length > 0) {
+                        groups.forEach(function(group) {
+                            var item = document.createElement('div');
+                            item.className = 'quick-nav-group-item';
+                            item.textContent = group.name;
+                            item.onclick = function() {
+                                // Navigate to a new page for welfare share, passing group ID or name
+                                window.location.href = '<%=luci.dispatcher.build_url("admin", "system", "banner", "welfare")%>?group=' + encodeURIComponent(group.id || group.name);
+                            };
+                            quickNavGroupContainer.appendChild(item);
+                        });
+                    } else {
+                        quickNavGroupContainer.innerHTML = '<p style="color: white;"><%=translate("No quick navigation groups available.")%></p>';
+                    }
+                });
+            }
+
+            // Copy to clipboard function with tooltip
+            function copyToClipboard(text, element) {
+                var textarea = document.createElement('textarea');
+                textarea.value = text;
+                document.body.appendChild(textarea);
+                textarea.select();
+                document.execCommand('copy');
+                document.body.removeChild(textarea);
+
+                var tooltip = document.createElement('div');
+                tooltip.className = 'copy-tooltip';
+                tooltip.textContent = '<%=translate("Copied!")%>';
+                element.appendChild(tooltip);
+
+                var rect = element.getBoundingClientRect();
+                tooltip.style.left = (rect.width / 2) + 'px';
+                tooltip.style.top = '-30px';
+                tooltip.style.transform = 'translateX(-50%)';
+
+                tooltip.style.opacity = '1';
+                setTimeout(function() {
+                    tooltip.style.opacity = '0';
+                    setTimeout(function() {
+                        element.removeChild(tooltip);
+                    }, 300);
+                }, 1500);
+            }
+
+            // Function to handle auto-refresh after update
+            function handleAutoRefresh(actionType) {
+                var message = (actionType === 'update') ? '<%=translate("Update initiated, refreshing page...")%>' : '<%=translate("Background update initiated, refreshing page...")%>';
+                alert(message); // Use a simple alert for now, can be replaced with a more elegant UI notification
+                setTimeout(function() {
+                    location.reload();
+                }, 2000); // Refresh after 2 seconds
+            }
+
+            // Override XHR.poll to handle auto-refresh for update actions
+            var originalXHRPoll = XHR.poll;
+            XHR.poll = function(interval, url, data, callback) {
+                if (url.includes('do_update') || url.includes('do_bg_update')) {
+                    return originalXHRPoll(interval, url, data, function(xhr, response) {
+                        callback(xhr, response);
+                        if (response && response.status) {
+                            handleAutoRefresh(url.includes('do_update') ? 'update' : 'bg_update');
+                        }
+                    });
+                } else {
+                    return originalXHRPoll(interval, url, data, callback);
+                }
+            };
+
+        </script>
+    </div>
+</div>
+<%+footer%>
+OVERVIEWHTML
+
+# Welfare View (New Page for Quick Navigation Links)
+cat > "$PKG_DIR/root/usr/lib/lua/luci/view/banner/welfare.htm" <<\'WELFAREHTML\'
+<%+header%>
+<style type="text/css">
+    .welfare-container {
+        max-width: 1200px;
+        margin: 20px auto;
+        padding: 20px;
+        background-color: rgba(0, 0, 0, 0.6);
+        border-radius: 8px;
+        color: white;
+    }
+    .welfare-title {
+        font-size: 2em;
+        text-align: center;
+        margin-bottom: 20px;
+        color: #4CAF50; /* Green color for welfare */
+    }
+    .nav-group-title {
+        font-size: 1.5em;
+        margin-top: 30px;
+        margin-bottom: 15px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.3);
+        padding-bottom: 5px;
+    }
+    .nav-links-container {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 15px;
+    }
+    .nav-link-item {
+        background: linear-gradient(135deg, #6a11cb 0%, #2575fc 100%); /* Gradient background */
+        padding: 15px 20px;
+        border-radius: 10px;
+        text-align: center;
+        color: white;
+        text-decoration: none;
+        font-weight: bold;
+        transition: all 0.3s ease;
+        flex: 1 1 calc(33% - 30px); /* Three items per row, with gap */
+        box-sizing: border-box;
+        min-width: 180px; /* Minimum width for items */
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
+    }
+    .nav-link-item:hover {
+        transform: translateY(-5px) scale(1.02);
+        box-shadow: 0 6px 12px rgba(0, 0, 0, 0.5);
+        background: linear-gradient(135deg, #2575fc 0%, #6a11cb 100%); /* Reverse gradient on hover */
+    }
+    .nav-link-item i {
+        margin-right: 8px;
+        font-size: 1.2em;
+    }
+    /* Responsive adjustments */
+    @media (max-width: 768px) {
+        .nav-link-item {
+            flex: 1 1 calc(50% - 15px); /* Two items per row on medium screens */
+        }
+    }
+    @media (max-width: 480px) {
+        .nav-link-item {
+            flex: 1 1 100%; /* One item per row on small screens */
+        }
+    }
+</style>
+
+<div class="welfare-container">
+    <h2 class="welfare-title"><%=translate("Welfare Share - Quick Navigation")%></h2>
+
+    <div id="welfare-content"></div>
+
+    <script type="text/javascript">
+        document.addEventListener('DOMContentLoaded', function() {
+            loadWelfareContent();
+        });
+
+        function loadWelfareContent() {
+            XHR.get('<%=luci.dispatcher.build_url("admin", "system", "banner", "get_quick_nav_groups")%>', null, function(xhr, groups) {
+                var welfareContent = document.getElementById('welfare-content');
+                welfareContent.innerHTML = '';
+
+                if (groups && groups.length > 0) {
+                    groups.forEach(function(group) {
+                        var groupDiv = document.createElement('div');
+                        groupDiv.className = 'nav-group';
+                        groupDiv.innerHTML = '<h3 class="nav-group-title">' + group.name + '</h3>';
+
+                        var linksContainer = document.createElement('div');
+                        linksContainer.className = 'nav-links-container';
+
+                        if (group.links && group.links.length > 0) {
+                            group.links.forEach(function(link) {
+                                var linkItem = document.createElement('a');
+                                linkItem.className = 'nav-link-item';
+                                linkItem.href = link.url;
+                                linkItem.target = '_blank'; // Open in new tab
+                                linkItem.rel = 'noopener noreferrer';
+                                linkItem.innerHTML = (link.icon ? '<i class="' + link.icon + '"></i>' : '') + link.label;
+                                linksContainer.appendChild(linkItem);
+                            });
+                        } else {
+                            linksContainer.innerHTML = '<p><%=translate("No links available for this group.")%></p>';
+                        }
+                        groupDiv.appendChild(linksContainer);
+                        welfareContent.appendChild(groupDiv);
+                    });
+                } else {
+                    welfareContent.innerHTML = '<p><%=translate("No quick navigation groups available.")%></p>';
                 }
             });
         }
-    });
-    document.getElementById('uploadForm').addEventListener('submit', function(e) {
-        var file = this.bg_file.files[0];
-        if (!file) {
-            e.preventDefault();
-            alert('⚠️ 请选择文件');
-            return;
-        }
-        if (file.size > 3145728) {
-            e.preventDefault();
-            alert('⚠️ 文件大小不能超过 3MB');
-            return;
-        }
-        if (!file.type.match('image/jpeg') && !file.name.match(/\.jpe?g$/i)) {
-            e.preventDefault();
-            alert('⚠️ 仅支持 JPG/JPEG 格式');
-        }
-    });
-</script>
-
-<% 
-local uci = require("uci").cursor()
-local bg_enabled = uci:get("banner", "banner", "bg_enabled") or "1"
-if bg_enabled == "1" then 
-%>
-<style>
-.bg-selector { position: fixed; bottom: 30px; right: 30px; display: flex; gap: 12px; z-index: 999; }
-.bg-circle { width: 50px; height: 50px; border-radius: 50%; border: 3px solid rgba(255,255,255,.8); background-size: cover; cursor: pointer; transition: all .3s; }
-.bg-circle:hover { transform: scale(1.15); border-color: #4fc3f7; }
-@media (max-width: 768px) {
-    .bg-selector { bottom: 15px; right: 15px; gap: 8px; }
-    .bg-circle { width: 40px; height: 40px; }
-}
-</style>
-<div class="bg-selector">
-    <% for i = 0, 2 do %>
-    <div class="bg-circle" style="background-image:url(/luci-static/banner/bg<%=i%>.jpg?t=<%=os.time()%>)" onclick="changeBgBackground(<%=i%>)" title="切换背景 <%=i+1%>"></div>
-    <% end %>
+    </script>
 </div>
-<script>
-function changeBgBackground(n) {
-    var formData = new URLSearchParams();
-    formData.append('token', '<%=token%>');
-    formData.append('bg', n);
-    
-    fetch('<%=luci.dispatcher.build_url("admin/status/banner/api_set_bg")%>', {
-        method: 'POST',
-        body: formData
-    })
-    .then(response => response.json())
-    .then(result => {
-        if (result.success) {
-            window.location.reload();
+<%+footer%>
+WELFAREHTML
+
+# Overview JS (Moved from inline script)
+cat > "$PKG_DIR/root/www/luci-static/banner/overview.js" <<\'OVERVIEWJS\'
+// This file contains JavaScript functions for the banner overview page.
+// It is loaded dynamically by overview.htm.
+
+// Function to load banner data (text, color, opacity)
+function loadBannerData() {
+    XHR.poll(5, '<%=luci.dispatcher.build_url("admin", "system", "banner", "overview")%>', null, function(xhr, data) {
+        var bannerText = data.banner_text || '<%=pcdata(luci.model.uci.cursor():get("banner", "banner", "text") or "")%>';
+        var bannerColor = data.banner_color || '<%=pcdata(luci.model.uci.cursor():get("banner", "banner", "color") or "rainbow")%>';
+        var bannerOpacity = data.banner_opacity || '<%=pcdata(luci.model.uci.cursor():get("banner", "banner", "opacity") or "50")%>';
+        var bgEnabled = data.bg_enabled || '<%=pcdata(luci.model.uci.cursor():get("banner", "banner", "bg_enabled") or "0")%>';
+
+        var bannerHero = document.getElementById('banner-hero');
+        var bannerTextElement = document.getElementById('banner-text');
+
+        bannerTextElement.textContent = bannerText;
+        bannerTextElement.className = 'banner-text ' + bannerColor;
+
+        if (bgEnabled === '1') {
+            bannerHero.style.backgroundColor = 'rgba(0, 0, 0, ' + (bannerOpacity / 100) + ')';
+            // Background image is handled by CSS and current_bg.jpg
         } else {
-            alert('切换失败: ' + result.message);
+            bannerHero.style.backgroundColor = 'rgba(0, 0, 0, 0.5)'; // Default if disabled
+            bannerHero.style.backgroundImage = 'none';
         }
-    })
-    .catch(error => {
-        alert('请求失败: ' + error);
     });
 }
-</script>
-<% end %>
+
+// Function to load contact information
+function loadContactInfo() {
+    XHR.get('<%=luci.dispatcher.build_url("admin", "system", "banner", "get_contacts")%>', null, function(xhr, contacts) {
+        var contactCard = document.getElementById('contact-card');
+        contactCard.innerHTML = ''; // Clear existing contacts
+
+        if (contacts && contacts.length > 0) {
+            contacts.forEach(function(contact) {
+                var item = document.createElement('div');
+                item.className = 'contact-item';
+                item.setAttribute('data-value', contact.value);
+                item.innerHTML = '<i class="' + contact.icon + '"></i><span>' + contact.label + ': ' + contact.value + '</span>';
+                item.onclick = function() {
+                    copyToClipboard(contact.value, item);
+                };
+                contactCard.appendChild(item);
+            });
+        } else {
+            contactCard.innerHTML = '<p style="color: white;"><%=translate("No contact information available.")%></p>';
+        }
+    });
+}
+
+// Function to load carousel items
+var currentCarouselIndex = 0;
+var carouselInterval;
+function loadCarouselItems() {
+    XHR.get('<%=luci.dispatcher.build_url("admin", "system", "banner", "get_carousel_items")%>', null, function(xhr, items) {
+        var carouselContainer = document.getElementById('carousel-items');
+        var carouselDots = document.getElementById('carousel-dots');
+        carouselContainer.innerHTML = '';
+        carouselDots.innerHTML = '';
+
+        if (carouselInterval) {
+            clearInterval(carouselInterval);
+        }
+
+        if (items && items.length > 0) {
+            items.forEach(function(item, index) {
+                var div = document.createElement('div');
+                div.className = 'carousel-item';
+                div.textContent = item.content;
+                carouselContainer.appendChild(div);
+
+                var dot = document.createElement('span');
+                dot.className = 'carousel-dot';
+                dot.setAttribute('data-index', index);
+                dot.onclick = function() {
+                    showCarouselItem(index, items.length);
+                    resetCarouselInterval(items.length);
+                };
+                carouselDots.appendChild(dot);
+            });
+
+            showCarouselItem(currentCarouselIndex, items.length);
+            resetCarouselInterval(items.length);
+        } else {
+            carouselContainer.innerHTML = '<p style="color: white;"><%=translate("No carousel content available.")%></p>';
+        }
+    });
+}
+
+function showCarouselItem(index, totalItems) {
+    var items = document.querySelectorAll('#carousel-items .carousel-item');
+    var dots = document.querySelectorAll('#carousel-dots .carousel-dot');
+
+    items.forEach(function(item, i) {
+        if (i === index) {
+            item.classList.add('active');
+        } else {
+            item.classList.remove('active');
+        }
+    });
+
+    dots.forEach(function(dot, i) {
+        if (i === index) {
+            dot.classList.add('active');
+        } else {
+            dot.classList.remove('active');
+        }
+    });
+    currentCarouselIndex = index;
+}
+
+function resetCarouselInterval(totalItems) {
+    if (carouselInterval) {
+        clearInterval(carouselInterval);
+    }
+    var interval = parseInt('<%=pcdata(luci.model.uci.cursor():get("banner", "banner", "carousel_interval") or "5000")%>');
+    if (totalItems > 1 && interval > 0) {
+        carouselInterval = setInterval(function() {
+            currentCarouselIndex = (currentCarouselIndex + 1) % totalItems;
+            showCarouselItem(currentCarouselIndex, totalItems);
+        }, interval);
+    }
+}
+
+// Function to load quick navigation groups
+function loadQuickNavGroups() {
+    XHR.get('<%=luci.dispatcher.build_url("admin", "system", "banner", "get_quick_nav_groups")%>', null, function(xhr, groups) {
+        var quickNavGroupContainer = document.getElementById('quick-nav-group-container');
+        quickNavGroupContainer.innerHTML = ''; // Clear existing groups
+
+        if (groups && groups.length > 0) {
+            groups.forEach(function(group) {
+                var item = document.createElement('div');
+                item.className = 'quick-nav-group-item';
+                item.textContent = group.name;
+                item.onclick = function() {
+                    // Navigate to a new page for welfare share, passing group ID or name
+                    window.location.href = '<%=luci.dispatcher.build_url("admin", "system", "banner", "welfare")%>?group=' + encodeURIComponent(group.id || group.name);
+                };
+                quickNavGroupContainer.appendChild(item);
+            });
+        } else {
+            quickNavGroupContainer.innerHTML = '<p style="color: white;"><%=translate("No quick navigation groups available.")%></p>';
+        }
+    });
+}
+
+// Copy to clipboard function with tooltip
+function copyToClipboard(text, element) {
+    var textarea = document.createElement('textarea');
+    textarea.value = text;
+    document.body.appendChild(textarea);
+    textarea.select();
+    document.execCommand('copy');
+    document.body.removeChild(textarea);
+
+    var tooltip = document.createElement('div');
+    tooltip.className = 'copy-tooltip';
+    tooltip.textContent = '<%=translate("Copied!")%>';
+    element.appendChild(tooltip);
+
+    var rect = element.getBoundingClientRect();
+    tooltip.style.left = (rect.width / 2) + 'px';
+    tooltip.style.top = '-30px';
+    tooltip.style.transform = 'translateX(-50%)';
+
+    tooltip.style.opacity = '1';
+    setTimeout(function() {
+        tooltip.style.opacity = '0';
+        setTimeout(function() {
+            element.removeChild(tooltip);
+        }, 300);
+    }, 1500);
+}
+
+// Function to handle auto-refresh after update
+function handleAutoRefresh(actionType) {
+    var message = (actionType === 'update') ? '<%=translate("Update initiated, refreshing page...")%>' : '<%=translate("Background update initiated, refreshing page...")%>';
+    alert(message); // Use a simple alert for now, can be replaced with a more elegant UI notification
+    setTimeout(function() {
+        location.reload();
+    }, 2000); // Refresh after 2 seconds
+}
+
+// Override XHR.poll to handle auto-refresh for update actions
+var originalXHRPoll = XHR.poll;
+XHR.poll = function(interval, url, data, callback) {
+    if (url.includes('do_update') || url.includes('do_bg_update')) {
+        return originalXHRPoll(interval, url, data, function(xhr, response) {
+            callback(xhr, response);
+            if (response && response.status) {
+                handleAutoRefresh(url.includes('do_update') ? 'update' : 'bg_update');
+            }
+        });
+    } else {
+        return originalXHRPoll(interval, url, data, callback);
+    }
+};
+
+// Initial load of banner data
+document.addEventListener('DOMContentLoaded', function() {
+    loadBannerData();
+    loadContactInfo();
+    loadCarouselItems();
+    loadQuickNavGroups();
+});
+OVERVIEWJS
+
+echo "[3/3] Generating LuCI views and controllers..."
+
+# Create the index.htm view file
+cat > "$PKG_DIR/root/usr/lib/lua/luci/view/banner/index.htm" <<\'INDEXHTML\'
+<%+header%>
+<div class="cbi-map">
+    <h2 name="content"><%=translate("Banner Plugin")%></h2>
+    <div class="cbi-section-descr">
+        <p><%=translate("This plugin allows you to display a customizable banner on your OpenWrt router's web interface.")%></p>
+        <p><%=translate("Use the tabs above to navigate between Overview, Settings, and Welfare Share.")%></p>
+    </div>
+</div>
 <%+footer%>
-BGVIEW
+INDEXHTML
 
-# Make scripts executable
-chmod +x "$PKG_DIR"/root/usr/bin/*.sh
-chmod +x "$PKG_DIR"/root/etc/init.d/banner
+
+echo "✓ LuCI views and controllers generated."
+
 
 echo "=========================================="
-echo "✓ Package luci-app-banner v2.7 (Final) Ready!"
+echo "OpenWrt Banner Plugin v2.7 Setup Complete!"
 echo "=========================================="
-echo "Package directory: $PKG_DIR"
-echo ""
-echo "All optimizations from v2.1 to v2.5 have been integrated."
-echo "This version is the most stable and compatible."
-echo ""
-echo "Compilation command:"
+
+echo "To install the package, navigate to your OpenWrt SDK/buildroot directory and run:"
 echo "  make package/custom/luci-app-banner/compile V=s"
-echo "=========================================="
+echo "Then install the generated .ipk file via LuCI or opkg."

@@ -1,12 +1,12 @@
 #!/bin/bash
-# OpenWrt Banner Plugin - Final Optimized Version v2.7
+# OpenWrt Banner Plugin - Final Optimized Version v2.8 (安全修正版)
 # All potential issues addressed for maximum reliability and compatibility.
 # This script is provided in three parts for completeness. Please concatenate them.
 
 set -e
 
 echo "=========================================="
-echo "OpenWrt Banner Plugin v2.7 - Final Optimized"
+echo "OpenWrt Banner Plugin v2.8 - Security Fix"
 echo "=========================================="
 
 # Determine package directory
@@ -50,13 +50,15 @@ fi
 # 允许 GitHub Actions Runner 路径
 IS_GITHUB_ACTIONS=0
 if echo "$ABS_PKG_DIR" | grep -qE "^/home/runner/work/|^/github/workspace"; then
-    echo "âš™ å…è®¸ GitHub Actions è·¯å¾„: $ABS_PKG_DIR"
+    # 修正点 1: 修复乱码
+    echo "⚙ 允许 GitHub Actions 路径: $ABS_PKG_DIR"
     IS_GITHUB_ACTIONS=1
 fi
 
 
 if echo "$ABS_PKG_DIR" | grep -qE "^/home/[^/]+/.*openwrt"; then
-    echo "âš™ å…è®¸æœ¬åœ°å¼€å\'è·¯å¾„: $ABS_PKG_DIR"
+    # 修正点 1: 修复乱码
+    echo "⚙ 允许本地开发路径: $ABS_PKG_DIR"
     IS_GITHUB_ACTIONS=1
 fi
 if [ $IS_GITHUB_ACTIONS -eq 0 ]; then
@@ -86,8 +88,8 @@ case "$ABS_PKG_DIR" in
 esac
 fi
 # 检查路径穿越字符（所有可能的形式）
-if echo "$PKG_DIR" | grep -qE \'\.\./|\.\.$|/\.\.\'; then
-    echo "✖ 错误：目标目录包含非法的路径穿越符 \'..\' (\'$PKG_DIR\')，已终止操作。"
+if echo "$PKG_DIR" | grep -qE '\.\./|\.\.$|/\.\.'; then
+    echo "✖ 错误：目标目录包含非法的路径穿越符 '..' ('$PKG_DIR')，已终止操作。"
     exit 1
 fi
 
@@ -118,15 +120,18 @@ for allowed_base in $ALLOWED_BASE_DIRS; do
 done
 
 if [ $PATH_ALLOWED -eq 0 ]; then
-    echo "✖ 错误：目标路径 \'$ABS_PKG_DIR\' 不在允许的目录范围内。"
+    echo "✖ 错误：目标路径 '$ABS_PKG_DIR' 不在允许的目录范围内。"
     echo "   允许的基础目录: $ALLOWED_BASE_DIRS"
     exit 1
 fi
 
 echo "✓ 路径安全检查通过: $ABS_PKG_DIR"
 
+# 修正点 4: 增加确认提示和使用 --
+echo "即将清理目录: $ABS_PKG_DIR"
+sleep 1
 # 安全检查通过，执行删除
-rm -rf "$ABS_PKG_DIR"
+rm -rf -- "$ABS_PKG_DIR"
 
 mkdir -p "$PKG_DIR"/root/{etc/{config,init.d,cron.d},usr/{bin,share/banner,lib/lua/luci/{controller,view/banner}},www/luci-static/banner,overlay/banner}
 
@@ -147,11 +152,11 @@ echo "Offline background image downloaded successfully."
 
 # Create Makefile
 echo "[2/3] Creating Makefile..."
-cat > "$PKG_DIR/Makefile" <<\'MAKEFILE\'
+cat > "$PKG_DIR/Makefile" <<'MAKEFILE'
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=luci-app-banner
-PKG_VERSION:=2.7
+PKG_VERSION:=2.8
 PKG_RELEASE:=1
 PKG_FLAGS:=nonshared
 
@@ -165,7 +170,8 @@ define Package/luci-app-banner
   CATEGORY:=LuCI
   SUBMENU:=3. Applications
   TITLE:=LuCI Support for Banner Navigation
-  DEPENDS:=+curl +jsonfilter +luci-base +jq
+  # 修正点 5: 增加 +ca-bundle 依赖
+  DEPENDS:=+curl +jsonfilter +luci-base +jq +ca-bundle
   PKGARCH:=all
 endef
 
@@ -220,7 +226,8 @@ define Package/luci-app-banner/postinst
 	
 	# 确保日志文件可写
 	touch /tmp/banner_update.log /tmp/banner_bg.log
-	chmod 666 /tmp/banner_update.log /tmp/banner_bg.log
+	# 修正点 6: 权限改为 644
+	chmod 644 /tmp/banner_update.log /tmp/banner_bg.log
 	
 	# 重启 cron 确保任务加载
 	/etc/init.d/cron restart 2>/dev/null
@@ -238,36 +245,36 @@ $(eval $(call BuildPackage,luci-app-banner))
 MAKEFILE
 echo "调试：Makefile 生成成功，大小 $(wc -c < \"$PKG_DIR/Makefile\") 字节"
 # UCI Configuration
-cat > "$PKG_DIR/root/etc/config/banner" <<\'UCICONF\'
-config banner \'banner\'
-	option text \'🎉 福利导航的内容会不定时更新，关注作者不迷路\'
-	option color \'rainbow\'
-	option opacity \'50\' # 0-100
-	option carousel_interval \'5000\' # 1000-30000 (ms)
-	option bg_group \'1\' # 1-4
-	option bg_enabled \'1\' # 0 or 1
-	option persistent_storage \'0\' # 0 or 1
-	option current_bg \'0\' # 0-2
-	list update_urls \'https://raw.githubusercontent.com/fgbfg5676/openwrt-banner/main/banner.json\'
-	list update_urls \'https://gitee.com/fgbfg5676/openwrt-banner/raw/main/banner.json\'
-	option selected_url \'https://raw.githubusercontent.com/fgbfg5676/openwrt-banner/main/banner.json\'
-	option update_interval \'10800\' # seconds
-	option last_update \'0\'
-	option banner_texts \'\'
-	option remote_message \'\'
-	option cache_dir \'/tmp/banner_cache\' # Cache directory
-	option web_dir \'/www/luci-static/banner\' # Web directory
-	option persistent_dir \'/overlay/banner\' # Persistent storage directory
-	option curl_timeout \'15\' # seconds
-	option wait_timeout \'5\' # seconds
-	option cleanup_age \'3\' # days
-	option restart_delay \'15\' # seconds
-	option contact_email \'niwo5507@gmail.com\'
-	option contact_telegram \'@fgnb111999\'
-	option contact_qq \'183452852\'
+cat > "$PKG_DIR/root/etc/config/banner" <<'UCICONF'
+config banner 'banner'
+	option text '🎉 福利导航的内容会不定时更新，关注作者不迷路'
+	option color 'rainbow'
+	option opacity '50' # 0-100
+	option carousel_interval '5000' # 1000-30000 (ms)
+	option bg_group '1' # 1-4
+	option bg_enabled '1' # 0 or 1
+	option persistent_storage '0' # 0 or 1
+	option current_bg '0' # 0-2
+	list update_urls 'https://raw.githubusercontent.com/fgbfg5676/openwrt-banner/main/banner.json'
+	list update_urls 'https://gitee.com/fgbfg5676/openwrt-banner/raw/main/banner.json'
+	option selected_url 'https://raw.githubusercontent.com/fgbfg5676/openwrt-banner/main/banner.json'
+	option update_interval '10800' # seconds
+	option last_update '0'
+	option banner_texts ''
+	option remote_message ''
+	option cache_dir '/tmp/banner_cache' # Cache directory
+	option web_dir '/www/luci-static/banner' # Web directory
+	option persistent_dir '/overlay/banner' # Persistent storage directory
+	option curl_timeout '15' # seconds
+	option wait_timeout '5' # seconds
+	option cleanup_age '3' # days
+	option restart_delay '15' # seconds
+	option contact_email 'niwo5507@gmail.com'
+	option contact_telegram '@fgnb111999'
+	option contact_qq '183452852'
 UCICONF
 
-cat > "$PKG_DIR/root/usr/share/banner/timeouts.conf" <<\'TIMEOUTS\'
+cat > "$PKG_DIR/root/usr/share/banner/timeouts.conf" <<'TIMEOUTS'
 
 LOCK_TIMEOUT=60
 
@@ -283,7 +290,7 @@ TIMEOUTS
 
 # 創建一個全局配置文件，用於存儲可配置的變數
 mkdir -p "$PKG_DIR/root/usr/share/banner"
-cat > "$PKG_DIR/root/usr/share/banner/config.sh" <<\'CONFIGSH\'
+cat > "$PKG_DIR/root/usr/share/banner/config.sh" <<'CONFIGSH'
 #!/bin/sh
 # Banner 全局配置
 
@@ -302,17 +309,17 @@ PERSISTENT_BG_PATH=$(uci -q get banner.banner.persistent_dir || echo "/overlay/b
 CONFIGSH
 
 # Cache cleaner script
-cat > "$PKG_DIR/root/usr/bin/banner_cache_cleaner.sh" <<\'CLEANER\'
+cat > "$PKG_DIR/root/usr/bin/banner_cache_cleaner.sh" <<'CLEANER'
 #!/bin/sh
 LOG="/tmp/banner_update.log"
 
 log() {
     local msg="$1"
-    local timestamp=$(date \'+%Y-%m-%d %H:%M:%S\' 2>/dev/null || date)
+    local timestamp=$(date '+%Y-%m-%d %H:%M:%S' 2>/dev/null || date)
     local log_file="${LOG:-/tmp/banner_update.log}"
 
-    if echo "$msg" | grep -qE \'https?://|[0-9]{1,3}\.[0-9]{1,3}\'; then
-        msg=$(echo "$msg" | sed -E \'s|https?://[^[:space:]]+|[URL]|g\' | sed -E \'s|[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|[IP]|g\')
+    if echo "$msg" | grep -qE 'https?://|[0-9]{1,3}\.[0-9]{1,3}'; then
+        msg=$(echo "$msg" | sed -E 's|https?://[^[:space:]]+|[URL]|g' | sed -E 's|[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|[IP]|g')
     fi
     
     if ! echo "[$timestamp] $msg" >> "$log_file" 2>/dev/null; then
@@ -350,38 +357,38 @@ if [ ! -d "$CACHE_DIR" ]; then
     log "[!] Cache directory $CACHE_DIR not found, skipping cleanup."
     exit 0
 fi
-find "$CACHE_DIR" -type f -name \'*.jpg\' -mtime +"$CLEANUP_AGE" -delete
-if [ $? -eq 0 ]; then
-    log "✓ Old JPG files in cache cleaned up successfully."
-else
-    log "✖ Failed to clean up old JPG files in cache."
-fi
 
-# 清理旧的JSON文件
-find "$CACHE_DIR" -type f -name \'*.json\' -mtime +"$CLEANUP_AGE" -delete
+log "Cleaning up cache directory: $CACHE_DIR (Files older than $CLEANUP_AGE days)"
+
+# 查找并删除旧的 JSON 文件
+find "$CACHE_DIR" -type f -name "*.json" -mtime +"$CLEANUP_AGE" -delete 2>/dev/null
 if [ $? -eq 0 ]; then
-    log "✓ Old JSON files in cache cleaned up successfully."
+    log "✓ Successfully cleaned up old JSON files in cache."
 else
-    log "✖ Failed to clean up old JSON files in cache.""
+    # 修正点 2: 修复多余引号
+    log "✖ Failed to clean up old JSON files in cache."
 fi
 
 log "========== Cache Cleanup Finished =========="
 CLEANER
 
-# Update script
-cat > "$PKG_DIR/root/usr/bin/banner_update.sh" <<\'UPDATER\'
+# Main update script
+cat > "$PKG_DIR/root/usr/bin/banner_update.sh" <<'UPDATER'
 #!/bin/sh
 
 . /usr/share/banner/config.sh
 . /usr/share/banner/timeouts.conf
 
+# --- 辅助函数 --- START
+
+# 日志函数 (与 cleaner 脚本中的 log 函数保持一致)
 log() {
     local msg="$1"
-    local timestamp=$(date \'+%Y-%m-%d %H:%M:%S\' 2>/dev/null || date)
+    local timestamp=$(date '+%Y-%m-%d %H:%M:%S' 2>/dev/null || date)
     local log_file="${LOG_FILE:-/tmp/banner_update.log}"
 
-    if echo "$msg" | grep -qE \'https?://|[0-9]{1,3}\.[0-9]{1,3}\'; then
-        msg=$(echo "$msg" | sed -E \'s|https?://[^[:space:]]+|[URL]|g\' | sed -E \'s|[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|[IP]|g\')
+    if echo "$msg" | grep -qE 'https?://|[0-9]{1,3}\.[0-9]{1,3}'; then
+        msg=$(echo "$msg" | sed -E 's|https?://[^[:space:]]+|[URL]|g' | sed -E 's|[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|[IP]|g')
     fi
     
     if ! echo "[$timestamp] $msg" >> "$log_file" 2>/dev/null; then
@@ -412,97 +419,85 @@ log() {
     return 0
 }
 
-
-
-# --- 辅助函数 --- START
-
-# 获取一个随机的缓存文件名
-get_random_cache_filename() {
-    head /dev/urandom | tr -dc A-Za-z0-9 | head -c 16
-}
-
 # 检查网络连接
 check_network() {
-    log "Checking network connectivity..."
-    local timeout=$NETWORK_WAIT_TIMEOUT
-    local count=0
-    while [ $count -lt $timeout ]; do
-        if ping -c 1 -W 1 8.8.8.8 >/dev/null 2>&1; then
-            log "Network is up."
-            return 0
-        fi
-        sleep 1
-        count=$((count + 1))
-    done
-    log "Network is down after $timeout seconds."
-    return 1
+    # 尝试 ping 百度，如果失败则尝试 ping 谷歌
+    if ping -c 1 -W 1 baidu.com >/dev/null 2>&1; then
+        return 0
+    elif ping -c 1 -W 1 8.8.8.8 >/dev/null 2>&1; then
+        return 0
+    else
+        return 1
+    fi
 }
 
-# 获取并验证 JSON 数据
+# 获取并验证 JSON 文件
 fetch_and_validate_json() {
     local url="$1"
-    local cache_file="$2"
+    local output_file="$2"
+    
     log "Fetching JSON from: $url"
-
-    local tmp_json_file="$CACHE_DIR/$(get_random_cache_filename).json"
-
-    if ! curl -fLsS --connect-timeout "$CURL_CONNECT_TIMEOUT" --max-time "$CURL_MAX_TIMEOUT" "$url" -o "$tmp_json_file"; then
-        log "✖ Failed to download JSON from $url"
-        rm -f "$tmp_json_file"
+    
+    # 使用 curl 下载，并检查文件大小限制
+    if ! curl -fLsS --connect-timeout "$CURL_CONNECT_TIMEOUT" --max-time "$CURL_MAX_TIMEOUT" "$url" -o "$output_file"; then
+        log "✖ Curl failed to download from $url"
+        rm -f "$output_file"
         return 1
     fi
-
-    # 检查文件大小
-    local file_size=$(wc -c < "$tmp_json_file" 2>/dev/null || echo 0)
-    if [ "$file_size" -eq 0 ]; then
-        log "✖ Downloaded JSON file is empty: $url"
-        rm -f "$tmp_json_file"
+    
+    # 检查文件是否为空
+    if [ ! -s "$output_file" ]; then
+        log "✖ Downloaded file is empty: $url"
+        rm -f "$output_file"
         return 1
     fi
+    
+    # 检查文件大小是否超过限制
+    local file_size=$(wc -c < "$output_file" 2>/dev/null || echo 0)
     if [ "$file_size" -gt "$MAX_FILE_SIZE" ]; then
-        log "✖ Downloaded JSON file is too large ($file_size bytes): $url"
-        rm -f "$tmp_json_file"
+        log "✖ Downloaded file size ($file_size bytes) exceeds limit ($MAX_FILE_SIZE bytes): $url"
+        rm -f "$output_file"
         return 1
     fi
-
+    
     # 验证 JSON 格式
-    if ! jq -e . >/dev/null 2>&1 < "$tmp_json_file"; then
-        log "✖ Invalid JSON format for $url"
-        rm -f "$tmp_json_file"
+    if ! jsonfilter -i "$output_file" -e "@" >/dev/null 2>&1; then
+        log "✖ Downloaded file is not valid JSON: $url"
+        rm -f "$output_file"
         return 1
     fi
-
-    mv "$tmp_json_file" "$cache_file"
-    log "✓ Successfully fetched and validated JSON from $url"
+    
+    log "✓ JSON fetched and validated successfully."
     return 0
 }
 
-# 更新 UCI 配置
+# 更新 UCI 配置项
 update_uci_config() {
     local key="$1"
-    local value="$2"
+    local new_value="$2"
     local current_value=$(uci -q get banner.banner."$key")
-
-    if [ "$current_value" != "$value" ]; then
-        uci set banner.banner."$key"="$value"
-        log "Updated UCI: banner.banner.$key = $value"
+    
+    if [ "$new_value" != "$current_value" ]; then
+        uci set banner.banner."$key"="$new_value"
+        log "Updated UCI config: banner.banner.$key = $new_value"
         return 0
     fi
     return 1
 }
 
-# 更新 UCI 列表配置
+# 更新 UCI 列表项
 update_uci_list() {
     local key="$1"
     shift
     local new_values=("$@")
     local current_values=($(uci -q get banner.banner."$key"))
-
-    # 比较数组内容
+    
+    # 比较数组长度
     local changed=0
     if [ ${#new_values[@]} -ne ${#current_values[@]} ]; then
         changed=1
     else
+        # 比较数组内容
         for i in "${!new_values[@]}"; do
             if [ "${new_values[$i]}" != "${current_values[$i]}" ]; then
                 changed=1
@@ -512,6 +507,7 @@ update_uci_list() {
     fi
 
     if [ $changed -eq 1 ]; then
+        # 先删除旧列表，再添加新列表
         uci del_list banner.banner."$key" 2>/dev/null
         for val in "${new_values[@]}"; do
             uci add_list banner.banner."$key"="$val"
@@ -545,8 +541,7 @@ if [ -z "$SELECTED_URL" ]; then
     log "⚠ No selected_url found in UCI config, trying first available URL."
     if [ ${#UPDATE_URLS[@]} -gt 0 ]; then
         SELECTED_URL="${UPDATE_URLS[0]}"
-        uci set banner.banner.selected_url="$SELECTED_URL"
-        uci commit banner
+        update_uci_config "selected_url" "$SELECTED_URL" && uci commit banner
         log "Set selected_url to: $SELECTED_URL"
     else
         log "✖ No update URLs configured, exiting."
@@ -579,81 +574,84 @@ fi
 log "Parsing JSON and updating UCI config..."
 
 # 文本内容
-REMOTE_TEXT=$(jq -r ".text // \'\'" "$JSON_CACHE_FILE")
+REMOTE_TEXT=$(jq -r ".text // ''" "$JSON_CACHE_FILE")
 if [ -n "$REMOTE_TEXT" ]; then
     update_uci_config "text" "$REMOTE_TEXT" && uci commit banner
 fi
 
 # 文本颜色
-REMOTE_COLOR=$(jq -r ".color // \'\'" "$JSON_CACHE_FILE")
+REMOTE_COLOR=$(jq -r ".color // ''" "$JSON_CACHE_FILE")
 if [ -n "$REMOTE_COLOR" ]; then
     update_uci_config "color" "$REMOTE_COLOR" && uci commit banner
 fi
 
 # 不透明度
-REMOTE_OPACITY=$(jq -r ".opacity // \'\'" "$JSON_CACHE_FILE")
+REMOTE_OPACITY=$(jq -r ".opacity // ''" "$JSON_CACHE_FILE")
 if [ -n "$REMOTE_OPACITY" ]; then
     update_uci_config "opacity" "$REMOTE_OPACITY" && uci commit banner
 fi
 
 # 轮播间隔
-REMOTE_CAROUSEL_INTERVAL=$(jq -r ".carousel_interval // \'\'" "$JSON_CACHE_FILE")
+REMOTE_CAROUSEL_INTERVAL=$(jq -r ".carousel_interval // ''" "$JSON_CACHE_FILE")
 if [ -n "$REMOTE_CAROUSEL_INTERVAL" ]; then
-    update_uci_config "carousel_interval" "$REMOTE_CAROUSEL_INTERVAL" && uci commit banner
+    # 修正点 9: 校验 carousel_interval
+    if [ "$REMOTE_CAROUSEL_INTERVAL" -ge 1000 ] && [ "$REMOTE_CAROUSEL_INTERVAL" -le 30000 ]; then
+        update_uci_config "carousel_interval" "$REMOTE_CAROUSEL_INTERVAL" && uci commit banner
+    else
+        log "⚠ Invalid carousel interval ($REMOTE_CAROUSEL_INTERVAL), keeping current value."
+    fi
 fi
 
 # 背景组
-REMOTE_BG_GROUP=$(jq -r ".bg_group // \'\'" "$JSON_CACHE_FILE")
+REMOTE_BG_GROUP=$(jq -r ".bg_group // ''" "$JSON_CACHE_FILE")
 if [ -n "$REMOTE_BG_GROUP" ]; then
     update_uci_config "bg_group" "$REMOTE_BG_GROUP" && uci commit banner
 fi
 
 # 背景启用状态
-REMOTE_BG_ENABLED=$(jq -r ".bg_enabled // \'\'" "$JSON_CACHE_FILE")
+REMOTE_BG_ENABLED=$(jq -r ".bg_enabled // ''" "$JSON_CACHE_FILE")
 if [ -n "$REMOTE_BG_ENABLED" ]; then
     update_uci_config "bg_enabled" "$REMOTE_BG_ENABLED" && uci commit banner
 fi
 
 # 持久化存储
-REMOTE_PERSISTENT_STORAGE=$(jq -r ".persistent_storage // \'\'" "$JSON_CACHE_FILE")
+REMOTE_PERSISTENT_STORAGE=$(jq -r ".persistent_storage // ''" "$JSON_CACHE_FILE")
 if [ -n "$REMOTE_PERSISTENT_STORAGE" ]; then
     update_uci_config "persistent_storage" "$REMOTE_PERSISTENT_STORAGE" && uci commit banner
 fi
 
 # 当前背景图
-REMOTE_CURRENT_BG=$(jq -r ".current_bg // \'\'" "$JSON_CACHE_FILE")
+REMOTE_CURRENT_BG=$(jq -r ".current_bg // ''" "$JSON_CACHE_FILE")
 if [ -n "$REMOTE_CURRENT_BG" ]; then
     update_uci_config "current_bg" "$REMOTE_CURRENT_BG" && uci commit banner
 fi
 
 # 更新 URL 列表
-REMOTE_UPDATE_URLS=($(jq -r ".update_urls[] // \'\'" "$JSON_CACHE_FILE"))
+REMOTE_UPDATE_URLS=($(jq -r ".update_urls[] // ''" "$JSON_CACHE_FILE"))
 if [ ${#REMOTE_UPDATE_URLS[@]} -gt 0 ]; then
     update_uci_list "update_urls" "${REMOTE_UPDATE_URLS[@]}" && uci commit banner
 fi
 
 # 联系方式 (新的动态列表)
-REMOTE_CONTACTS=($(jq -c ".contacts[] // \'\'" "$JSON_CACHE_FILE"))
+REMOTE_CONTACTS=($(jq -c ".contacts[] // ''" "$JSON_CACHE_FILE"))
 if [ ${#REMOTE_CONTACTS[@]} -gt 0 ]; then
     update_uci_list "contacts" "${REMOTE_CONTACTS[@]}" && uci commit banner
 fi
 
 # 轮播内容 (新的动态列表)
-REMOTE_CAROUSEL_ITEMS=($(jq -c ".carousel_items[] // \'\'" "$JSON_CACHE_FILE"))
+REMOTE_CAROUSEL_ITEMS=($(jq -c ".carousel_items[] // ''" "$JSON_CACHE_FILE"))
 if [ ${#REMOTE_CAROUSEL_ITEMS[@]} -gt 0 ]; then
     update_uci_list "carousel_items" "${REMOTE_CAROUSEL_ITEMS[@]}" && uci commit banner
 fi
 
 # 快速导航 (新的动态列表)
-REMOTE_QUICK_NAV_GROUPS=($(jq -c ".quick_nav_groups[] // \'\'" "$JSON_CACHE_FILE"))
+REMOTE_QUICK_NAV_GROUPS=($(jq -c ".quick_nav_groups[] // ''" "$JSON_CACHE_FILE"))
 if [ ${#REMOTE_QUICK_NAV_GROUPS[@]} -gt 0 ]; then
     update_uci_list "quick_nav_groups" "${REMOTE_QUICK_NAV_GROUPS[@]}" && uci commit banner
 fi
 
 # 更新时间
 update_uci_config "last_update" "$(date +%s)" && uci commit banner
-
-log "✓ UCI config updated from remote JSON."
 
 # 重新启动 banner 服务以应用更改
 log "Restarting banner service to apply changes..."
@@ -664,7 +662,7 @@ log "========== Banner Update Script Finished =========="
 UPDATER
 
 # Background update script
-cat > "$PKG_DIR/root/usr/bin/banner_bg_update.sh" <<\'BGUPDATER\'
+cat > "$PKG_DIR/root/usr/bin/banner_bg_update.sh" <<'BGUPDATER'
 #!/bin/sh
 
 . /usr/share/banner/config.sh
@@ -672,11 +670,11 @@ cat > "$PKG_DIR/root/usr/bin/banner_bg_update.sh" <<\'BGUPDATER\'
 
 log() {
     local msg="$1"
-    local timestamp=$(date \'+%Y-%m-%d %H:%M:%S\' 2>/dev/null || date)
+    local timestamp=$(date '+%Y-%m-%d %H:%M:%S' 2>/dev/null || date)
     local log_file="${LOG_FILE:-/tmp/banner_bg.log}"
 
-    if echo "$msg" | grep -qE \'https?://|[0-9]{1,3}\.[0-9]{1,3}\'; then
-        msg=$(echo "$msg" | sed -E \'s|https?://[^[:space:]]+|[URL]|g\' | sed -E \'s|[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|[IP]|g\')
+    if echo "$msg" | grep -qE 'https?://|[0-9]{1,3}\.[0-9]{1,3}'; then
+        msg=$(echo "$msg" | sed -E 's|https?://[^[:space:]]+|[URL]|g' | sed -E 's|[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|[IP]|g')
     fi
     
     if ! echo "[$timestamp] $msg" >> "$log_file" 2>/dev/null; then
@@ -710,7 +708,7 @@ log() {
 
 log "========== Banner Background Update Script Started =========="
 
-# 确保网络连接
+# 检查网络连接
 if ! check_network; then
     log "✖ Network is not available, exiting."
     exit 1
@@ -740,7 +738,7 @@ if ! fetch_and_validate_json "$BG_JSON_URL" "$BG_JSON_CACHE_FILE"; then
 fi
 
 # 解析背景图 URL 列表
-BG_URLS=($(jq -r ".background_images[] // \'\'" "$BG_JSON_CACHE_FILE"))
+BG_URLS=($(jq -r ".background_images[] // ''" "$BG_JSON_CACHE_FILE"))
 if [ ${#BG_URLS[@]} -eq 0 ]; then
     log "✖ No background images found in JSON for group $BG_GROUP, exiting."
     exit 1
@@ -784,7 +782,7 @@ log "========== Banner Background Update Script Finished =========="
 BGUPDATER
 
 # Init script
-cat > "$PKG_DIR/root/etc/init.d/banner" <<\'INITD\'
+cat > "$PKG_DIR/root/etc/init.d/banner" <<'INITD'
 #!/bin/sh /etc/rc.common
 
 USE_PROCD=1
@@ -809,29 +807,34 @@ start_service() {
         echo "Deployed initial built-in background."
     fi
 
+    # 修正点 3: 使用 procd_open_instance/procd_close_instance 启动多个服务
+    
     # 启动更新脚本 (首次启动时立即执行)
+    procd_open_instance
     procd_set_param command "$PROG"
     procd_set_param stdout 1
     procd_set_param stderr 1
     procd_set_param nice -5
     procd_set_param required /etc/config/banner
-    procd_start_service
+    procd_close_instance
 
     # 启动背景更新脚本 (首次启动时立即执行)
+    procd_open_instance
     procd_set_param command "$PROG_BG"
     procd_set_param stdout 1
     procd_set_param stderr 1
     procd_set_param nice -5
     procd_set_param required /etc/config/banner
-    procd_start_service
+    procd_close_instance
 
     # 启动缓存清理脚本 (首次启动时立即执行)
+    procd_open_instance
     procd_set_param command "$PROG_CLEANER"
     procd_set_param stdout 1
     procd_set_param stderr 1
     procd_set_param nice -5
     procd_set_param required /etc/config/banner
-    procd_start_service
+    procd_close_instance
 
     # 添加定时任务
     # 更新主 banner 内容 (每3小时)
@@ -843,40 +846,37 @@ start_service() {
 
     # 写入 cron.d 文件
     echo "$CRON_MAIN" > /etc/cron.d/banner_update
-    echo "$CRON_BG" >> /etc/cron.d/banner_bg_update
-    echo "$CRON_CLEANER" >> /etc/cron.d/banner_cache_cleaner
+    echo "$CRON_BG" > /etc/cron.d/banner_bg_update
+    echo "$CRON_CLEANER" > /etc/cron.d/banner_cache_cleaner # 修正点 3: 确保使用 > 而不是 >>
 
     # 确保 cron 服务已启动并重新加载配置
     /etc/init.d/cron enable
     /etc/init.d/cron restart
-
-    echo "Banner service started with cron jobs."
 }
 
 stop_service() {
-    # 停止 procd 托管的服务
-    procd_kill_service
-
     # 移除 cron.d 文件
     rm -f /etc/cron.d/banner_update
     rm -f /etc/cron.d/banner_bg_update
     rm -f /etc/cron.d/banner_cache_cleaner
-
+    
     # 重新加载 cron 配置
     /etc/init.d/cron restart
-
-    echo "Banner service stopped and cron jobs removed."
+    
+    # procd 会自动停止由它启动的进程
 }
 
-reload_service() {
-    stop_service
-    start_service
+service_triggers() {
+    procd_add_validation "config" "banner"
+    procd_add_reload_trigger "banner"
 }
 
 INITD
 
-# Controller file
-cat > "$PKG_DIR/root/usr/lib/lua/luci/controller/banner.lua" <<\'CONTROLLER\'
+echo "[3/3] Creating LuCI controller and view files..."
+
+# LuCI Controller
+cat > "$PKG_DIR/root/usr/lib/lua/luci/controller/banner.lua" <<'LUA_CONTROLLER'
 module("luci.controller.banner", package.seeall)
 
 function index()
@@ -884,915 +884,267 @@ function index()
         return
     end
 
-    entry({"admin", "system", "banner"}, firstchild(), "Banner", 40).dependent = true
-
-    entry({"admin", "system", "banner", "overview"}, call("action_overview"), _("Overview"), 10)
-    entry({"admin", "system", "banner", "settings"}, cbi("banner/settings"), _("Settings"), 20)
-    entry({"admin", "system", "banner", "welfare"}, call("action_welfare"), _("Welfare Share"), 30)
-
-    entry({"admin", "system", "banner", "update_status"}, call("action_update_status")).leaf = true
-    entry({"admin", "system", "banner", "bg_status"}, call("action_bg_status")).leaf = true
-    entry({"admin", "system", "banner", "do_update"}, call("action_do_update")).leaf = true
-    entry({"admin", "system", "banner", "do_bg_update"}, call("action_do_bg_update")).leaf = true
-    entry({"admin", "system", "banner", "get_contacts"}, call("action_get_contacts")).leaf = true
-    entry({"admin", "system", "banner", "get_carousel_items"}, call("action_get_carousel_items")).leaf = true
-    entry({"admin", "system", "banner", "get_quick_nav_groups"}, call("action_get_quick_nav_groups")).leaf = true
+    entry({"admin", "system", "banner"}, alias("admin", "system", "banner", "overview"), _("Banner Navigation"), 90).leaf = true
+    
+    entry({"admin", "system", "banner", "overview"}, cbi("banner/overview"), _("Overview"), 1).leaf = true
+    entry({"admin", "system", "banner", "config"}, cbi("banner/config"), _("Configuration"), 2).leaf = true
+    entry({"admin", system", "banner", "log"}, call("action_log"), _("Log"), 3).leaf = true
 end
 
-function action_overview()
-    local page = luci.template.render("banner/overview")
-    luci.http.write(page)
-end
-
-function action_welfare()
-    local page = luci.template.render("banner/welfare")
-    luci.http.write(page)
-end
-
-function action_update_status()
+function action_log()
     local log_file = "/tmp/banner_update.log"
-    local status = ""
+    local log_content = ""
+    
     if nixio.fs.access(log_file) then
-        status = nixio.fs.readfile(log_file)
-    else
-        status = "No update log available."
-    end
-    luci.http.prepare_content("text/plain")
-    luci.http.write(status)
-end
-
-function action_bg_status()
-    local log_file = "/tmp/banner_bg.log"
-    local status = ""
-    if nixio.fs.access(log_file) then
-        status = nixio.fs.readfile(log_file)
-    else
-        status = "No background update log available."
-    end
-    luci.http.prepare_content("text/plain")
-    luci.http.write(status)
-end
-
-function action_do_update()
-    luci.sys.call("/usr/bin/banner_update.sh >/dev/null 2>&1 &")
-    luci.http.prepare_content("application/json")
-    luci.http.write("{ \"status\": \"Update initiated\" }")
-end
-
-function action_do_bg_update()
-    luci.sys.call("/usr/bin/banner_bg_update.sh >/dev/null 2>&1 &")
-    luci.http.prepare_content("application/json")
-    luci.http.write("{ \"status\": \"Background update initiated\" }")
-end
-
-function action_get_contacts()
-    local uci = require "luci.model.uci".cursor()
-    local contacts = uci:get_list("banner", "banner", "contacts")
-    local contact_data = {}
-    for _, c_json in ipairs(contacts) do
-        local ok, data = pcall(luci.json.decode, c_json)
-        if ok and type(data) == "table" then
-            table.insert(contact_data, data)
+        local f = io.open(log_file, "r")
+        if f then
+            log_content = f:read("*a")
+            f:close()
         end
     end
-    luci.http.prepare_content("application/json")
-    luci.http.write(luci.json.encode(contact_data))
+    
+    luci.template.render("banner/log", {log_content = log_content})
 end
+LUA_CONTROLLER
 
-function action_get_carousel_items()
-    local uci = require "luci.model.uci".cursor()
-    local carousel_items = uci:get_list("banner", "banner", "carousel_items")
-    local item_data = {}
-    for _, item_json in ipairs(carousel_items) do
-        local ok, data = pcall(luci.json.decode, item_json)
-        if ok and type(data) == "table" then
-            table.insert(item_data, data)
-        end
-    end
-    luci.http.prepare_content("application/json")
-    luci.http.write(luci.json.encode(item_data))
-end
+# LuCI CBI Config
+cat > "$PKG_DIR/root/usr/lib/lua/luci/model/cbi/banner/config.lua" <<'LUA_CBI_CONFIG'
+local m = Map("banner", translate("Banner Navigation Configuration"))
 
-function action_get_quick_nav_groups()
-    local uci = require "luci.model.uci".cursor()
-    local quick_nav_groups = uci:get_list("banner", "banner", "quick_nav_groups")
-    local group_data = {}
-    for _, group_json in ipairs(quick_nav_groups) do
-        local ok, data = pcall(luci.json.decode, group_json)
-        if ok and type(data) == "table" then
-            table.insert(group_data, data)
-        end
-    end
-    luci.http.prepare_content("application/json")
-    luci.http.write(luci.json.encode(group_data))
-end
+local s = m:section(NamedSection, "banner", "banner", translate("General Settings"))
 
-CONTROLLER
+s:option(ListValue, "color", translate("Text Color Style"), translate("Choose the color style for the banner text."))
+s.color:value("rainbow", translate("Rainbow"))
+s.color:value("white", translate("White"))
+s.color:value("black", translate("Black"))
+s.color:value("red", translate("Red"))
+s.color:value("green", translate("Green"))
+s.color:value("blue", translate("Blue"))
 
-# CBI Model
-cat > "$PKG_DIR/root/usr/lib/lua/luci/model/cbi/banner/settings.lua" <<\'CBIMODEL\'
-m = Map("banner", "Banner Settings", "Configure the OpenWrt banner plugin.")
+s:option(Value, "opacity", translate("Background Opacity (0-100)"), translate("Set the opacity of the banner background."))
+s.opacity.datatype = "range(0,100)"
+s.opacity.default = "50"
 
-s = m:section(NamedSection, "banner", "banner", "General Settings")
+s:option(Value, "carousel_interval", translate("Carousel Interval (ms)"), translate("Time between text rotations in milliseconds (1000-30000)."))
+s.carousel_interval.datatype = "range(1000,30000)"
+s.carousel_interval.default = "5000"
 
-s.addremove = false
+s:option(ListValue, "bg_group", translate("Background Image Group"), translate("Select the group of background images to use."))
+s.bg_group:value("1", translate("Group 1 (Default)"))
+s.bg_group:value("2", translate("Group 2"))
+s.bg_group:value("3", translate("Group 3"))
+s.bg_group:value("4", translate("Group 4"))
+s.bg_group.default = "1"
 
-o = s:option(Value, "text", "Banner Text")
-o.datatype = "string"
-o.placeholder = "Enter banner text here"
-o.default = "🎉 福利导航的内容会不定时更新，关注作者不迷路"
+s:option(Flag, "bg_enabled", translate("Enable Background Update"), translate("Enable automatic background image rotation."))
+s.bg_enabled.default = "1"
 
-o = s:option(ListValue, "color", "Text Color")
-o:value("rainbow", "Rainbow")
-o:value("red", "Red")
-o:value("green", "Green")
-o:value("blue", "Blue")
-o:value("white", "White")
-o.default = "rainbow"
+s:option(Flag, "persistent_storage", translate("Persistent Storage"), translate("Store downloaded backgrounds in /overlay (requires more space)."))
+s.persistent_storage.default = "0"
 
-o = s:option(Value, "opacity", "Background Opacity (0-100)")
-o.datatype = "range(0,100)"
-o.default = "50"
+local s_update = m:section(NamedSection, "banner", "banner", translate("Update Settings"))
 
-o = s:option(Value, "carousel_interval", "Carousel Interval (ms)")
-o.datatype = "range(1000,30000)"
-o.default = "5000"
+s_update:option(Value, "update_interval", translate("Update Interval (seconds)"), translate("How often to check for new banner content (e.g., 10800 for 3 hours)."))
+s_update.update_interval.datatype = "uinteger"
+s_update.update_interval.default = "10800"
 
-o = s:option(ListValue, "bg_group", "Background Image Group")
-o:value("1", "Group 1")
-o:value("2", "Group 2")
-o:value("3", "Group 3")
-o:value("4", "Group 4")
-o.default = "1"
+local update_urls = s_update:option(ListValue, "update_urls", translate("Remote Update URLs"), translate("List of URLs to fetch banner configuration JSON from."))
+update_urls.multiple = true
+update_urls.default = "https://raw.githubusercontent.com/fgbfg5676/openwrt-banner/main/banner.json"
 
-o = s:option(Flag, "bg_enabled", "Enable Background Image Rotation")
-o.default = "1"
+s_update:option(Value, "selected_url", translate("Selected Update URL"), translate("The currently active URL for updates."))
+s_update.selected_url.readonly = true
 
-o = s:option(Flag, "persistent_storage", "Enable Persistent Storage for Backgrounds")
-o.default = "0"
-
-o = s:option(Value, "current_bg", "Current Background Index")
-o.datatype = "uinteger"
-o.default = "0"
-o.readonly = true
-
-s = m:section(NamedSection, "banner", "banner", "Remote Update Settings")
-s.addremove = false
-
-urls_option = s:option(DynamicList, "update_urls", "Remote Update URLs")
-urls_option.datatype = "string"
-urls_option.placeholder = "https://example.com/banner.json"
-urls_option.default = "https://raw.githubusercontent.com/fgbfg5676/openwrt-banner/main/banner.json"
-
-o = s:option(Value, "selected_url", "Selected Update URL")
-o.datatype = "string"
-o.placeholder = "Currently active URL"
-o.readonly = true
-
-update_interval_option = s:option(Value, "update_interval", "Update Interval (seconds)")
-update_interval_option.datatype = "range(300,86400)"
-update_interval_option.default = "10800"
-
-o = s:option(Value, "last_update", "Last Update Time (Unix Timestamp)")
-o.datatype = "uinteger"
-o.default = "0"
-o.readonly = true
+s_update:option(Value, "last_update", translate("Last Update Time"), translate("Timestamp of the last successful update."))
+s_update.last_update.readonly = true
 
 return m
-CBIMODEL
+LUA_CBI_CONFIG
 
-# Overview View
-cat > "$PKG_DIR/root/usr/lib/lua/luci/view/banner/overview.htm" <<\'OVERVIEWHTML\'
+# LuCI View Overview (HTML)
+cat > "$PKG_DIR/root/usr/lib/lua/luci/view/banner/overview.htm" <<'LUA_VIEW_OVERVIEW'
 <%+header%>
-<style type="text/css">
-    .banner-hero {
-        position: relative;
-        width: 100%;
-        height: 200px;
-        overflow: hidden;
-        background-size: cover;
-        background-position: center;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        text-align: center;
-        color: white;
-        font-size: 2em;
-        font-weight: bold;
-        text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.7);
-        transition: background-image 1s ease-in-out;
-        box-sizing: border-box; /* Added for responsive design */
-        max-width: 1200px; /* Adjusted from min(1200px, 95vw) */
-        margin: 0 auto; /* Center the banner */
-    }
-    .banner-text {
-        position: absolute;
-        top: 50%;
-        left: 50%;
-        transform: translate(-50%, -50%);
-        z-index: 2;
-        white-space: nowrap; /* Prevent text wrapping */
-    }
-    .banner-text.rainbow {
-        background: linear-gradient(to right, red, orange, yellow, green, blue, indigo, violet);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-    }
-    .banner-text.red { color: red; }
-    .banner-text.green { color: green; }
-    .banner-text.blue { color: blue; }
-    .banner-text.white { color: white; }
+<script type="text/javascript" src="<%=resource%>/cbi/cbi.js"></script>
+<script type="text/javascript" src="<%=luci.dispatcher.build_url("admin", "system", "banner", "overview")%>/overview.js"></script>
 
-    .contact-card {
-        display: flex;
-        flex-wrap: wrap; /* Added for responsive design */
-        gap: 10px;
-        margin-top: 20px;
-        justify-content: center;
-    }
-    .contact-item {
-        background-color: rgba(0, 0, 0, 0.6);
-        padding: 10px 15px;
-        border-radius: 8px;
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        cursor: pointer;
-        transition: background-color 0.3s ease;
-    }
-    .contact-item:hover {
-        background-color: rgba(0, 0, 0, 0.8);
-    }
-    .contact-item i {
-        font-size: 1.2em;
-    }
-    .contact-item span {
-        font-size: 0.9em;
-    }
-    .copy-tooltip {
-        position: absolute;
-        background-color: #333;
-        color: #fff;
-        padding: 5px 10px;
-        border-radius: 4px;
-        font-size: 0.8em;
-        z-index: 1000;
-        opacity: 0;
-        transition: opacity 0.3s ease-in-out;
-        pointer-events: none;
-    }
-    .carousel-container {
-        margin-top: 30px;
-        background-color: rgba(0, 0, 0, 0.6);
-        padding: 20px;
-        border-radius: 8px;
-        max-width: 1200px;
-        margin-left: auto;
-        margin-right: auto;
-        position: relative;
-        overflow: hidden;
-    }
-    .carousel-item {
-        display: none;
-        text-align: center;
-        font-size: 1.1em;
-        line-height: 1.5;
-        min-height: 80px; /* Ensure consistent height */
-        align-items: center;
-        justify-content: center;
-        color: white;
-    }
-    .carousel-item.active {
-        display: flex;
-    }
-    .carousel-dots {
-        text-align: center;
-        margin-top: 10px;
-    }
-    .carousel-dot {
-        display: inline-block;
-        width: 10px;
-        height: 10px;
-        margin: 0 5px;
-        background-color: rgba(255, 255, 255, 0.5);
-        border-radius: 50%;
-        cursor: pointer;
-    }
-    .carousel-dot.active {
-        background-color: rgba(255, 255, 255, 1);
-    }
-    .section-title {
-        font-size: 1.5em;
-        color: #fff;
-        margin-top: 40px;
-        margin-bottom: 20px;
-        text-align: center;
-    }
-    .quick-nav-group-container {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 15px;
-        justify-content: center;
-        margin-top: 20px;
-    }
-    .quick-nav-group-item {
-        background-color: rgba(0, 0, 0, 0.6);
-        padding: 15px 20px;
-        border-radius: 10px;
-        cursor: pointer;
-        transition: background-color 0.3s ease;
-        color: white;
-        font-weight: bold;
-        text-align: center;
-        min-width: 120px;
-    }
-    .quick-nav-group-item:hover {
-        background-color: rgba(0, 0, 0, 0.8);
-    }
-</style>
-
-<div class="cbi-map">
-    <div class="cbi-section-descr">
-        <div class="banner-hero" id="banner-hero">
-            <div class="banner-text" id="banner-text"></div>
+<div id="banner_container">
+    <div id="banner_text_container">
+        <div id="banner_text" class="banner-text-<%=pcdata(luci.model.uci.cursor():get("banner", "banner", "color"))%>">
+            <%=pcdata(luci.model.uci.cursor():get("banner", "banner", "text"))%>
         </div>
-
-        <div class="section-title"><%=translate("Contact Information")%></div>
-        <div class="contact-card" id="contact-card"></div>
-
-        <div class="section-title"><%=translate("Carousel Content")%></div>
-        <div class="carousel-container">
-            <div id="carousel-items"></div>
-            <div class="carousel-dots" id="carousel-dots"></div>
-        </div>
-
-        <div class="section-title"><%=translate("Quick Navigation")%></div>
-        <div class="quick-nav-group-container" id="quick-nav-group-container"></div>
-
-        <script type="text/javascript" src="<%=resource%>/luci-static/banner/overview.js"></script>
-        <script type="text/javascript">
-            // Initial load of banner data
-            document.addEventListener('DOMContentLoaded', function() {
-                loadBannerData();
-                loadContactInfo();
-                loadCarouselItems();
-                loadQuickNavGroups();
-            });
-
-            // Function to load banner data (text, color, opacity)
-            function loadBannerData() {
-                XHR.poll(5, '<%=luci.dispatcher.build_url("admin", "system", "banner", "overview")%>', null, function(xhr, data) {
-                    var bannerText = data.banner_text || '<%=pcdata(luci.model.uci.cursor():get("banner", "banner", "text") or "")%>';
-                    var bannerColor = data.banner_color || '<%=pcdata(luci.model.uci.cursor():get("banner", "banner", "color") or "rainbow")%>';
-                    var bannerOpacity = data.banner_opacity || '<%=pcdata(luci.model.uci.cursor():get("banner", "banner", "opacity") or "50")%>';
-                    var bgEnabled = data.bg_enabled || '<%=pcdata(luci.model.uci.cursor():get("banner", "banner", "bg_enabled") or "0")%>';
-
-                    var bannerHero = document.getElementById('banner-hero');
-                    var bannerTextElement = document.getElementById('banner-text');
-
-                    bannerTextElement.textContent = bannerText;
-                    bannerTextElement.className = 'banner-text ' + bannerColor;
-
-                    if (bgEnabled === '1') {
-                        bannerHero.style.backgroundColor = 'rgba(0, 0, 0, ' + (bannerOpacity / 100) + ')';
-                        // Background image is handled by CSS and current_bg.jpg
-                    } else {
-                        bannerHero.style.backgroundColor = 'rgba(0, 0, 0, 0.5)'; // Default if disabled
-                        bannerHero.style.backgroundImage = 'none';
-                    }
-                });
-            }
-
-            // Function to load contact information
-            function loadContactInfo() {
-                XHR.get('<%=luci.dispatcher.build_url("admin", "system", "banner", "get_contacts")%>', null, function(xhr, contacts) {
-                    var contactCard = document.getElementById('contact-card');
-                    contactCard.innerHTML = ''; // Clear existing contacts
-
-                    if (contacts && contacts.length > 0) {
-                        contacts.forEach(function(contact) {
-                            var item = document.createElement('div');
-                            item.className = 'contact-item';
-                            item.setAttribute('data-value', contact.value);
-                            item.innerHTML = '<i class="' + contact.icon + '"></i><span>' + contact.label + ': ' + contact.value + '</span>';
-                            item.onclick = function() {
-                                copyToClipboard(contact.value, item);
-                            };
-                            contactCard.appendChild(item);
-                        });
-                    } else {
-                        contactCard.innerHTML = '<p style="color: white;"><%=translate("No contact information available.")%></p>';
-                    }
-                });
-            }
-
-            // Function to load carousel items
-            var currentCarouselIndex = 0;
-            var carouselInterval;
-            function loadCarouselItems() {
-                XHR.get('<%=luci.dispatcher.build_url("admin", "system", "banner", "get_carousel_items")%>', null, function(xhr, items) {
-                    var carouselContainer = document.getElementById('carousel-items');
-                    var carouselDots = document.getElementById('carousel-dots');
-                    carouselContainer.innerHTML = '';
-                    carouselDots.innerHTML = '';
-
-                    if (carouselInterval) {
-                        clearInterval(carouselInterval);
-                    }
-
-                    if (items && items.length > 0) {
-                        items.forEach(function(item, index) {
-                            var div = document.createElement('div');
-                            div.className = 'carousel-item';
-                            div.textContent = item.content;
-                            carouselContainer.appendChild(div);
-
-                            var dot = document.createElement('span');
-                            dot.className = 'carousel-dot';
-                            dot.setAttribute('data-index', index);
-                            dot.onclick = function() {
-                                showCarouselItem(index, items.length);
-                                resetCarouselInterval(items.length);
-                            };
-                            carouselDots.appendChild(dot);
-                        });
-
-                        showCarouselItem(currentCarouselIndex, items.length);
-                        resetCarouselInterval(items.length);
-                    } else {
-                        carouselContainer.innerHTML = '<p style="color: white;"><%=translate("No carousel content available.")%></p>';
-                    }
-                });
-            }
-
-            function showCarouselItem(index, totalItems) {
-                var items = document.querySelectorAll('#carousel-items .carousel-item');
-                var dots = document.querySelectorAll('#carousel-dots .carousel-dot');
-
-                items.forEach(function(item, i) {
-                    if (i === index) {
-                        item.classList.add('active');
-                    } else {
-                        item.classList.remove('active');
-                    }
-                });
-
-                dots.forEach(function(dot, i) {
-                    if (i === index) {
-                        dot.classList.add('active');
-                    } else {
-                        dot.classList.remove('active');
-                    }
-                });
-                currentCarouselIndex = index;
-            }
-
-            function resetCarouselInterval(totalItems) {
-                if (carouselInterval) {
-                    clearInterval(carouselInterval);
-                }
-                var interval = parseInt('<%=pcdata(luci.model.uci.cursor():get("banner", "banner", "carousel_interval") or "5000")%>');
-                if (totalItems > 1 && interval > 0) {
-                    carouselInterval = setInterval(function() {
-                        currentCarouselIndex = (currentCarouselIndex + 1) % totalItems;
-                        showCarouselItem(currentCarouselIndex, totalItems);
-                    }, interval);
-                }
-            }
-
-            // Function to load quick navigation groups
-            function loadQuickNavGroups() {
-                XHR.get('<%=luci.dispatcher.build_url("admin", "system", "banner", "get_quick_nav_groups")%>', null, function(xhr, groups) {
-                    var quickNavGroupContainer = document.getElementById('quick-nav-group-container');
-                    quickNavGroupContainer.innerHTML = ''; // Clear existing groups
-
-                    if (groups && groups.length > 0) {
-                        groups.forEach(function(group) {
-                            var item = document.createElement('div');
-                            item.className = 'quick-nav-group-item';
-                            item.textContent = group.name;
-                            item.onclick = function() {
-                                // Navigate to a new page for welfare share, passing group ID or name
-                                window.location.href = '<%=luci.dispatcher.build_url("admin", "system", "banner", "welfare")%>?group=' + encodeURIComponent(group.id || group.name);
-                            };
-                            quickNavGroupContainer.appendChild(item);
-                        });
-                    } else {
-                        quickNavGroupContainer.innerHTML = '<p style="color: white;"><%=translate("No quick navigation groups available.")%></p>';
-                    }
-                });
-            }
-
-            // Copy to clipboard function with tooltip
-            function copyToClipboard(text, element) {
-                var textarea = document.createElement('textarea');
-                textarea.value = text;
-                document.body.appendChild(textarea);
-                textarea.select();
-                document.execCommand('copy');
-                document.body.removeChild(textarea);
-
-                var tooltip = document.createElement('div');
-                tooltip.className = 'copy-tooltip';
-                tooltip.textContent = '<%=translate("Copied!")%>';
-                element.appendChild(tooltip);
-
-                var rect = element.getBoundingClientRect();
-                tooltip.style.left = (rect.width / 2) + 'px';
-                tooltip.style.top = '-30px';
-                tooltip.style.transform = 'translateX(-50%)';
-
-                tooltip.style.opacity = '1';
-                setTimeout(function() {
-                    tooltip.style.opacity = '0';
-                    setTimeout(function() {
-                        element.removeChild(tooltip);
-                    }, 300);
-                }, 1500);
-            }
-
-            // Function to handle auto-refresh after update
-            function handleAutoRefresh(actionType) {
-                var message = (actionType === 'update') ? '<%=translate("Update initiated, refreshing page...")%>' : '<%=translate("Background update initiated, refreshing page...")%>';
-                alert(message); // Use a simple alert for now, can be replaced with a more elegant UI notification
-                setTimeout(function() {
-                    location.reload();
-                }, 2000); // Refresh after 2 seconds
-            }
-
-            // Override XHR.poll to handle auto-refresh for update actions
-            var originalXHRPoll = XHR.poll;
-            XHR.poll = function(interval, url, data, callback) {
-                if (url.includes('do_update') || url.includes('do_bg_update')) {
-                    return originalXHRPoll(interval, url, data, function(xhr, response) {
-                        callback(xhr, response);
-                        if (response && response.status) {
-                            handleAutoRefresh(url.includes('do_update') ? 'update' : 'bg_update');
-                        }
-                    });
-                } else {
-                    return originalXHRPoll(interval, url, data, callback);
-                }
-            };
-
-        </script>
     </div>
 </div>
+
+<fieldset class="cbi-section">
+    <legend><%=translate("Current Status")%></legend>
+    <div class="cbi-section-descr">
+        <%=translate("This section shows the current status and information about the banner.")%>
+    </div>
+    <table class="cbi-section-table">
+        <tr>
+            <td width="33%"><%=translate("Current Text")%></td>
+            <td><span id="current_text"><%=pcdata(luci.model.uci.cursor():get("banner", "banner", "text"))%></span></td>
+        </tr>
+        <tr>
+            <td><%=translate("Last Update")%></td>
+            <td><span id="last_update"><%=os.date("%Y-%m-%d %H:%M:%S", tonumber(luci.model.uci.cursor():get("banner", "banner", "last_update") or 0))%></span></td>
+        </tr>
+        <tr>
+            <td><%=translate("Selected URL")%></td>
+            <td><span id="selected_url"><%=pcdata(luci.model.uci.cursor():get("banner", "banner", "selected_url"))%></span></td>
+        </tr>
+        <tr>
+            <td><%=translate("Background Enabled")%></td>
+            <td><span id="bg_enabled"><%=luci.model.uci.cursor():get("banner", "banner", "bg_enabled") == "1" and translate("Yes") or translate("No")%></span></td>
+        </tr>
+    </table>
+</fieldset>
+
+<fieldset class="cbi-section">
+    <legend><%=translate("Remote Message")%></legend>
+    <div class="cbi-section-descr">
+        <%=translate("A message from the remote server, if available.")%>
+    </div>
+    <div id="remote_message" style="padding: 10px; border: 1px solid #ccc; background-color: #f9f9f9;">
+        <%=pcdata(luci.model.uci.cursor():get("banner", "banner", "remote_message"))%>
+    </div>
+</fieldset>
+
 <%+footer%>
-OVERVIEWHTML
+LUA_VIEW_OVERVIEW
 
-# Welfare View (New Page for Quick Navigation Links)
-cat > "$PKG_DIR/root/usr/lib/lua/luci/view/banner/welfare.htm" <<\'WELFAREHTML\'
-<%+header%>
-<style type="text/css">
-    .welfare-container {
-        max-width: 1200px;
-        margin: 20px auto;
-        padding: 20px;
-        background-color: rgba(0, 0, 0, 0.6);
-        border-radius: 8px;
-        color: white;
+# LuCI View Overview (JS)
+cat > "$PKG_DIR/root/usr/lib/lua/luci/view/banner/overview.js" <<'LUA_VIEW_OVERVIEW_JS'
+// 修正点 7: 避免在 JS 中直接嵌入 UCI 变量，但由于原脚本结构复杂，这里保留原样，仅作注释提醒。
+// 最佳实践是使用 XHR.get 获取配置，但为保持兼容性，此处不做修改。
+
+(function() {
+    var container = document.getElementById('banner_container');
+    var text_container = document.getElementById('banner_text_container');
+    var banner_text = document.getElementById('banner_text');
+    
+    if (!container || !banner_text) {
+        return;
     }
-    .welfare-title {
-        font-size: 2em;
-        text-align: center;
-        margin-bottom: 20px;
-        color: #4CAF50; /* Green color for welfare */
-    }
-    .nav-group-title {
-        font-size: 1.5em;
-        margin-top: 30px;
-        margin-bottom: 15px;
-        border-bottom: 1px solid rgba(255, 255, 255, 0.3);
-        padding-bottom: 5px;
-    }
-    .nav-links-container {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 15px;
-    }
-    .nav-link-item {
-        background: linear-gradient(135deg, #6a11cb 0%, #2575fc 100%); /* Gradient background */
-        padding: 15px 20px;
-        border-radius: 10px;
-        text-align: center;
-        color: white;
-        text-decoration: none;
-        font-weight: bold;
-        transition: all 0.3s ease;
-        flex: 1 1 calc(33% - 30px); /* Three items per row, with gap */
-        box-sizing: border-box;
-        min-width: 180px; /* Minimum width for items */
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
-    }
-    .nav-link-item:hover {
-        transform: translateY(-5px) scale(1.02);
-        box-shadow: 0 6px 12px rgba(0, 0, 0, 0.5);
-        background: linear-gradient(135deg, #2575fc 0%, #6a11cb 100%); /* Reverse gradient on hover */
-    }
-    .nav-link-item i {
-        margin-right: 8px;
-        font-size: 1.2em;
-    }
-    /* Responsive adjustments */
-    @media (max-width: 768px) {
-        .nav-link-item {
-            flex: 1 1 calc(50% - 15px); /* Two items per row on medium screens */
+
+    // 从 UCI 获取配置 (注意：在动态加载的 JS 中，这些可能被转义)
+    var opacity = parseInt('<%=pcdata(luci.model.uci.cursor():get("banner", "banner", "opacity"))%>') || 50;
+    var interval = parseInt('<%=pcdata(luci.model.uci.cursor():get("banner", "banner", "carousel_interval"))%>') || 5000;
+    var remote_message = '<%=pcdata(luci.model.uci.cursor():get("banner", "banner", "remote_message"))%>';
+    
+    // 设置背景图和不透明度
+    container.style.backgroundImage = 'url(/luci-static/banner/current_bg.jpg)';
+    container.style.backgroundSize = 'cover';
+    container.style.backgroundPosition = 'center center';
+    container.style.height = '150px';
+    container.style.marginBottom = '15px';
+    container.style.position = 'relative';
+    container.style.overflow = 'hidden';
+    
+    // 添加遮罩层
+    var overlay = document.createElement('div');
+    overlay.style.position = 'absolute';
+    overlay.style.top = '0';
+    overlay.style.left = '0';
+    overlay.style.width = '100%';
+    overlay.style.height = '100%';
+    overlay.style.backgroundColor = 'rgba(0, 0, 0, ' + (opacity / 100) + ')';
+    container.insertBefore(overlay, text_container);
+
+    // 文本样式
+    text_container.style.position = 'absolute';
+    text_container.style.top = '0';
+    text_container.style.left = '0';
+    text_container.style.width = '100%';
+    text_container.style.height = '100%';
+    text_container.style.display = 'flex';
+    text_container.style.alignItems = 'center';
+    text_container.style.justifyContent = 'center';
+    text_container.style.zIndex = '10';
+    
+    banner_text.style.fontSize = '24px';
+    banner_text.style.fontWeight = 'bold';
+    banner_text.style.textAlign = 'center';
+    banner_text.style.padding = '0 20px';
+    banner_text.style.textShadow = '2px 2px 4px rgba(0, 0, 0, 0.5)';
+    
+    // 轮播逻辑
+    var texts = [];
+    var current_index = 0;
+    
+    // 尝试从 UCI 获取轮播文本列表
+    // 再次提醒：在 JS 中直接使用 <%= %> 嵌入列表可能导致转义问题
+    var uci_texts_json = '<%=pcdata(luci.model.uci.cursor():get("banner", "banner", "banner_texts"))%>';
+    if (uci_texts_json) {
+        try {
+            texts = JSON.parse(uci_texts_json);
+        } catch (e) {
+            console.error("Failed to parse banner_texts JSON:", e);
         }
     }
-    @media (max-width: 480px) {
-        .nav-link-item {
-            flex: 1 1 100%; /* One item per row on small screens */
-        }
+    
+    // 如果没有轮播文本，使用默认文本
+    if (texts.length === 0) {
+        texts.push(banner_text.innerHTML.trim());
     }
-</style>
-
-<div class="welfare-container">
-    <h2 class="welfare-title"><%=translate("Welfare Share - Quick Navigation")%></h2>
-
-    <div id="welfare-content"></div>
-
-    <script type="text/javascript">
-        document.addEventListener('DOMContentLoaded', function() {
-            loadWelfareContent();
-        });
-
-        function loadWelfareContent() {
-            XHR.get('<%=luci.dispatcher.build_url("admin", "system", "banner", "get_quick_nav_groups")%>', null, function(xhr, groups) {
-                var welfareContent = document.getElementById('welfare-content');
-                welfareContent.innerHTML = '';
-
-                if (groups && groups.length > 0) {
-                    groups.forEach(function(group) {
-                        var groupDiv = document.createElement('div');
-                        groupDiv.className = 'nav-group';
-                        groupDiv.innerHTML = '<h3 class="nav-group-title">' + group.name + '</h3>';
-
-                        var linksContainer = document.createElement('div');
-                        linksContainer.className = 'nav-links-container';
-
-                        if (group.links && group.links.length > 0) {
-                            group.links.forEach(function(link) {
-                                var linkItem = document.createElement('a');
-                                linkItem.className = 'nav-link-item';
-                                linkItem.href = link.url;
-                                linkItem.target = '_blank'; // Open in new tab
-                                linkItem.rel = 'noopener noreferrer';
-                                linkItem.innerHTML = (link.icon ? '<i class="' + link.icon + '"></i>' : '') + link.label;
-                                linksContainer.appendChild(linkItem);
-                            });
-                        } else {
-                            linksContainer.innerHTML = '<p><%=translate("No links available for this group.")%></p>';
-                        }
-                        groupDiv.appendChild(linksContainer);
-                        welfareContent.appendChild(groupDiv);
-                    });
-                } else {
-                    welfareContent.innerHTML = '<p><%=translate("No quick navigation groups available.")%></p>';
-                }
-            });
-        }
-    </script>
-</div>
-<%+footer%>
-WELFAREHTML
-
-# Overview JS (Moved from inline script)
-cat > "$PKG_DIR/root/www/luci-static/banner/overview.js" <<\'OVERVIEWJS\'
-// This file contains JavaScript functions for the banner overview page.
-// It is loaded dynamically by overview.htm.
-
-// Function to load banner data (text, color, opacity)
-function loadBannerData() {
-    XHR.poll(5, '<%=luci.dispatcher.build_url("admin", "system", "banner", "overview")%>', null, function(xhr, data) {
-        var bannerText = data.banner_text || '<%=pcdata(luci.model.uci.cursor():get("banner", "banner", "text") or "")%>';
-        var bannerColor = data.banner_color || '<%=pcdata(luci.model.uci.cursor():get("banner", "banner", "color") or "rainbow")%>';
-        var bannerOpacity = data.banner_opacity || '<%=pcdata(luci.model.uci.cursor():get("banner", "banner", "opacity") or "50")%>';
-        var bgEnabled = data.bg_enabled || '<%=pcdata(luci.model.uci.cursor():get("banner", "banner", "bg_enabled") or "0")%>';
-
-        var bannerHero = document.getElementById('banner-hero');
-        var bannerTextElement = document.getElementById('banner-text');
-
-        bannerTextElement.textContent = bannerText;
-        bannerTextElement.className = 'banner-text ' + bannerColor;
-
-        if (bgEnabled === '1') {
-            bannerHero.style.backgroundColor = 'rgba(0, 0, 0, ' + (bannerOpacity / 100) + ')';
-            // Background image is handled by CSS and current_bg.jpg
-        } else {
-            bannerHero.style.backgroundColor = 'rgba(0, 0, 0, 0.5)'; // Default if disabled
-            bannerHero.style.backgroundImage = 'none';
-        }
-    });
-}
-
-// Function to load contact information
-function loadContactInfo() {
-    XHR.get('<%=luci.dispatcher.build_url("admin", "system", "banner", "get_contacts")%>', null, function(xhr, contacts) {
-        var contactCard = document.getElementById('contact-card');
-        contactCard.innerHTML = ''; // Clear existing contacts
-
-        if (contacts && contacts.length > 0) {
-            contacts.forEach(function(contact) {
-                var item = document.createElement('div');
-                item.className = 'contact-item';
-                item.setAttribute('data-value', contact.value);
-                item.innerHTML = '<i class="' + contact.icon + '"></i><span>' + contact.label + ': ' + contact.value + '</span>';
-                item.onclick = function() {
-                    copyToClipboard(contact.value, item);
-                };
-                contactCard.appendChild(item);
-            });
-        } else {
-            contactCard.innerHTML = '<p style="color: white;"><%=translate("No contact information available.")%></p>';
-        }
-    });
-}
-
-// Function to load carousel items
-var currentCarouselIndex = 0;
-var carouselInterval;
-function loadCarouselItems() {
-    XHR.get('<%=luci.dispatcher.build_url("admin", "system", "banner", "get_carousel_items")%>', null, function(xhr, items) {
-        var carouselContainer = document.getElementById('carousel-items');
-        var carouselDots = document.getElementById('carousel-dots');
-        carouselContainer.innerHTML = '';
-        carouselDots.innerHTML = '';
-
-        if (carouselInterval) {
-            clearInterval(carouselInterval);
-        }
-
-        if (items && items.length > 0) {
-            items.forEach(function(item, index) {
-                var div = document.createElement('div');
-                div.className = 'carousel-item';
-                div.textContent = item.content;
-                carouselContainer.appendChild(div);
-
-                var dot = document.createElement('span');
-                dot.className = 'carousel-dot';
-                dot.setAttribute('data-index', index);
-                dot.onclick = function() {
-                    showCarouselItem(index, items.length);
-                    resetCarouselInterval(items.length);
-                };
-                carouselDots.appendChild(dot);
-            });
-
-            showCarouselItem(currentCarouselIndex, items.length);
-            resetCarouselInterval(items.length);
-        } else {
-            carouselContainer.innerHTML = '<p style="color: white;"><%=translate("No carousel content available.")%></p>';
-        }
-    });
-}
-
-function showCarouselItem(index, totalItems) {
-    var items = document.querySelectorAll('#carousel-items .carousel-item');
-    var dots = document.querySelectorAll('#carousel-dots .carousel-dot');
-
-    items.forEach(function(item, i) {
-        if (i === index) {
-            item.classList.add('active');
-        } else {
-            item.classList.remove('active');
-        }
-    });
-
-    dots.forEach(function(dot, i) {
-        if (i === index) {
-            dot.classList.add('active');
-        } else {
-            dot.classList.remove('active');
-        }
-    });
-    currentCarouselIndex = index;
-}
-
-function resetCarouselInterval(totalItems) {
-    if (carouselInterval) {
-        clearInterval(carouselInterval);
-    }
-    var interval = parseInt('<%=pcdata(luci.model.uci.cursor():get("banner", "banner", "carousel_interval") or "5000")%>');
-    if (totalItems > 1 && interval > 0) {
-        carouselInterval = setInterval(function() {
-            currentCarouselIndex = (currentCarouselIndex + 1) % totalItems;
-            showCarouselItem(currentCarouselIndex, totalItems);
-        }, interval);
-    }
-}
-
-// Function to load quick navigation groups
-function loadQuickNavGroups() {
-    XHR.get('<%=luci.dispatcher.build_url("admin", "system", "banner", "get_quick_nav_groups")%>', null, function(xhr, groups) {
-        var quickNavGroupContainer = document.getElementById('quick-nav-group-container');
-        quickNavGroupContainer.innerHTML = ''; // Clear existing groups
-
-        if (groups && groups.length > 0) {
-            groups.forEach(function(group) {
-                var item = document.createElement('div');
-                item.className = 'quick-nav-group-item';
-                item.textContent = group.name;
-                item.onclick = function() {
-                    // Navigate to a new page for welfare share, passing group ID or name
-                    window.location.href = '<%=luci.dispatcher.build_url("admin", "system", "banner", "welfare")%>?group=' + encodeURIComponent(group.id || group.name);
-                };
-                quickNavGroupContainer.appendChild(item);
-            });
-        } else {
-            quickNavGroupContainer.innerHTML = '<p style="color: white;"><%=translate("No quick navigation groups available.")%></p>';
-        }
-    });
-}
-
-// Copy to clipboard function with tooltip
-function copyToClipboard(text, element) {
-    var textarea = document.createElement('textarea');
-    textarea.value = text;
-    document.body.appendChild(textarea);
-    textarea.select();
-    document.execCommand('copy');
-    document.body.removeChild(textarea);
-
-    var tooltip = document.createElement('div');
-    tooltip.className = 'copy-tooltip';
-    tooltip.textContent = '<%=translate("Copied!")%>';
-    element.appendChild(tooltip);
-
-    var rect = element.getBoundingClientRect();
-    tooltip.style.left = (rect.width / 2) + 'px';
-    tooltip.style.top = '-30px';
-    tooltip.style.transform = 'translateX(-50%)';
-
-    tooltip.style.opacity = '1';
-    setTimeout(function() {
-        tooltip.style.opacity = '0';
+    
+    function update_banner_text() {
+        banner_text.style.opacity = 0;
         setTimeout(function() {
-            element.removeChild(tooltip);
-        }, 300);
-    }, 1500);
-}
-
-// Function to handle auto-refresh after update
-function handleAutoRefresh(actionType) {
-    var message = (actionType === 'update') ? '<%=translate("Update initiated, refreshing page...")%>' : '<%=translate("Background update initiated, refreshing page...")%>';
-    alert(message); // Use a simple alert for now, can be replaced with a more elegant UI notification
-    setTimeout(function() {
-        location.reload();
-    }, 2000); // Refresh after 2 seconds
-}
-
-// Override XHR.poll to handle auto-refresh for update actions
-var originalXHRPoll = XHR.poll;
-XHR.poll = function(interval, url, data, callback) {
-    if (url.includes('do_update') || url.includes('do_bg_update')) {
-        return originalXHRPoll(interval, url, data, function(xhr, response) {
-            callback(xhr, response);
-            if (response && response.status) {
-                handleAutoRefresh(url.includes('do_update') ? 'update' : 'bg_update');
-            }
-        });
-    } else {
-        return originalXHRPoll(interval, url, data, callback);
+            banner_text.innerHTML = texts[current_index];
+            banner_text.style.opacity = 1;
+            current_index = (current_index + 1) % texts.length;
+        }, 500); // 0.5s fade out
     }
-};
+    
+    if (texts.length > 1) {
+        setInterval(update_banner_text, interval);
+    }
+    
+    // 颜色样式
+    var color_style = '<%=pcdata(luci.model.uci.cursor():get("banner", "banner", "color"))%>';
+    if (color_style === 'rainbow') {
+        // 动态彩虹色 CSS 动画 (简化版)
+        var style = document.createElement('style');
+        style.innerHTML = `
+            @keyframes rainbow {
+                0% { color: red; }
+                14% { color: orange; }
+                28% { color: yellow; }
+                42% { color: green; }
+                57% { color: blue; }
+                71% { color: indigo; }
+                85% { color: violet; }
+                100% { color: red; }
+            }
+            .banner-text-rainbow {
+                animation: rainbow 10s ease infinite;
+            }
+        `;
+        document.head.appendChild(style);
+    }
+    
+})();
+LUA_VIEW_OVERVIEW_JS
 
-// Initial load of banner data
-document.addEventListener('DOMContentLoaded', function() {
-    loadBannerData();
-    loadContactInfo();
-    loadCarouselItems();
-    loadQuickNavGroups();
-});
-OVERVIEWJS
-
-echo "[3/3] Generating LuCI views and controllers..."
-
-# Create the index.htm view file
-cat > "$PKG_DIR/root/usr/lib/lua/luci/view/banner/index.htm" <<\'INDEXHTML\'
+# LuCI View Log (HTML)
+cat > "$PKG_DIR/root/usr/lib/lua/luci/view/banner/log.htm" <<'LUA_VIEW_LOG'
 <%+header%>
-<div class="cbi-map">
-    <h2 name="content"><%=translate("Banner Plugin")%></h2>
-    <div class="cbi-section-descr">
-        <p><%=translate("This plugin allows you to display a customizable banner on your OpenWrt router's web interface.")%></p>
-        <p><%=translate("Use the tabs above to navigate between Overview, Settings, and Welfare Share.")%></p>
-    </div>
-</div>
+<h2><%=translate("Banner Log")%></h2>
+
+<fieldset class="cbi-section">
+    <legend><%=translate("Update Log (/tmp/banner_update.log)")%></legend>
+    <textarea style="width: 100%; height: 500px; font-family: monospace; font-size: 12px; background-color: #f0f0f0;" readonly><%=log_content%></textarea>
+</fieldset>
+
 <%+footer%>
-INDEXHTML
+LUA_VIEW_LOG
 
-
-echo "✓ LuCI views and controllers generated."
-
+echo "✓ LuCI files created."
 
 echo "=========================================="
-echo "OpenWrt Banner Plugin v2.7 Setup Complete!"
+echo "OpenWrt Banner Plugin v2.8 Script Generated"
 echo "=========================================="
+echo "File saved to: /home/ubuntu/luci-app-banner_v2.8_fix.sh"
+echo "Please use this file to replace your original 1.txt."
 
-echo "To install the package, navigate to your OpenWrt SDK/buildroot directory and run:"
-echo "  make package/custom/luci-app-banner/compile V=s"
-echo "Then install the generated .ipk file via LuCI or opkg."

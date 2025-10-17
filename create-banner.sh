@@ -1316,8 +1316,9 @@ module("luci.controller.banner", package.seeall)
 
 function index()
     entry({"admin", "status", "banner"}, alias("admin", "status", "banner", "display"), _("福利导航"), 98).dependent = false
-    entry({"admin", "status", "banner", "display"}, call("action_display"), _("首页展示"), 1)
-    entry({"admin", "status", "banner", "settings"}, call("action_settings"), _("远程更新/背景设置"), 2)
+    entry({"admin", "status", "banner", "display"}, call("action_display"), _("首页"), 1)
+    entry({"admin", "status", "banner", "navigation"}, call("action_navigation"), _("导航展示"), 2)
+    entry({"admin", "status", "banner", "settings"}, call("action_settings"), _("设置"), 3)
     
     -- 重构为纯 API 接口,供前端 AJAX 调用
     entry({"admin", "status", "banner", "api_update"}, post("api_update")).leaf = true
@@ -1329,7 +1330,7 @@ function index()
     entry({"admin", "status", "banner", "api_set_carousel_interval"}, post("api_set_carousel_interval")).leaf = true
     entry({"admin", "status", "banner", "api_set_update_url"}, post("api_set_update_url")).leaf = true
     entry({"admin", "status", "banner", "api_reset_defaults"}, post("api_reset_defaults")).leaf = true
-    
+    entry({"admin", "status", "banner", "api_clear_logs"}, post("api_clear_logs")).leaf = true
     -- 保留用于文件上传和URL表单提交的旧入口
     entry({"admin", "status", "banner", "do_upload_bg"}, post("action_do_upload_bg")).leaf = true
     entry({"admin", "status", "banner", "do_apply_url"}, post("action_do_apply_url")).leaf = true
@@ -1393,7 +1394,43 @@ function action_settings()
 end
 
 
-
+function action_navigation()
+    local uci = require("uci").cursor()
+    local fs = require("nixio.fs")
+    
+    -- 检查是否被禁用
+    if uci:get("banner", "banner", "bg_enabled") == "0" then
+        local contact_email = uci:get("banner", "banner", "contact_email") or "example@email.com"
+        local contact_telegram = uci:get("banner", "banner", "contact_telegram") or "@fgnb111999"
+        local contact_qq = uci:get("banner", "banner", "contact_qq") or "183452852"
+        luci.template.render("banner/navigation", { 
+            bg_enabled = "0", 
+            remote_message = uci:get("banner", "banner", "remote_message") or "服务已被远程禁用",
+            contact_email = contact_email,
+            contact_telegram = contact_telegram,
+            contact_qq = contact_qq
+        })
+        return
+    end
+    
+    -- 加载导航数据
+    local nav_data = { nav_tabs = {} }
+    pcall(function() 
+        nav_data = require("luci.jsonc").parse(fs.readfile("/tmp/banner_cache/nav_data.json")) 
+    end)
+    
+    local persistent = uci:get("banner", "banner", "persistent_storage") or "0"
+    local opacity = tonumber(uci:get("banner", "banner", "opacity") or "50")
+    if not opacity or opacity < 0 or opacity > 100 then opacity = 50 end
+    
+    luci.template.render("banner/navigation", { 
+        nav_data = nav_data, 
+        persistent = persistent,
+        opacity = opacity,
+        bg_enabled = "1",
+        token = luci.dispatcher.context.authsession
+    })
+end
 -- ================== 以下是重构后的 API 函数 ==================
 
 function api_update()
@@ -1734,6 +1771,11 @@ function action_do_apply_url()
     -- 重定向回背景设置页面
     luci.http.redirect(luci.dispatcher.build_url("admin/status/banner/settings")) -- 重定向到 settings
 end
+function api_clear_logs()
+    luci.sys.call("echo '' > /tmp/banner_update.log 2>/dev/null")
+    luci.sys.call("echo '' > /tmp/banner_bg.log 2>/dev/null")
+    json_response({ success = true, message = "日志已清空" })
+end
 CONTROLLER
 
 # Global style view
@@ -1968,12 +2010,8 @@ cat > "$PKG_DIR/root/usr/lib/lua/luci/view/banner/display.htm" <<'DISPLAYVIEW'
                         </div>
                     </div>
                     <div class="file-action">
-                        <% if file.type == "url" then %>
-                            <a href="<%=pcdata(file.url)%>" target="_blank" rel="noopener noreferrer" class="action-btn visit-btn">访问</a>
-                        <% else %>
-                            <button class="action-btn download-btn" onclick="downloadFile('<%=pcdata(file.url)%>', '<%=pcdata(file.name)%>')">下载</button>
-                        <% end %>
-                    </div>
+    <a href="<%=pcdata(file.url)%>" target="_blank" rel="noopener noreferrer" class="action-btn visit-btn">访问</a>
+</div>
                 </div>
                 <% end %>
             </div>
@@ -1990,44 +2028,31 @@ cat > "$PKG_DIR/root/usr/lib/lua/luci/view/banner/display.htm" <<'DISPLAYVIEW'
         <% end %>
         
         <div class="banner-contacts">
-            <div class="contact-card"><div class="contact-info"><span>📧 邮箱</span><strong><%=contact_email%></strong></div><button class="copy-btn" onclick="copyText('<%=contact_email%>')">复制</button></div>
-            <div class="contact-card"><div class="contact-info"><span>📱 Telegram</span><strong><%=contact_telegram%></strong></div><button class="copy-btn" onclick="copyText('<%=contact_telegram%>')">复制</button></div>
-            <div class="contact-card"><div class="contact-info"><span>💬 QQ</span><strong><%=contact_qq%></strong></div><button class="copy-btn" onclick="copyText('<%=contact_qq%>')">复制</button></div>
-        </div>
-
-        <% if nav_data and nav_data.nav_tabs then %>
-        <div class="nav-section">
-            <h3>🚀 快速导航</h3>
-            <div class="nav-groups" id="nav-groups">
-                <% for i, tab in ipairs(nav_data.nav_tabs) do %>
-                <div class="nav-group" data-page="<%=math.ceil(i/4)%>" style="display:none">
-                    <div class="nav-group-title" onclick="toggleLinks(this.parentElement)">
-                        <% if tab.icon then %><img src="<%=pcdata(tab.icon)%>"><% end %>
-                        <%=pcdata(tab.title)%>
-                    </div>
-                    <div class="nav-links">
-                        <% for _, link in ipairs(tab.links) do %>
-                        <a href="<%=pcdata(link.url)%>" target="_blank" rel="noopener noreferrer" title="<%=pcdata(link.desc or '')%>"><%=pcdata(link.name)%></a>
-                        <% end %>
-                    </div>
-                </div>
-                <% end %>
-            </div>
-            <div class="pagination">
-                <button onclick="changePage(-1)">◀</button>
-                <span id="page-info" style="color:white;vertical-align:middle;margin:0 10px;"></span>
-                <button onclick="changePage(1)">▶</button>
-            </div>
-        </div>
-        <% end %>
-    </div>
+    <% 
+    local contacts = {}
+    -- 默认内置联系方式
+    table.insert(contacts, {icon="📧", label="邮箱", value=contact_email or "niwo5507@gmail.com"})
+    table.insert(contacts, {icon="📱", label="Telegram", value=contact_telegram or "@fgnb111999"})
+    table.insert(contacts, {icon="💬", label="QQ", value=contact_qq or "183452852"})
     
-    <div class="bg-selector">
-        <% for i = 0, 2 do %>
-        <div class="bg-circle" style="background-image:url(/luci-static/banner/bg<%=i%>.jpg?t=<%=os.time()%>)" onclick="changeBg(<%=i%>)" title="切换背景 <%=i+1%>"></div>
-        <% end %>
+    -- 从远程JSON加载额外联系方式
+    if nav_data and nav_data.contacts then
+        for _, c in ipairs(nav_data.contacts) do
+            table.insert(contacts, c)
+        end
+    end
+    
+    for _, contact in ipairs(contacts) do
+    %>
+    <div class="contact-card">
+        <div class="contact-info">
+            <span><%=contact.icon%> <%=pcdata(contact.label)%></span>
+            <strong><%=pcdata(contact.value)%></strong>
+        </div>
+        <button class="copy-btn" onclick="copyText('<%=pcdata(contact.value)%>')">复制</button>
     </div>
-<% end %>
+    <% end %>
+</div>
 
 <script type="text/javascript">
 var images = document.querySelectorAll('.carousel img'), current = 0;
@@ -2060,9 +2085,32 @@ showPage(1);
 
 function toggleLinks(el) { 
     if (window.innerWidth <= 768) {
-        el.querySelector('.nav-links').classList.toggle('active'); 
+        // 手机模式下点击标题不折叠，始终展开
+        return;
     }
 }
+
+// 手机模式初始化：确保当前页的导航组始终展开
+function initMobileNav() {
+    if (window.innerWidth <= 768) {
+        document.querySelectorAll('.nav-group').forEach(function(g) {
+            if (g.style.display !== 'none') {
+                g.querySelector('.nav-links').classList.add('active');
+            }
+        });
+    }
+}
+
+// 页面加载和切换时调用
+if (typeof showPage !== 'undefined') {
+    var originalShowPage = showPage;
+    showPage = function(page) {
+        originalShowPage(page);
+        initMobileNav();
+    };
+}
+window.addEventListener('DOMContentLoaded', initMobileNav);
+window.addEventListener('resize', initMobileNav);
 
 function changeBg(n) {
     var formData = new URLSearchParams();
@@ -2166,6 +2214,356 @@ if (document.querySelector('.file-carousel')) {
 </script>
 <%+footer%>
 DISPLAYVIEW
+
+# Navigation view
+cat > "$PKG_DIR/root/usr/lib/lua/luci/view/banner/navigation.htm" <<'NAVIGATIONVIEW'
+<%+header%>
+<%+banner/global_style%>
+<style>
+.nav-container {
+    background: rgba(0,0,0,.3);
+    border-radius: 15px;
+    padding: 20px;
+    margin: 20px auto;
+    width: 100%;
+    max-width: 1200px;
+    box-sizing: border-box;
+}
+
+.nav-section h2 {
+    color: #fff;
+    text-align: center;
+    margin-bottom: 30px;
+    font-size: 28px;
+    text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
+}
+
+/* 电脑模式：网格布局 */
+@media (min-width: 769px) {
+    .nav-groups {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        gap: 20px;
+    }
+    
+    .nav-group {
+        background: rgba(0,0,0,.3);
+        border: 1px solid rgba(255,255,255,.15);
+        border-radius: 10px;
+        padding: 15px;
+        transition: all .3s;
+    }
+    
+    .nav-group:hover {
+        transform: translateY(-3px);
+        border-color: #4fc3f7;
+    }
+    
+    .nav-group-title {
+        font-size: 18px;
+        font-weight: 700;
+        color: #fff;
+        text-align: center;
+        margin-bottom: 10px;
+        padding: 10px;
+        background: rgba(102,126,234,.6);
+        border-radius: 8px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+    }
+    
+    .nav-links {
+        display: none;
+        flex-direction: column;
+        padding: 10px 0;
+        max-height: 400px;
+        overflow-y: auto;
+    }
+    
+    .nav-group:hover .nav-links {
+        display: flex !important;
+    }
+}
+
+/* 手机模式：分页布局 */
+@media (max-width: 768px) {
+    .nav-groups {
+        display: block;
+    }
+    
+    .nav-group {
+        background: rgba(0,0,0,.3);
+        border: 1px solid rgba(255,255,255,.15);
+        border-radius: 10px;
+        padding: 15px;
+        margin-bottom: 20px;
+        display: none; /* 默认隐藏 */
+    }
+    
+    .nav-group.active {
+        display: block; /* 只显示当前页 */
+    }
+    
+    .nav-group-title {
+        font-size: 18px;
+        font-weight: 700;
+        color: #fff;
+        text-align: center;
+        margin-bottom: 15px;
+        padding: 12px;
+        background: rgba(102,126,234,.6);
+        border-radius: 8px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+    
+    .nav-links {
+        display: flex !important; /* 手机模式始终展开 */
+        flex-direction: column;
+        padding: 10px 0;
+        max-height: none; /* 不限制高度 */
+        overflow-y: visible;
+    }
+}
+
+.nav-group-title img {
+    width: 24px;
+    height: 24px;
+    margin-right: 8px;
+}
+
+.nav-links a {
+    display: block;
+    color: #4fc3f7;
+    text-decoration: none;
+    padding: 12px 15px;
+    margin: 5px 0;
+    border-radius: 5px;
+    background: rgba(255,255,255,.1);
+    transition: all .2s;
+    font-size: 15px;
+}
+
+.nav-links a:hover {
+    background: rgba(79,195,247,.3);
+    transform: translateX(5px);
+}
+
+.pagination {
+    text-align: center;
+    margin-top: 30px;
+    display: none; /* 电脑模式隐藏 */
+}
+
+@media (max-width: 768px) {
+    .pagination {
+        display: block; /* 手机模式显示 */
+    }
+}
+
+.pagination button {
+    background: rgba(66,139,202,.9);
+    border: 1px solid rgba(255,255,255,.3);
+    color: #fff;
+    padding: 10px 20px;
+    margin: 0 8px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-weight: 700;
+    font-size: 14px;
+    transition: all .3s;
+}
+
+.pagination button:hover:not(:disabled) {
+    background: rgba(66,139,202,1);
+    transform: translateY(-2px);
+}
+
+.pagination button:disabled {
+    background: rgba(100,100,100,.5);
+    cursor: not-allowed;
+    opacity: 0.5;
+}
+
+.page-indicator {
+    display: inline-block;
+    color: #fff;
+    font-weight: 700;
+    font-size: 16px;
+    vertical-align: middle;
+    margin: 0 15px;
+}
+
+.disabled-message {
+    background: rgba(217,83,79,.8);
+    color: #fff;
+    padding: 20px;
+    border-radius: 10px;
+    text-align: center;
+    font-weight: 700;
+    margin-bottom: 20px;
+}
+
+.bg-selector {
+    position: fixed;
+    bottom: 30px;
+    right: 30px;
+    display: flex;
+    gap: 12px;
+    z-index: 999;
+}
+
+.bg-circle {
+    width: 50px;
+    height: 50px;
+    border-radius: 50%;
+    border: 3px solid rgba(255,255,255,.8);
+    background-size: cover;
+    cursor: pointer;
+    transition: all .3s;
+}
+
+.bg-circle:hover {
+    transform: scale(1.15);
+    border-color: #4fc3f7;
+}
+
+@media (max-width: 768px) {
+    .bg-selector {
+        bottom: 15px;
+        right: 15px;
+        gap: 8px;
+    }
+    .bg-circle {
+        width: 40px;
+        height: 40px;
+    }
+}
+</style>
+
+<% if bg_enabled == "0" then %>
+    <div class="nav-container">
+        <div class="disabled-message">
+            <h3 style="color:#fff;margin-bottom:15px;">⚠️ 服务已暂停</h3>
+            <p><%= pcdata(remote_message) %></p>
+        </div>
+    </div>
+<% else %>
+    <div class="nav-container">
+        <% if nav_data and nav_data.nav_tabs and #nav_data.nav_tabs > 0 then %>
+        <div class="nav-section">
+            <h2>🚀 快速导航</h2>
+            <div class="nav-groups" id="nav-groups">
+                <% for i, tab in ipairs(nav_data.nav_tabs) do %>
+                <div class="nav-group" data-index="<%=i%>">
+                    <div class="nav-group-title">
+                        <% if tab.icon then %><img src="<%=pcdata(tab.icon)%>" alt=""><% end %>
+                        <%=pcdata(tab.title)%>
+                    </div>
+                    <div class="nav-links">
+                        <% if tab.links and #tab.links > 0 then %>
+                            <% for _, link in ipairs(tab.links) do %>
+                            <a href="<%=pcdata(link.url)%>" target="_blank" rel="noopener noreferrer" title="<%=pcdata(link.desc or '')%>">
+                                <%=pcdata(link.name)%>
+                            </a>
+                            <% end %>
+                        <% else %>
+                            <span style="color:#999;padding:10px;">暂无链接</span>
+                        <% end %>
+                    </div>
+                </div>
+                <% end %>
+            </div>
+            
+            <div class="pagination">
+                <button onclick="changePage(-1)" id="prev-btn">◀ 上一组</button>
+                <span class="page-indicator" id="page-info">1 / 1</span>
+                <button onclick="changePage(1)" id="next-btn">下一组 ▶</button>
+            </div>
+        </div>
+        <% else %>
+        <div style="text-align:center;color:#fff;padding:40px;">
+            <p style="font-size:18px;">📭 暂无导航数据</p>
+            <p style="color:#aaa;margin-top:10px;">请前往设置页面执行手动更新</p>
+        </div>
+        <% end %>
+    </div>
+<% end %>
+
+<div class="bg-selector">
+    <% for i = 0, 2 do %>
+    <div class="bg-circle" style="background-image:url(/luci-static/banner/bg<%=i%>.jpg?t=<%=os.time()%>)" onclick="changeBg(<%=i%>)" title="切换背景 <%=i+1%>"></div>
+    <% end %>
+</div>
+
+<script type="text/javascript">
+<% if nav_data and nav_data.nav_tabs and #nav_data.nav_tabs > 0 then %>
+var currentPage = 1;
+var totalGroups = <%=#nav_data.nav_tabs%>;
+
+function changePage(delta) {
+    if (window.innerWidth > 768) return; // 仅手机模式启用分页
+    
+    currentPage = Math.max(1, Math.min(totalGroups, currentPage + delta));
+    showMobilePage(currentPage);
+}
+
+function showMobilePage(page) {
+    if (window.innerWidth > 768) return;
+    
+    var groups = document.querySelectorAll('.nav-group');
+    groups.forEach(function(group, index) {
+        group.classList.toggle('active', (index + 1) === page);
+    });
+    
+    document.getElementById('page-info').textContent = page + ' / ' + totalGroups;
+    document.getElementById('prev-btn').disabled = (page === 1);
+    document.getElementById('next-btn').disabled = (page === totalGroups);
+}
+
+// 响应式处理
+function handleResize() {
+    if (window.innerWidth <= 768) {
+        showMobilePage(currentPage);
+    } else {
+        // 电脑模式显示所有分组
+        document.querySelectorAll('.nav-group').forEach(function(g) {
+            g.classList.remove('active');
+        });
+    }
+}
+
+window.addEventListener('DOMContentLoaded', handleResize);
+window.addEventListener('resize', handleResize);
+<% end %>
+
+function changeBg(n) {
+    var formData = new URLSearchParams();
+    formData.append('token', '<%=token%>');
+    formData.append('bg', n);
+    
+    fetch('<%=luci.dispatcher.build_url("admin/status/banner/api_set_bg")%>', {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => response.json())
+    .then(result => {
+        if (result.success) {
+            window.location.reload();
+        } else {
+            alert('切换失败: ' + result.message);
+        }
+    })
+    .catch(error => {
+        alert('请求失败: ' + error);
+    });
+}
+</script>
+<%+footer%>
+NAVIGATIONVIEW
 # =================== 核心修正 #2：替換 settings.htm (再次確認為完整版) ===================
 cat > "$PKG_DIR/root/usr/lib/lua/luci/view/banner/settings.htm" <<'SETTINGSVIEW'
 <%+header%>
@@ -2315,13 +2713,41 @@ input:checked + .toggle-slider:before { transform: translateX(26px); }
 <div class="cbi-map" style="margin-top:20px;">
     <h2>系统日志</h2>
     <div class="cbi-section-node">
-        <h3>更新日志</h3>
-        <div style="background:rgba(0,0,0,.5);padding:12px;border-radius:8px;max-height:300px;overflow-y:auto;font-family:monospace;font-size:12px;color:#0f0;white-space:pre-wrap" id="log-container"><%=pcdata(log)%></div>
-        
-        <h3 style="margin-top:20px;">背景加载日志</h3>
-        <div style="background:rgba(0,0,0,.5);padding:12px;border-radius:8px;max-height:300px;overflow-y:auto;font-family:monospace;font-size:12px;color:#0f0;white-space:pre-wrap"><%=pcdata(bg_log)%></div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+            <h3 style="margin:0;">运行日志</h3>
+            <button class="cbi-button cbi-button-remove" onclick="clearLogs()">清空日志</button>
+        </div>
+        <div style="background:rgba(0,0,0,.5);padding:12px;border-radius:8px;max-height:400px;overflow-y:auto;font-family:monospace;font-size:12px;color:#0f0;white-space:pre-wrap" id="merged-log-container">
+<%
+local merged_log = "=== 更新日志 ===\n" .. log .. "\n\n=== 背景加载日志 ===\n" .. bg_log
+%><%=pcdata(merged_log)%>
+        </div>
     </div>
 </div>
+
+<script>
+function clearLogs() {
+    if (!confirm('确定要清空所有日志吗？')) return;
+    
+    var formData = new URLSearchParams();
+    formData.append('token', '<%=token%>');
+    
+    fetch('<%=luci.dispatcher.build_url("admin/status/banner/api_clear_logs")%>', {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => response.json())
+    .then(result => {
+        showToast(result.message || '日志已清空', result.success ? 'success' : 'error');
+        if (result.success) {
+            document.getElementById('merged-log-container').textContent = '日志已清空';
+        }
+    })
+    .catch(error => {
+        showToast('清空失败: ' + error.message, 'error');
+    });
+}
+</script>
 
 <script type="text/javascript">
 // ==================== Toast 自动消失提示函数 ====================

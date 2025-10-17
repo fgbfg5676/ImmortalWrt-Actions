@@ -363,15 +363,37 @@ log "========== Cache Cleanup Finished =========="
 CLEANER
 
 # Background loader script
-cat > "$PKG_DIR/root/usr/bin/banner_bg_loader.sh" <<'LOADER'
+cat > "$PKG_DIR/root/usr/bin/banner_bg_loader.sh" <<'BGLOADER'
 #!/bin/sh
-. /usr/share/banner/config.sh
-LOG_FILE="/tmp/banner_bg.log" # 专用的背景日志文件
+BG_GROUP=${1:-1}
 
+# 首先加载配置文件(如果存在)
+if [ -f "/usr/share/banner/config.sh" ]; then
+    . /usr/share/banner/config.sh
+else
+    MAX_FILE_SIZE=3145728
+    CACHE_DIR="/tmp/banner_cache"
+    DEFAULT_BG_PATH="/www/luci-static/banner"
+    PERSISTENT_BG_PATH="/overlay/banner"
+fi
+
+LOG="/tmp/banner_bg.log"
+CACHE="$CACHE_DIR"
+WEB="$DEFAULT_BG_PATH"
+PERSISTENT="$PERSISTENT_BG_PATH"
+# 加载超时配置
+if [ -f "/usr/share/banner/timeouts.conf" ]; then
+    . /usr/share/banner/timeouts.conf
+else
+    LOCK_TIMEOUT=60
+    CURL_CONNECT_TIMEOUT=10
+    CURL_MAX_TIMEOUT=30
+fi
+# 日志函数
 log() {
     local msg="$1"
     local timestamp=$(date '+%Y-%m-%d %H:%M:%S' 2>/dev/null || date)
-    local log_file="${LOG_FILE:-/tmp/banner_bg.log}"
+    local log_file="${LOG:-/tmp/banner_update.log}"
 
     if echo "$msg" | grep -qE 'https?://|[0-9]{1,3}\.[0-9]{1,3}'; then
         msg=$(echo "$msg" | sed -E 's|https?://[^[:space:]]+|[URL]|g' | sed -E 's|[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|[IP]|g')
@@ -404,122 +426,276 @@ log() {
     
     return 0
 }
-
-log "========== Background Loader Started =========="
-
-GROUP="$1"
-if [ -z "$GROUP" ]; then
-    GROUP=$(uci -q get banner.banner.bg_group || echo 1)
-fi
-
-log "Loading background group: $GROUP"
-
-case "$GROUP" in
-    1)
-        URLS="https://raw.githubusercontent.com/fgbfg5676/openwrt-banner/main/bg1.jpg https://raw.githubusercontent.com/fgbfg5676/openwrt-banner/main/bg2.jpg https://raw.githubusercontent.com/fgbfg5676/openwrt-banner/main/bg3.jpg"
-        ;;
-    2)
-        URLS="https://gitee.com/fgbfg5676/openwrt-banner/raw/main/bg1.jpg https://gitee.com/fgbfg5676/openwrt-banner/raw/main/bg2.jpg https://gitee.com/fgbfg5676/openwrt-banner/raw/main/bg3.jpg"
-        ;;
-    3)
-        URLS="https://raw.githubusercontent.com/fgbfg5676/openwrt-banner/main/bg4.jpg https://raw.githubusercontent.com/fgbfg5676/openwrt-banner/main/bg5.jpg https://raw.githubusercontent.com/fgbfg5676/openwrt-banner/main/bg6.jpg"
-        ;;
-    4)
-        URLS="https://gitee.com/fgbfg5676/openwrt-banner/raw/main/bg4.jpg https://gitee.com/fgbfg5676/openwrt-banner/raw/main/bg5.jpg https://gitee.com/fgbfg5676/openwrt-banner/raw/main/bg6.jpg"
-        ;;
-    *)
-        log "[!] Invalid group number: $GROUP. Using default group 1."
-        URLS="https://raw.githubusercontent.com/fgbfg5676/openwrt-banner/main/bg1.jpg https://raw.githubusercontent.com/fgbfg5676/openwrt-banner/main/bg2.jpg https://raw.githubusercontent.com/fgbfg5676/openwrt-banner/main/bg3.jpg"
-        GROUP=1
-        ;;
-esac
-
-# 确定目标目录
-PERSISTENT=$(uci -q get banner.banner.persistent_storage || echo 0)
-if [ "$PERSISTENT" = "1" ]; then
-    DEST_DIR="$PERSISTENT_BG_PATH"
-else
-    DEST_DIR="$DEFAULT_BG_PATH"
-fi
-
-log "Target directory: $DEST_DIR (Persistent: $PERSISTENT)"
-
-# 确保目标目录存在
-mkdir -p "$DEST_DIR" 2>/dev/null
-
-INDEX=0
-SUCCESS_COUNT=0
-for URL in $URLS; do
-    log "Downloading bg$INDEX.jpg from $URL"
+# ==================== 🔒 JPEG验证函数 ====================
+validate_jpeg() {
+    local file="$1"
     
-    # 使用 curl 下载，设置超时和文件大小限制
-    if curl -fLsS --connect-timeout 10 --max-time 30 --max-filesize "$MAX_FILE_SIZE" "$URL" -o "$DEST_DIR/bg$INDEX.tmp"; then
+    # 检查文件是否存在且非空
+    if [ ! -s "$file" ]; then
+        log "[✗] File is empty or does not exist: $file"
+        return 1
+    fi
+    
+    # 使用 file 命令检查文件类型
+    if command -v file >/dev/null 2>&1; then
+        if file "$file" 2>/dev/null | grep -qiE 'JPEG|JPG'; then
+            log "[✓] Valid JPEG file: $file"
+            return 0
+        else
+            log "[✗] Not a valid JPEG file: $file"
+            return 1
+        fi
+    else
+        # 如果没有 file 命令,检查文件头部魔术字节
+        # JPEG文件以 FF D8 FF 开头
+        local header=$(hexdump -n 3 -e '3/1 "%02X"' "$file" 2>/dev/null)
+        if [ "${header:0:4}" = "FFD8" ]; then
+            log "[✓] Valid JPEG file (header check): $file"
+            return 0
+        else
+            log "[✗] Invalid JPEG header: $file"
+            return 1
+        fi
+    fi
+}
+
+# ==================== 🔒 URL验证函数 ====================
+validate_url() {
+    local url="$1"
+    case "$url" in
+        http://*|https://*) 
+            return 0
+            ;;
+        *)
+            log "[✗] Invalid URL format: $url"
+            return 1
+            ;;
+    esac
+}
+# ==================== 新的 flock 锁机制 ====================
+
+LOCK_FD=202
+LOCK_FILE="/var/lock/banner_bg_loader.lock"
+
+acquire_lock() {
+    local timeout="${1:-60}"
+    mkdir -p /var/lock 2>/dev/null
+    
+    eval "exec $LOCK_FD>&-" 2>/dev/null || true
+    
+    eval "exec $LOCK_FD>$LOCK_FILE" || {
+        log "[ERROR] Failed to open lock file"
+        return 1
+    }
+    
+    if flock -w "$timeout" "$LOCK_FD" 2>/dev/null; then
+        log "[LOCK] Successfully acquired bg_loader lock (FD: $LOCK_FD)"
+        return 0
+    else
+        log "[ERROR] Failed to acquire lock after ${timeout}s"
+        eval "exec $LOCK_FD>&-" 2>/dev/null || true
+        return 1
+    fi
+}
+
+release_lock() {
+    if [ -n "$LOCK_FD" ]; then
+        flock -u "$LOCK_FD" 2>/dev/null
+        eval "exec $LOCK_FD>&-"
+    fi
+}
+
+cleanup() {
+    release_lock
+    rm -f "$CACHE/bg_loading"
+}
+trap cleanup EXIT INT TERM
+
+# 动态决定存储路径
+if ! command -v uci >/dev/null 2>&1; then
+    DEST="$WEB"
+else
+    [ "$(uci -q get banner.banner.persistent_storage)" = "1" ] && DEST="$PERSISTENT" || DEST="$WEB"
+fi
+
+mkdir -p "$CACHE" "$WEB" "$PERSISTENT"
+
+# 等待 nav_data.json
+JSON="$CACHE/nav_data.json"
+WAIT_COUNT=0
+while [ ! -f "$JSON" ] && [ $WAIT_COUNT -lt 5 ]; do
+    log "Waiting for nav_data.json... ($WAIT_COUNT/5)"
+    sleep 1
+    WAIT_COUNT=$((WAIT_COUNT + 1))
+done
+
+if [ ! -f "$JSON" ]; then
+    log "[!] nav_data.json not found, will use cached backgrounds if available."
+    for i in 0 1 2; do
+        if [ -f "$DEST/bg${i}.jpg" ]; then
+            cp "$DEST/bg${i}.jpg" "$WEB/current_bg.jpg" 2>/dev/null
+            log "[i] Using cached bg${i}.jpg as fallback"
+            exit 0
+        fi
+    done
+    exit 1
+fi
+
+# 获取锁
+if ! acquire_lock 60; then
+    log "[ERROR] Failed to acquire lock, exiting"
+    exit 1
+fi
+
+log "Loading background group ${BG_GROUP}..."
+echo "loading" > "$CACHE/bg_loading"
+rm -f "$CACHE/bg_complete"
+
+START_IDX=$(( (BG_GROUP - 1) * 3 + 1 ))
+if ! jq empty "$JSON" 2>/dev/null; then
+    log "[×] JSON format error in nav_data.json"; rm -f "$CACHE/bg_loading"; exit 1
+fi
+
+rm -f "$DEST"/bg{0,1,2}.jpg
+if [ "$(uci -q get banner.banner.persistent_storage)" = "1" ]; then
+    rm -f "$WEB"/bg{0,1,2}.jpg
+fi
+
+MAX_SIZE=$(uci -q get banner.banner.max_file_size || echo "$MAX_FILE_SIZE")
+log "Using max file size limit: $MAX_SIZE bytes."
+
+DOWNLOAD_SUCCESS=0
+for i in 0 1 2; do
+    KEY="background_$((START_IDX + i))"
+    URL=$(jsonfilter -i "$JSON" -e "@.$KEY" 2>/dev/null)
+    if [ -n "$URL" ] && validate_url "$URL"; then
+        log "  Downloading image for bg${i}.jpg..."
+        TMPFILE="$DEST/bg$i.tmp"
         
-        # 验证文件大小
-        FILE_SIZE=$(wc -c < "$DEST_DIR/bg$INDEX.tmp" 2>/dev/null || echo 0)
-        if [ "$FILE_SIZE" -gt "$MAX_FILE_SIZE" ]; then
-            log "[!] bg$INDEX.jpg size ($FILE_SIZE) exceeds limit ($MAX_FILE_SIZE). Skipping."
-            rm -f "$DEST_DIR/bg$INDEX.tmp"
-            INDEX=$((INDEX + 1))
+       log "  Attempting download from: $(echo "$URL" | sed 's|https?://[^/]*/|.../|' )"
+        
+        # 修复: 简化HTTP请求,使用3次重试
+        DOWNLOAD_OK=0
+        for attempt in 1 2 3; do
+            HTTP_CODE=$(curl -sL --connect-timeout 10 --max-time 20 -w "%{http_code}" -o "$TMPFILE" "$URL" 2>/dev/null)
+            
+            if [ "$HTTP_CODE" = "200" ] && [ -s "$TMPFILE" ]; then
+                DOWNLOAD_OK=1
+                log "  [√] Download successful on attempt $attempt (HTTP $HTTP_CODE)"
+                break
+            else
+                log "  [×] Attempt $attempt failed (HTTP: ${HTTP_CODE:-timeout})"
+                rm -f "$TMPFILE"
+                [ $attempt -lt 3 ] && sleep 2
+            fi
+        done
+        
+        if [ $DOWNLOAD_OK -eq 0 ]; then
+            log "  [×] All 3 download attempts failed"
             continue
         fi
         
-        # 验证文件类型 (简单检查)
-        if file "$DEST_DIR/bg$INDEX.tmp" | grep -qiE 'JPEG|JPG'; then
-            mv "$DEST_DIR/bg$INDEX.tmp" "$DEST_DIR/bg$INDEX.jpg"
-            chmod 644 "$DEST_DIR/bg$INDEX.jpg"
-            log "✓ bg$INDEX.jpg downloaded and saved."
-            SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
+        if [ ! -s "$TMPFILE" ]; then
+            log "  [×] Download failed for $URL (empty file)"
+            rm -f "$TMPFILE"
+            continue
+        fi
+        
+        FILE_SIZE=$(stat -c %s "$TMPFILE" 2>/dev/null || wc -c < "$TMPFILE" 2>/dev/null || echo 999999999)
+        if [ "$FILE_SIZE" -gt "$MAX_SIZE" ]; then
+            log "  [×] File too large: $FILE_SIZE bytes (limit: $MAX_SIZE)"
+            rm -f "$TMPFILE"
+            continue
+        fi
+
+        if head -n 1 "$TMPFILE" 2>/dev/null | grep -q "<!DOCTYPE\|<html"; then
+            log "  [×] Downloaded HTML instead of image (possible redirect/block)"
+            rm -f "$TMPFILE"
+            continue
+        fi
+
+        if validate_jpeg "$TMPFILE"; then
+            mv "$TMPFILE" "$DEST/bg$i.jpg"
+            chmod 644 "$DEST/bg$i.jpg"
+            log "  [√] bg${i}.jpg downloaded and validated successfully."
+            DOWNLOAD_SUCCESS=1
+            # 如果启用了永久存储,也复制一份到 Web 目录
+            if [ "$(uci -q get banner.banner.persistent_storage)" = "1" ]; then
+                cp "$DEST/bg$i.jpg" "$WEB/bg$i.jpg" 2>/dev/null
+            fi
+            # 总是将第一张成功下载的图片设为默认的 current_bg
+            if [ ! -f "$WEB/current_bg.jpg" ]; then
+                cp "$DEST/bg$i.jpg" "$WEB/current_bg.jpg" 2>/dev/null
+            fi
         else
-            log "[!] bg$INDEX.tmp is not a valid JPEG file. Skipping."
-            rm -f "$DEST_DIR/bg$INDEX.tmp"
+            log "  [×] Downloaded file for bg${i}.jpg is invalid or not a JPEG."
+            rm -f "$TMPFILE"
         fi
     else
-        log "[!] Failed to download bg$INDEX.jpg from $URL."
+        log "  [×] No valid URL found for ${KEY}."
     fi
-    
-    INDEX=$((INDEX + 1))
 done
 
-# 确保 bg0.jpg 存在，如果不存在，使用内置的
-if [ ! -f "$DEST_DIR/bg0.jpg" ]; then
-    log "[!] bg0.jpg not found. Copying built-in default."
-    cp -f /usr/share/banner/bg0.jpg "$DEST_DIR/bg0.jpg" 2>/dev/null
-    chmod 644 "$DEST_DIR/bg0.jpg"
+if [ $DOWNLOAD_SUCCESS -eq 0 ]; then
+    log "[!] No images were downloaded for group ${BG_GROUP}. Keeping existing images if any."
 fi
 
-# 更新当前背景
-CURRENT_BG=$(uci -q get banner.banner.current_bg || echo 0)
-if [ -f "$DEST_DIR/bg$CURRENT_BG.jpg" ]; then
-    cp -f "$DEST_DIR/bg$CURRENT_BG.jpg" "$DEFAULT_BG_PATH/current_bg.jpg" 2>/dev/null
-    chmod 644 "$DEFAULT_BG_PATH/current_bg.jpg"
-    log "✓ Current background updated to bg$CURRENT_BG.jpg."
+# 强制更新逻辑:如果有新图下载成功,自动设为 bg0
+if [ $DOWNLOAD_SUCCESS -eq 1 ]; then
+    if [ -s "$DEST/bg0.jpg" ]; then
+        # 第一步:更新 current_bg.jpg
+        cp "$DEST/bg0.jpg" "$WEB/current_bg.jpg" 2>/dev/null
+        log "[✓] Auto-updated current_bg.jpg to bg0.jpg from new group"
+        
+        # 第二步:🪄 同步到初始化背景目录(关键步骤)
+        if [ -d "/usr/share/banner" ]; then
+            cp "$DEST/bg0.jpg" "/usr/share/banner/bg0.jpg" 2>/dev/null
+            log "[✓] Synced to initialization background (/usr/share/banner/bg0.jpg)"
+        fi
+        
+        # 第三步:更新 UCI 配置
+        if command -v uci >/dev/null 2>&1; then
+            uci set banner.banner.current_bg='0' 2>/dev/null
+            uci commit banner 2>/dev/null
+            log "[✓] UCI updated: current_bg set to 0"
+        fi
+    fi
 else
-    log "[!] Current background bg$CURRENT_BG.jpg not found. Using bg0.jpg."
-    cp -f "$DEST_DIR/bg0.jpg" "$DEFAULT_BG_PATH/current_bg.jpg" 2>/dev/null
-    chmod 644 "$DEFAULT_BG_PATH/current_bg.jpg"
+    # 兜底:如果没下载成功,保持现有背景
+    if [ ! -s "$WEB/current_bg.jpg" ]; then
+        log "[!] current_bg.jpg is missing. Attempting to restore from existing backgrounds."
+        for i in 0 1 2; do
+            if [ -s "$DEST/bg${i}.jpg" ]; then
+                cp "$DEST/bg${i}.jpg" "$WEB/current_bg.jpg" 2>/dev/null
+                log "[i] Restored current_bg.jpg from bg${i}.jpg"
+                break
+            fi
+        done
+    fi
 fi
 
-# 如果是永久存储，同步到 /www/luci-static/banner
-if [ "$PERSISTENT" = "1" ]; then
-    log "Syncing persistent images to web directory."
-    cp -f "$DEST_DIR"/bg*.jpg "$DEFAULT_BG_PATH/" 2>/dev/null
-    chmod 644 "$DEFAULT_BG_PATH"/bg*.jpg
-fi
-
-log "========== Background Loader Finished (Success: $SUCCESS_COUNT/3) =========="
-LOADER
+log "[Complete] Background loading for group ${BG_GROUP} finished."
+rm -f "$CACHE/bg_loading"
+echo "complete" > "$CACHE/bg_complete"
+BGLOADER
 
 # Manual update script
-cat > "$PKG_DIR/root/usr/bin/banner_manual_update.sh" <<'UPDATER'
-#!/bin/sh
-. /usr/share/banner/config.sh
-. /usr/share/banner/timeouts.conf
-
+cat > "$PKG_DIR/root/usr/bin/banner_manual_update.sh" <<'MANUALUPDATE'
+LOG="/tmp/banner_update.log"
+CACHE=$(uci -q get banner.banner.cache_dir || echo "/tmp/banner_cache")
+# 加载超时配置
+if [ -f "/usr/share/banner/timeouts.conf" ]; then
+    . /usr/share/banner/timeouts.conf
+else
+    LOCK_TIMEOUT=60
+    CURL_CONNECT_TIMEOUT=10
+    CURL_MAX_TIMEOUT=30
+fi
+# 日志函数（保持不变）
 log() {
     local msg="$1"
     local timestamp=$(date '+%Y-%m-%d %H:%M:%S' 2>/dev/null || date)
-    local log_file="${LOG_FILE:-/tmp/banner_update.log}"
+    local log_file="${LOG:-/tmp/banner_update.log}"
 
     if echo "$msg" | grep -qE 'https?://|[0-9]{1,3}\.[0-9]{1,3}'; then
         msg=$(echo "$msg" | sed -E 's|https?://[^[:space:]]+|[URL]|g' | sed -E 's|[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|[IP]|g')
@@ -552,16 +728,103 @@ log() {
     
     return 0
 }
+# ==================== 🔒 URL验证函数 ====================
+validate_url() {
+    local url="$1"
+    # 检查URL格式
+    case "$url" in
+        http://*|https://*) 
+            # URL必须以http或https开头
+            return 0
+            ;;
+        *)
+            log "[✗] Invalid URL format: $url"
+            return 1
+            ;;
+    esac
+}
+# ==================== 新的 flock 锁机制 ====================
 
-# 确保只运行一个实例
-LOCK_FILE="/var/lock/banner_update.lock"
-if [ -f "$LOCK_FILE" ]; then
-    log "[!] Update already running. Exiting."
+LOCK_FD=200
+LOCK_FILE="/var/lock/banner_manual_update.lock"
+
+acquire_lock() {
+    local timeout="${1:-60}"
+    
+    mkdir -p /var/lock 2>/dev/null
+
+    eval "exec $LOCK_FD>&-" 2>/dev/null || true
+    
+    eval "exec $LOCK_FD>$LOCK_FILE" || {
+        log "[ERROR] Failed to open lock file"
+        return 1
+    }
+    
+    if flock -w "$timeout" "$LOCK_FD" 2>/dev/null; then
+        log "[LOCK] Successfully acquired lock (FD: $LOCK_FD)"
+        return 0
+    else
+        log "[ERROR] Failed to acquire lock after ${timeout}s timeout"
+        eval "exec $LOCK_FD>&-" 2>/dev/null || true
+        return 1
+    fi
+}
+
+# 释放锁
+release_lock() {
+    if [ -n "$LOCK_FD" ]; then
+        log "[LOCK] Releasing lock (FD: $LOCK_FD)"
+        flock -u "$LOCK_FD" 2>/dev/null
+        eval "exec $LOCK_FD>&-"  # 关闭文件描述符
+    fi
+}
+
+# 设置清理陷阱
+cleanup() {
+    release_lock
+    log "[CLEANUP] Script exiting"
+}
+trap cleanup EXIT INT TERM
+
+# ==================== 主逻辑开始 ====================
+
+# 检查 UCI 配置
+if [ ! -f "/etc/config/banner" ]; then
+    log "[×] UCI 配置文件 /etc/config/banner 不存在，创建默认配置"
+    cat > /etc/config/banner <<'EOF'
+config banner 'banner'
+    option text '默认横幅文本'
+    option color 'white'
+    option opacity '50'
+    option carousel_interval '5000'
+    option bg_group '1'
+    option bg_enabled '1'
+    option persistent_storage '0'
+    option current_bg '0'
+    list update_urls 'https://raw.githubusercontent.com/fgbfg5676/openwrt-banner/main/banner.json'
+    list update_urls 'https://gitee.com/fgbfg5676/openwrt-banner/raw/main/banner.json'
+    option selected_url 'https://raw.githubusercontent.com/fgbfg5676/openwrt-banner/main/banner.json'
+    option update_interval '10800'
+    option last_update '0'
+    option banner_texts ''
+    option remote_message ''
+EOF
+fi
+
+mkdir -p "$CACHE"
+
+if ! command -v uci >/dev/null 2>&1; then
+    log "[×] UCI command not found. This script requires UCI to function. Exiting."
     exit 1
 fi
-trap "rm -f $LOCK_FILE" EXIT
-touch "$LOCK_FILE"
 
+# 获取锁（60秒超时）
+if ! acquire_lock 60; then
+    log "[ERROR] Another instance is running or lock acquisition failed"
+    exit 1
+fi
+
+# 如果存在 auto_update 锁，清理它（手动更新优先）
 AUTO_LOCK_FILE="/var/lock/banner_auto_update.lock"
 if [ -f "$AUTO_LOCK_FILE" ]; then
     log "[INFO] Manual update overriding auto-update lock."
@@ -572,7 +835,7 @@ log "========== Manual Update Started =========="
 
 validate_url() {
     case "$1" in
-        http://*|https://*  ) return 0;;
+        http://*|https://*) return 0;;
         *) log "[×] Invalid URL format: $1"; return 1;;
     esac
 }
@@ -583,238 +846,337 @@ SUCCESS=0
 CURL_TIMEOUT=$(uci -q get banner.banner.curl_timeout || echo 15)
 
 if [ -n "$SELECTED_URL" ] && validate_url "$SELECTED_URL"; then
-    log "Attempting to download from selected URL: $SELECTED_URL"
-    
-    # 尝试下载
-    if curl -fLsS --connect-timeout "$CURL_TIMEOUT" --max-time 30 "$SELECTED_URL" -o "$CACHE_DIR/banner.json.tmp"; then
-        
-        # 验证 JSON 格式
-        if jsonfilter -i "$CACHE_DIR/banner.json.tmp" -e "@" >/dev/null 2>&1; then
-            
-            # 验证成功，替换旧文件
-            mv "$CACHE_DIR/banner.json.tmp" "$CACHE_DIR/nav_data.json"
-            log "✓ Successfully updated nav_data.json from selected URL."
+    for i in 1 2 3; do
+        log "Attempt $i/3 with selected URL: $SELECTED_URL"
+        curl -sL --connect-timeout 10 --max-time "$CURL_TIMEOUT" "$SELECTED_URL" -o "$CACHE/banner_new.json" 2>/dev/null
+        if [ -s "$CACHE/banner_new.json" ] && jq empty "$CACHE/banner_new.json" 2>/dev/null; then
+            log "[√] Selected URL download successful (valid JSON)."
             SUCCESS=1
-        else
-            log "[!] Downloaded file is not a valid JSON. Skipping."
-            rm -f "$CACHE_DIR/banner.json.tmp"
+            break
         fi
-    else
-        log "[!] Failed to download from selected URL. Trying fallback URLs."
-    fi
+        rm -f "$CACHE/banner_new.json"
+        sleep 2
+    done
 fi
 
-# 如果主选 URL 失败，尝试所有 URL
-if [ "$SUCCESS" -eq 0 ]; then
-    for URL in $URLS; do
-        if [ "$URL" = "$SELECTED_URL" ]; then
-            continue # 跳过已尝试的主选 URL
-        fi
-        
-        if ! validate_url "$URL"; then
-            continue
-        fi
-        
-        log "Attempting to download from fallback URL: $URL"
-        
-        if curl -fLsS --connect-timeout "$CURL_TIMEOUT" --max-time 30 "$URL" -o "$CACHE_DIR/banner.json.tmp"; then
-            
-            if jsonfilter -i "$CACHE_DIR/banner.json.tmp" -e "@" >/dev/null 2>&1; then
-                mv "$CACHE_DIR/banner.json.tmp" "$CACHE_DIR/nav_data.json"
-                log "✓ Successfully updated nav_data.json from fallback URL."
-                SUCCESS=1
-                break
-            else
-                log "[!] Downloaded file is not a valid JSON. Skipping."
-                rm -f "$CACHE_DIR/banner.json.tmp"
-            fi
-        else
-            log "[!] Failed to download from fallback URL: $URL."
+if [ $SUCCESS -eq 0 ]; then
+    for url in $URLS; do
+        if [ "$url" != "$SELECTED_URL" ] && validate_url "$url"; then
+            for i in 1 2 3; do
+                log "Attempt $i/3 with fallback URL: $url"
+                curl -sL --connect-timeout 10 --max-time "$CURL_TIMEOUT" "$url" -o "$CACHE/banner_new.json" 2>/dev/null
+                if [ -s "$CACHE/banner_new.json" ] && jq empty "$CACHE/banner_new.json" 2>/dev/null; then
+                    log "[√] Fallback URL download successful (valid JSON). Updating selected URL."
+                    uci set banner.banner.selected_url="$url"
+                    uci commit banner
+                    SUCCESS=1
+                    break 2
+                fi
+                rm -f "$CACHE/banner_new.json"
+                sleep 2
+            done
         fi
     done
 fi
 
-# 最终处理
-if [ "$SUCCESS" -eq 1 ]; then
-    # 更新最后更新时间
-    uci set banner.banner.last_update="$(date +%s)"
-    uci set banner.banner.remote_message="" # 清除远程禁用信息
-    uci set banner.banner.bg_enabled="1" # 确保启用
-    uci commit banner
-    log "✅ Update successful. Configuration saved."
-else
-    # 更新失败，检查是否需要远程禁用
-    if [ -f "$CACHE_DIR/nav_data.json" ]; then
-        REMOTE_MSG=$(jsonfilter -i "$CACHE_DIR/nav_data.json" -e "$.remote_message" 2>/dev/null)
-        BG_ENABLED=$(jsonfilter -i "$CACHE_DIR/nav_data.json" -e "$.bg_enabled" 2>/dev/null)
-        
-        if [ -n "$REMOTE_MSG" ] || [ "$BG_ENABLED" = "0" ]; then
-            uci set banner.banner.remote_message="${REMOTE_MSG:-服务已被远程禁用}"
-            uci set banner.banner.bg_enabled="0"
-            uci commit banner
-            log "⚠️ Update failed, but remote message/disable signal received. Service disabled."
-        else
-            log "⚠️ Update failed. Using existing data."
-        fi
-    else
-        log "❌ Update failed. No existing data to fall back to."
-    fi
-fi
-
-log "========== Manual Update Finished =========="
-UPDATER
-
-# Auto update script (cron job)
-cat > "$PKG_DIR/root/usr/bin/banner_auto_update.sh" <<'AUTOUPDATER'
-#!/bin/sh
-. /usr/share/banner/config.sh
-. /usr/share/banner/timeouts.conf
-
-log() {
-    local msg="$1"
-    local timestamp=$(date '+%Y-%m-%d %H:%M:%S' 2>/dev/null || date)
-    local log_file="${LOG_FILE:-/tmp/banner_update.log}"
-
-    if echo "$msg" | grep -qE 'https?://|[0-9]{1,3}\.[0-9]{1,3}'; then
-        msg=$(echo "$msg" | sed -E 's|https?://[^[:space:]]+|[URL]|g' | sed -E 's|[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|[IP]|g')
-    fi
-    
-    if ! echo "[$timestamp] $msg" >> "$log_file" 2>/dev/null; then
-
-        echo "[$timestamp] LOG_ERROR: $msg" >&2 2>/dev/null
-
-        touch "$log_file" 2>/dev/null && chmod 644 "$log_file" 2>/dev/null
-        return 1
-    fi
-    
-    # 日志轮转(加错误保护)
-    local log_size=$(wc -c < "$log_file" 2>/dev/null || echo 0)
-    if [ -s "$log_file" ] && [ "$log_size" -gt 51200 ]; then
-        {
-            # 使用临时文件避免数据丢失
-            tail -n 50 "$log_file" > "${log_file}.tmp" 2>/dev/null && \
-            mv "${log_file}.tmp" "$log_file" 2>/dev/null
-        } || {
-            # 轮转失败,尝试直接截断(保留最后100行)
-            tail -n 100 "$log_file" > "${log_file}.new" 2>/dev/null && \
-            mv "${log_file}.new" "$log_file" 2>/dev/null
-        } || {
-            # 彻底失败,清空文件(最后的保护)
-            : > "$log_file" 2>/dev/null || true
-        }
-    fi
-    
-    return 0
-}
-
-# 确保只运行一个实例
-LOCK_FILE="/var/lock/banner_auto_update.lock"
-if [ -f "$LOCK_FILE" ]; then
-    log "[!] Auto update already running. Exiting."
-    exit 1
-fi
-trap "rm -f $LOCK_FILE" EXIT
-touch "$LOCK_FILE"
-
-log "========== Auto Update Started =========="
-
-# 检查是否达到更新间隔
-UPDATE_INTERVAL=$(uci -q get banner.banner.update_interval || echo 10800)
-LAST_UPDATE=$(uci -q get banner.banner.last_update || echo 0)
-CURRENT_TIME=$(date +%s)
-
-if [ $((CURRENT_TIME - LAST_UPDATE)) -lt "$UPDATE_INTERVAL" ]; then
-    log "[INFO] Update interval not reached. Skipping auto update."
+if ! command -v jq >/dev/null 2>&1; then
+    log "[×] jq not found, skipping JSON parsing."
     exit 0
 fi
 
-log "Update interval reached. Proceeding with update."
+if [ $SUCCESS -eq 1 ] && [ -s "$CACHE/banner_new.json" ]; then
+    ENABLED=$(jq -r '.enabled' "$CACHE/banner_new.json")
+    log "[DEBUG] Remote control - enabled field raw value: '$ENABLED'"
+    
+   if [ "$ENABLED" = "false" ] || [ "$ENABLED" = "0" ]; then
+        MSG=$(jq -r '.disable_message // "服务已被管理员远程关闭"' "$CACHE/banner_new.json")
+        
+        # 设置禁用状态
+        uci set banner.banner.bg_enabled='0'
+        uci set banner.banner.remote_message="$MSG"
+        
+        # 清空横幅文本和导航数据(保留背景和联系方式)
+        uci set banner.banner.text=""
+        uci set banner.banner.banner_texts=""
+        uci commit banner
+        
+        # 删除导航数据缓存(保留背景图缓存)
+        rm -f "$CACHE/nav_data.json" 2>/dev/null
+        rm -f "$CACHE/banner_new.json" 2>/dev/null
+        
+        VERIFY=$(uci get banner.banner.bg_enabled)
+        log "[!] Service remotely DISABLED. Reason: $MSG"
+        log "[DEBUG] Verification - bg_enabled is now: $VERIFY"
+        log "[INFO] Banner text and navigation cleared, backgrounds preserved"
+        
+        log "Restarting uhttpd service to apply changes..."
+        /etc/init.d/uhttpd restart >/dev/null 2>&1
+        
+        # 等待服务完全重启
+        sleep 3
+        
+        exit 0
+   else
+        log "[DEBUG] Service remains ENABLED (enabled=$ENABLED)"
+        TEXT=$(jsonfilter -i "$CACHE/banner_new.json" -e '@.text' 2>/dev/null)
+        if [ -n "$TEXT" ]; then
+            cp "$CACHE/banner_new.json" "$CACHE/nav_data.json"
+            uci set banner.banner.text="$TEXT"
+            
+            CONTACT_EMAIL=$(jsonfilter -i "$CACHE/banner_new.json" -e '@.contact_info.email' 2>/dev/null)
+            CONTACT_TG=$(jsonfilter -i "$CACHE/banner_new.json" -e '@.contact_info.telegram' 2>/dev/null)
+            CONTACT_QQ=$(jsonfilter -i "$CACHE/banner_new.json" -e '@.contact_info.qq' 2>/dev/null)
+            
+            if [ -n "$CONTACT_EMAIL" ]; then uci set banner.banner.contact_email="$CONTACT_EMAIL"; fi
+            if [ -n "$CONTACT_TG" ]; then uci set banner.banner.contact_telegram="$CONTACT_TG"; fi
+            if [ -n "$CONTACT_QQ" ]; then uci set banner.banner.contact_qq="$CONTACT_QQ"; fi
+            
+            uci set banner.banner.color="$(jsonfilter -i "$CACHE/banner_new.json" -e '@.color' 2>/dev/null || echo 'rainbow')"
+            uci set banner.banner.banner_texts="$(jsonfilter -i "$CACHE/banner_new.json" -e '@.banner_texts[*]' 2>/dev/null | tr '\n' '|')"
+            
+            # 关键修复: 确保启用状态
+            uci set banner.banner.bg_enabled='1'
+            uci delete banner.banner.remote_message >/dev/null 2>&1
+            
+            uci set banner.banner.last_update=$(date +%s)
+            uci commit banner
+           # 清除可能残留的锁文件
+            rm -f /tmp/banner_manual_update.lock /tmp/banner_auto_update.lock 2>/dev/null
+            uci set banner.banner.last_update=$(date +%s)
+            uci commit banner
+           # 清除可能残留的锁文件
+            rm -f /tmp/banner_manual_update.lock /tmp/banner_auto_update.lock 2>/dev/null
+            
+            # 🪄 触发背景组加载，自动更新初始化背景
+            BG_GROUP=$(uci -q get banner.banner.bg_group || echo 1)
+            /usr/bin/banner_bg_loader.sh "$BG_GROUP" >> /tmp/banner_update.log 2>&1 &
+            
+            log "[√] Manual update applied successfully."
+        else
+            log "[×] Update failed: Invalid JSON content (missing 'text' field)."
+            rm -f "$CACHE/banner_new.json"
+        fi
+    fi
+else
+    log "[×] Update failed: All sources are unreachable or provided invalid data."
+    if [ ! -f "$CACHE/nav_data.json" ]; then
+        log "[!] No local cache found. Attempting to use built-in default JSON data."
+        DEFAULT_JSON_PATH=$(grep -oE '/default/banner_default.json' /usr/lib/ipkg/info/luci-app-banner.list | sed 's|/default/banner_default.json||' | head -n1)/default/banner_default.json
+        if [ -f "$DEFAULT_JSON_PATH" ]; then
+            cp "$DEFAULT_JSON_PATH" "$CACHE/nav_data.json"
+        fi
+    fi
+fi
+MANUALUPDATE
 
-validate_url() {
-    case "$1" in
-        http://*|https://*  ) return 0;;
-        *) log "[×] Invalid URL format: $1"; return 1;;
-    esac
+# Auto update script (cron job)
+cat > "$PKG_DIR/root/usr/bin/banner_auto_update.sh" <<'AUTOUPDATE'
+#!/bin/sh
+LOG="/tmp/banner_update.log"
+BOOT_FLAG="/tmp/banner_first_boot"
+RETRY_FLAG="/tmp/banner_retry_count"
+RETRY_TIMER="/tmp/banner_retry_timer"
+
+# ==================== 🚨 关键修复: 简化日志函数 ====================
+log() {
+    local msg="$1"
+    local timestamp=$(date '+%Y-%m-%d %H:%M:%S' 2>/dev/null || date)
+    
+    # 确保日志文件存在
+    if [ ! -f "$LOG" ]; then
+        touch "$LOG" 2>/dev/null && chmod 666 "$LOG" 2>/dev/null
+    fi
+    
+    # 直接写入,减少错误检查
+    echo "[$timestamp] $msg" >> "$LOG" 2>/dev/null || echo "[$timestamp] $msg" >&2
+    
+    # 简化日志轮转
+    if [ -f "$LOG" ] && [ $(wc -c < "$LOG" 2>/dev/null || echo 0) -gt 51200 ]; then
+        tail -n 50 "$LOG" > "${LOG}.tmp" 2>/dev/null && mv "${LOG}.tmp" "$LOG" 2>/dev/null
+    fi
 }
 
-URLS=$(uci -q get banner.banner.update_urls | tr ' ' '\n')
-SELECTED_URL=$(uci -q get banner.banner.selected_url)
-SUCCESS=0
-CURL_TIMEOUT=$(uci -q get banner.banner.curl_timeout || echo 15)
-
-if [ -n "$SELECTED_URL" ] && validate_url "$SELECTED_URL"; then
-    log "Attempting to download from selected URL: $SELECTED_URL"
+# ==================== 🚨 关键修复: 简化网络检查 ====================
+check_network() {
+    # 方法1: 检查默认路由
+    if ip route show default >/dev/null 2>&1; then
+        return 0
+    fi
     
-    if curl -fLsS --connect-timeout "$CURL_TIMEOUT" --max-time 30 "$SELECTED_URL" -o "$CACHE_DIR/banner.json.tmp"; then
-        
-        if jsonfilter -i "$CACHE_DIR/banner.json.tmp" -e "@" >/dev/null 2>&1; then
-            mv "$CACHE_DIR/banner.json.tmp" "$CACHE_DIR/nav_data.json"
-            log "✓ Successfully updated nav_data.json from selected URL."
-            SUCCESS=1
-        else
-            log "[!] Downloaded file is not a valid JSON. Skipping."
-            rm -f "$CACHE_DIR/banner.json.tmp"
-        fi
-    else
-        log "[!] Failed to download from selected URL. Trying fallback URLs."
+    # 方法2: 尝试 ping 网关
+    local gateway=$(ip route show default 2>/dev/null | awk '{print $3; exit}')
+    if [ -n "$gateway" ] && ping -c 1 -W 1 "$gateway" >/dev/null 2>&1; then
+        return 0
     fi
+    
+    # 方法3: 检查网络接口状态
+    if ip link show | grep -q 'state UP'; then
+        return 0
+    fi
+    
+    return 1
+}
+
+# ==================== 🚨 关键修复: 简化锁机制 ====================
+LOCK_FD=201
+LOCK_FILE="/var/lock/banner_auto_update.lock"
+
+acquire_lock() {
+    mkdir -p /var/lock 2>/dev/null
+    
+    # 清理旧锁文件
+    if [ -f "$LOCK_FILE" ]; then
+        local lock_age=$(( $(date +%s) - $(stat -c %Y "$LOCK_FILE" 2>/dev/null || echo 0) ))
+        if [ $lock_age -gt 300 ]; then
+            rm -f "$LOCK_FILE"
+            log "[LOCK] Removed stale lock file"
+        fi
+    fi
+    
+    # 尝试获取锁
+    exec 201>"$LOCK_FILE"
+    if flock -n 201; then
+        log "[LOCK] Lock acquired"
+        return 0
+    else
+        log "[LOCK] Failed to acquire lock (another instance running)"
+        return 1
+    fi
+}
+
+release_lock() {
+    flock -u 201 2>/dev/null
+    exec 201>&-
+}
+
+cleanup() {
+    release_lock
+    log "[CLEANUP] Script exiting"
+}
+trap cleanup EXIT INT TERM
+
+# ==================== 主逻辑 ====================
+log "=========================================="
+log "Banner Auto Update Script Started"
+log "=========================================="
+
+# 获取锁
+if ! acquire_lock; then
+    log "[ERROR] Another instance is running"
+    exit 1
 fi
 
-if [ "$SUCCESS" -eq 0 ]; then
-    for URL in $URLS; do
-        if [ "$URL" = "$SELECTED_URL" ]; then
-            continue
+# 检查 UCI
+if ! command -v uci >/dev/null 2>&1; then
+    log "[ERROR] UCI command not found"
+    exit 1
+fi
+
+# 检查是否被禁用
+BG_ENABLED=$(uci -q get banner.banner.bg_enabled || echo "1")
+if [ "$BG_ENABLED" = "0" ]; then
+    log "[INFO] Service is disabled, skipping update"
+    exit 0
+fi
+
+# ==================== 🚨 关键修复: 简化首次启动逻辑 ====================
+if [ ! -f "$BOOT_FLAG" ]; then
+    log "========== First Boot Auto Update =========="
+    
+    # 等待网络 (最多30秒)
+    log "[BOOT] Waiting for network..."
+    WAIT_COUNT=0
+    while [ $WAIT_COUNT -lt 15 ]; do
+        if check_network; then
+            log "[BOOT] ✓ Network ready after ${WAIT_COUNT} attempts"
+            break
         fi
-        
-        if ! validate_url "$URL"; then
-            continue
-        fi
-        
-        log "Attempting to download from fallback URL: $URL"
-        
-        if curl -fLsS --connect-timeout "$CURL_TIMEOUT" --max-time 30 "$URL" -o "$CACHE_DIR/banner.json.tmp"; then
-            
-            if jsonfilter -i "$CACHE_DIR/banner.json.tmp" -e "@" >/dev/null 2>&1; then
-                mv "$CACHE_DIR/banner.json.tmp" "$CACHE_DIR/nav_data.json"
-                log "✓ Successfully updated nav_data.json from fallback URL."
-                SUCCESS=1
-                break
-            else
-                log "[!] Downloaded file is not a valid JSON. Skipping."
-                rm -f "$CACHE_DIR/banner.json.tmp"
-            fi
-        else
-            log "[!] Failed to download from fallback URL: $URL."
-        fi
+        sleep 2
+        WAIT_COUNT=$((WAIT_COUNT + 1))
     done
-fi
-
-if [ "$SUCCESS" -eq 1 ]; then
-    uci set banner.banner.last_update="$(date +%s)"
-    uci set banner.banner.remote_message=""
-    uci set banner.banner.bg_enabled="1"
-    uci commit banner
-    log "✅ Auto update successful. Configuration saved."
-else
-    if [ -f "$CACHE_DIR/nav_data.json" ]; then
-        REMOTE_MSG=$(jsonfilter -i "$CACHE_DIR/nav_data.json" -e "$.remote_message" 2>/dev/null)
-        BG_ENABLED=$(jsonfilter -i "$CACHE_DIR/nav_data.json" -e "$.bg_enabled" 2>/dev/null)
-        
-        if [ -n "$REMOTE_MSG" ] || [ "$BG_ENABLED" = "0" ]; then
-            uci set banner.banner.remote_message="${REMOTE_MSG:-服务已被远程禁用}"
-            uci set banner.banner.bg_enabled="0"
-            uci commit banner
-            log "⚠️ Auto update failed, but remote message/disable signal received. Service disabled."
-        else
-            log "⚠️ Auto update failed. Using existing data."
-        fi
-    else
-        log "❌ Auto update failed. No existing data to fall back to."
+    
+    if [ $WAIT_COUNT -ge 15 ]; then
+        log "[BOOT] ⚠ Network not ready, will retry in 5 minutes"
+        echo "$(date +%s)" > "$RETRY_TIMER"
+        echo "0" > "$RETRY_FLAG"
+        touch "$BOOT_FLAG"
+        exit 0
     fi
+    
+    # 执行首次更新
+    log "[BOOT] Executing first boot update..."
+    if /usr/bin/banner_manual_update.sh; then
+        log "[BOOT] ✓ First boot update successful"
+        touch "$BOOT_FLAG"
+        rm -f "$RETRY_FLAG" "$RETRY_TIMER"
+    else
+        log "[BOOT] ✗ First boot update failed, will retry"
+        echo "$(date +%s)" > "$RETRY_TIMER"
+        echo "0" > "$RETRY_FLAG"
+        touch "$BOOT_FLAG"
+    fi
+    
+    exit 0
 fi
 
-log "========== Auto Update Finished =========="
-AUTOUPDATER
+# ==================== 重试逻辑 ====================
+if [ -f "$RETRY_TIMER" ]; then
+    RETRY_TIME=$(cat "$RETRY_TIMER" 2>/dev/null || echo 0)
+    CURRENT_TIME=$(date +%s)
+    TIME_DIFF=$((CURRENT_TIME - RETRY_TIME))
+    
+    if [ $TIME_DIFF -ge 300 ]; then
+        log "========== Retry Update (5min elapsed) =========="
+        
+        if ! check_network; then
+            log "[RETRY] Network still not ready"
+            echo "$(date +%s)" > "$RETRY_TIMER"
+            exit 0
+        fi
+        
+        if /usr/bin/banner_manual_update.sh; then
+            log "[RETRY] ✓ Retry update successful"
+            rm -f "$RETRY_FLAG" "$RETRY_TIMER"
+        else
+            RETRY_COUNT=$(cat "$RETRY_FLAG" 2>/dev/null || echo 0)
+            RETRY_COUNT=$((RETRY_COUNT + 1))
+            
+            if [ $RETRY_COUNT -ge 3 ]; then
+                log "[RETRY] Max retries reached, giving up"
+                rm -f "$RETRY_FLAG" "$RETRY_TIMER"
+            else
+                log "[RETRY] Scheduling next retry (attempt $((RETRY_COUNT + 1))/3)"
+                echo "$RETRY_COUNT" > "$RETRY_FLAG"
+                echo "$(date +%s)" > "$RETRY_TIMER"
+            fi
+        fi
+    fi
+    
+    exit 0
+fi
+
+# ==================== 定期更新逻辑 ====================
+LAST_UPDATE=$(uci -q get banner.banner.last_update || echo 0)
+CURRENT_TIME=$(date +%s)
+INTERVAL=$(uci -q get banner.banner.update_interval || echo 10800)
+
+if [ $((CURRENT_TIME - LAST_UPDATE)) -lt "$INTERVAL" ]; then
+    log "[INFO] Update interval not reached, skipping"
+    exit 0
+fi
+
+log "========== Scheduled Auto Update =========="
+
+if ! check_network; then
+    log "[ERROR] Network not available"
+    exit 0
+fi
+
+/usr/bin/banner_manual_update.sh
+if [ $? -ne 0 ]; then
+    log "[ERROR] Scheduled update failed"
+fi
+AUTOUPDATE
 
 # Init script
 cat > "$PKG_DIR/root/etc/init.d/banner" <<'INIT'
@@ -955,7 +1317,9 @@ module("luci.controller.banner", package.seeall)
 function index()
     entry({"admin", "status", "banner"}, alias("admin", "status", "banner", "display"), _("福利导航"), 98).dependent = false
     entry({"admin", "status", "banner", "display"}, call("action_display"), _("首页展示"), 1)
-   entry({"admin", "status", "banner", "settings"}, call("action_settings"), _("远程更新/背景设置"), 2)-- 重构为纯 API 接口，供前端 AJAX 调用
+    entry({"admin", "status", "banner", "settings"}, call("action_settings"), _("远程更新/背景设置"), 2)
+    
+    -- 重构为纯 API 接口,供前端 AJAX 调用
     entry({"admin", "status", "banner", "api_update"}, post("api_update")).leaf = true
     entry({"admin", "status", "banner", "api_set_bg"}, post("api_set_bg")).leaf = true
     entry({"admin", "status", "banner", "api_clear_cache"}, post("api_clear_cache")).leaf = true
@@ -1445,7 +1809,15 @@ cat > "$PKG_DIR/root/usr/lib/lua/luci/view/banner/display.htm" <<'DISPLAYVIEW'
 <%+header%>
 <%+banner/global_style%>
 <style>
-.banner-hero { background: rgba(0,0,0,.3); border-radius: 15px; padding: 20px; margin: 20px auto; max-width: min(1200px, 95vw); }
+.banner-hero { 
+    background: rgba(0,0,0,.3); 
+    border-radius: 15px; 
+    padding: 20px; 
+    margin: 20px auto; 
+    width: 100%;                    /* 新增：占满父容器宽度 */
+    max-width: 1200px;               /* 修改：固定最大宽度 */
+    box-sizing: border-box;          /* 新增：包含内边距在总宽度内 */
+}
 .carousel { position: relative; width: 100%; height: 300px; overflow: hidden; border-radius: 10px; margin-bottom: 20px; }
 .carousel img { width: 100%; height: 100%; object-fit: cover; position: absolute; opacity: 0; transition: opacity .5s; }
 .carousel img.active { opacity: 1; }
@@ -1487,7 +1859,18 @@ cat > "$PKG_DIR/root/usr/lib/lua/luci/view/banner/display.htm" <<'DISPLAYVIEW'
 }
 @keyframes rainbow { 0%,100% { background-position: 0% 50% } 50% { background-position: 100% 50% } }
 .banner-contacts { display: flex; flex-direction: column; gap: 15px; margin-bottom: 30px; }
-.contact-card { background: rgba(0,0,0,.3); border: 1px solid rgba(255,255,255,.18); border-radius: 10px; padding: 15px; color: #fff; display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.contact-card { 
+    background: rgba(0,0,0,.3); 
+    border: 1px solid rgba(255,255,255,.18); 
+    border-radius: 10px; 
+    padding: 15px; 
+    color: #fff; 
+    display: flex; 
+    align-items: center; 
+    justify-content: space-between; 
+    gap: 10px;
+    flex-wrap: wrap;                 /* 新增：允许换行 */
+}
 .contact-info { flex: 1; min-width: 200px; text-align: left; }
 .contact-info span { display: block; color: #aaa; font-size: 14px; margin-bottom: 5px; }
 .copy-btn { background: rgba(76,175,80,.9); color: #fff; border: 0; padding: 8px 18px; border-radius: 5px; cursor: pointer; font-weight: 700; transition: all .3s; }
@@ -1795,200 +2178,291 @@ cat > "$PKG_DIR/root/usr/lib/lua/luci/view/banner/settings.htm" <<'SETTINGSVIEW'
 input:checked + .toggle-slider { background-color: rgba(76,175,80,.9); }
 input:checked + .toggle-slider:before { transform: translateX(26px); }
 .cbi-button.spinning, .cbi-button:disabled { pointer-events: none; background: #ccc !important; cursor: not-allowed; }
-	.cbi-button.spinning:after { content: '...'; display: inline-block; animation: spin 1s linear infinite; }
-	@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
-	</style>
-	<style>
-	.loading-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,.8); display: none; justify-content: center; align-items: center; z-index: 9999; }
-	.loading-overlay.active { display: flex; }
-	.spinner { border: 4px solid rgba(255, 255, 255, 0.3); border-top-color: #4fc3f7; border-radius: 50%; width: 50px; height: 50px; margin: 0 auto 20px; animation: spin 1.2s cubic-bezier(0.65, 0, 0.35, 1) infinite; }
-	@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-	</style>
-	<div class="loading-overlay" id="loadingOverlay"><div style="text-align:center;color:#fff"><div class="spinner"></div><p>正在处理，请稍候...</p></div></div>
+.cbi-button.spinning:after { content: '...'; display: inline-block; animation: spin 1s linear infinite; }
+@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+.loading-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,.8); display: none; justify-content: center; align-items: center; z-index: 9999; }
+.loading-overlay.active { display: flex; }
+.spinner { border: 4px solid rgba(255, 255, 255, 0.3); border-top-color: #4fc3f7; border-radius: 50%; width: 50px; height: 50px; margin: 0 auto 20px; animation: spin 1.2s cubic-bezier(0.65, 0, 0.35, 1) infinite; }
+
+/* Toast提示样式 */
+.toast { position: fixed; top: 20px; left: 50%; transform: translateX(-50%); padding: 15px 30px; border-radius: 8px; color: #fff; font-weight: 700; z-index: 10000; box-shadow: 0 4px 12px rgba(0,0,0,0.3); transition: opacity 0.3s; animation: slideDown 0.3s ease-out; }
+.toast.success { background: rgba(76,175,80,0.95); }
+.toast.error { background: rgba(244,67,54,0.95); }
+@keyframes slideDown { from { transform: translate(-50%, -100%); opacity: 0; } to { transform: translate(-50%, 0); opacity: 1; } }
+</style>
+
+<div class="loading-overlay" id="loadingOverlay">
+    <div style="text-align:center;color:#fff">
+        <div class="spinner"></div>
+        <p>正在处理，请稍候...</p>
+    </div>
+</div>
+
 <div class="cbi-map">
-	    <h2>远程更新与背景设置</h2>
+    <h2>远程更新与背景设置</h2>
     <div class="cbi-section-node">
         <% if remote_message and remote_message ~= "" then %>
         <div style="background:rgba(217,83,79,.8);color:#fff;padding:15px;border-radius:10px;margin-bottom:20px;text-align:center"><%=pcdata(remote_message)%></div>
         <% end %>
-        <div class="cbi-value"><label class="cbi-value-title">背景透明度</label><div class="cbi-value-field">
-            <div style="display:flex;align-items:center;gap:10px;">
-                <input type="range" name="opacity" min="0" max="100" value="<%=opacity%>" id="opacity-slider" style="width:60%" onchange="apiCall('api_set_opacity', {opacity: this.value})">
-                <span id="opacity-display" style="color:#fff;"><%=opacity%>%</span>
+        
+        <div class="cbi-value">
+            <label class="cbi-value-title">背景透明度</label>
+            <div class="cbi-value-field">
+                <div style="display:flex;align-items:center;gap:10px;">
+                    <input type="range" name="opacity" min="0" max="100" value="<%=opacity%>" id="opacity-slider" style="width:60%" onchange="apiCall('api_set_opacity', {opacity: this.value})">
+                    <span id="opacity-display" style="color:#fff;"><%=opacity%>%</span>
+                </div>
             </div>
-        </div></div>
-        <div class="cbi-value"><label class="cbi-value-title">永久存储背景</label><div class="cbi-value-field">
-            <label class="toggle-switch"><input type="checkbox" id="persistent-checkbox" <%=persistent_storage=='1' and ' checked'%> onchange="apiCall('api_set_persistent_storage', {persistent_storage: this.checked ? '1' : '0'})"><span class="toggle-slider"></span></label>
-            <span id="persistent-text" style="color:#fff;vertical-align:super;margin-left:10px;"><%=persistent_storage=='1' and '已启用' or '已禁用'%></span>
-        </div></div>
-        <div class="cbi-value"><label class="cbi-value-title">轮播间隔(毫秒)</label><div class="cbi-value-field">
-            <input type="number" name="carousel_interval" value="<%=carousel_interval%>" min="1000" max="30000" style="width:100px">
-            <button class="cbi-button" onclick="apiCall('api_set_carousel_interval', {carousel_interval: this.previousElementSibling.value}, false, this)">应用</button>
-        </div></div>
-        <div class="cbi-value"><label class="cbi-value-title">更新源</label><div class="cbi-value-field">
-            <select name="selected_url"><% for _, item in ipairs(display_urls) do %><option value="<%=item.value%>"<%=item.value==selected_url and ' selected'%>><%=item.display%></option><% end %></select>
-            <button class="cbi-button" onclick="apiCall('api_set_update_url', {selected_url: this.previousElementSibling.value}, false, this)">选择</button>
-        </div></div>
-        <div class="cbi-value"><label class="cbi-value-title">上次更新</label><div class="cbi-value-field">
-            <span style="color:#fff;"><%=os.date("%Y-%m-%d %H:%M:%S", tonumber(last_update))%></span>
-            <button class="cbi-button" id="manual-update-btn" onclick="apiCall('api_update', {}, true, this)">立即手动更新</button>
-        </div></div>
-        <div class="cbi-value"><label class="cbi-value-title">恢复默认配置</label><div class="cbi-value-field">
-            <button class="cbi-button cbi-button-reset" onclick="if(confirm('确定要恢复默认配置吗？')) apiCall('api_reset_defaults', {}, true, this)">恢复默认值</button>
-        </div></div>
-	        <h3>更新日志</h3><div style="background:rgba(0,0,0,.5);padding:12px;border-radius:8px;max-height:250px;overflow-y:auto;font-family:monospace;font-size:12px;color:#0f0;white-space:pre-wrap" id="log-container"><%=pcdata(log)%></div>
-	    </div>
-	</div>
+        </div>
+        
+        <div class="cbi-value">
+            <label class="cbi-value-title">永久存储背景</label>
+            <div class="cbi-value-field">
+                <label class="toggle-switch">
+                    <input type="checkbox" id="persistent-checkbox" <%=persistent_storage=='1' and ' checked'%> onchange="apiCall('api_set_persistent_storage', {persistent_storage: this.checked ? '1' : '0'})">
+                    <span class="toggle-slider"></span>
+                </label>
+                <span id="persistent-text" style="color:#fff;vertical-align:super;margin-left:10px;"><%=persistent_storage=='1' and '已启用' or '已禁用'%></span>
+            </div>
+        </div>
+        
+        <div class="cbi-value">
+            <label class="cbi-value-title">轮播间隔(毫秒)</label>
+            <div class="cbi-value-field">
+                <input type="number" name="carousel_interval" value="<%=carousel_interval%>" min="1000" max="30000" style="width:100px">
+                <button class="cbi-button" onclick="apiCall('api_set_carousel_interval', {carousel_interval: this.previousElementSibling.value}, false, this)">应用</button>
+            </div>
+        </div>
+        
+        <div class="cbi-value">
+            <label class="cbi-value-title">更新源</label>
+            <div class="cbi-value-field">
+                <select name="selected_url">
+                    <% for _, item in ipairs(display_urls) do %>
+                    <option value="<%=item.value%>"<%=item.value==selected_url and ' selected'%>><%=item.display%></option>
+                    <% end %>
+                </select>
+                <button class="cbi-button" onclick="apiCall('api_set_update_url', {selected_url: this.previousElementSibling.value}, false, this)">选择</button>
+            </div>
+        </div>
+        
+        <div class="cbi-value">
+            <label class="cbi-value-title">上次更新</label>
+            <div class="cbi-value-field">
+                <span style="color:#fff;"><%=last_update=='0' and '从未' or os.date('%Y-%m-%d %H:%M:%S', tonumber(last_update))%></span>
+                <button class="cbi-button" id="manual-update-btn" onclick="apiCall('api_update', {}, true, this)">立即手动更新</button>
+            </div>
+        </div>
+        
+        <div class="cbi-value">
+            <label class="cbi-value-title">选择背景图组</label>
+            <div class="cbi-value-field">
+                <select name="group">
+                    <% for i = 1, 4 do %>
+                    <option value="<%=i%>"<%=bg_group==tostring(i) and ' selected'%>>第 <%=i%> 组 (bg<%=(i-1)*3+1%>-bg<%=i*3%>)</option>
+                    <% end %>
+                </select>
+                <button class="cbi-button" onclick="apiCall('api_load_group', {group: this.previousElementSibling.value}, true, this)">加载背景组</button>
+            </div>
+        </div>
+        
+        <div class="cbi-value">
+            <label class="cbi-value-title">手动填写背景图链接</label>
+            <div class="cbi-value-field">
+                <form id="customBgForm" method="post" action="<%=luci.dispatcher.build_url('admin/status/banner/do_apply_url')%>">
+                    <input name="token" type="hidden" value="<%=token%>">
+                    <input type="text" name="custom_bg_url" placeholder="https://example.com/image.jpg" style="width:70%">
+                    <input type="submit" class="cbi-button" value="应用链接">
+                </form>
+                <p style="color:#aaa;font-size:12px">📌 仅支持 HTTPS JPG/JPEG 链接 (小于3MB)，应用后覆盖 bg0.jpg</p>
+            </div>
+        </div>
+        
+        <div class="cbi-value">
+            <label class="cbi-value-title">从本地上传背景图</label>
+            <div class="cbi-value-field">
+                <form method="post" action="<%=luci.dispatcher.build_url('admin/status/banner/do_upload_bg')%>" enctype="multipart/form-data" id="uploadForm">
+                    <input name="token" type="hidden" value="<%=token%>">
+                    <select name="bg_index" style="width:80px;margin-right:10px;">
+                        <option value="0">bg0.jpg</option>
+                        <option value="1">bg1.jpg</option>
+                        <option value="2">bg2.jpg</option>
+                    </select>
+                    <input type="file" name="bg_file" accept="image/jpeg" required>
+                    <input type="submit" class="cbi-button" value="上传并应用">
+                </form>
+                <p style="color:#aaa;font-size:12px">📤 支持上传 3张 JPG (小于3MB)，选择要替换的背景编号，上传后立即生效</p>
+            </div>
+        </div>
+        
+        <div class="cbi-value">
+            <label class="cbi-value-title">删除缓存图片</label>
+            <div class="cbi-value-field">
+                <button class="cbi-button cbi-button-remove" onclick="apiCall('api_clear_cache', {}, true, this)">删除缓存</button>
+            </div>
+        </div>
+        
+        <div class="cbi-value">
+            <label class="cbi-value-title">恢复默认配置</label>
+            <div class="cbi-value-field">
+                <button class="cbi-button cbi-button-reset" onclick="if(confirm('确定要恢复默认配置吗？')) apiCall('api_reset_defaults', {}, true, this)">恢复默认值</button>
+            </div>
+        </div>
+    </div>
+</div>
 
-<div class="cbi-map">
-	    <h2>背景图设置</h2>
-	    <div class="cbi-section-node">
-	        <div class="cbi-value"><label class="cbi-value-title">选择背景图组</label><div class="cbi-value-field">
-	            <select name="group">
-	                <% for i = 1, 4 do %><option value="<%=i%>"<%=bg_group==tostring(i) and ' selected'%>><%=i..'-'..i*3%></option><% end %>
-	            </select>
-	            <button class="cbi-button" onclick="apiCall('api_load_group', {group: this.previousElementSibling.value}, true, this)">加载背景组</button>
-	        </div></div>
-	        <div class="cbi-value"><label class="cbi-value-title">手动填写背景图链接</label><div class="cbi-value-field">
-	            <form id="customBgForm" method="post" action="<%=luci.dispatcher.build_url('admin/status/banner/do_apply_url')%>">
-	                <input name="token" type="hidden" value="<%=token%>">
-	                <input type="text" name="custom_bg_url" placeholder="https://..." style="width:70%">
-	                <input type="submit" class="cbi-button" value="应用链接">
-	            </form>
-	            <p style="color:#aaa;font-size:12px">📌 仅支持 HTTPS JPG/JPEG 链接 (小于3MB ), 应用后覆盖 bg0.jpg</p>
-	        </div></div>
-	        <div class="cbi-value"><label class="cbi-value-title">从本地上传背景图</label><div class="cbi-value-field">
-	            <form method="post" action="<%=luci.dispatcher.build_url('admin/status/banner/do_upload_bg')%>" enctype="multipart/form-data" id="uploadForm">
-	                <input name="token" type="hidden" value="<%=token%>">
-	                <select name="bg_index" style="width:80px;margin-right:10px;"><option value="0">bg0.jpg</option><option value="1">bg1.jpg</option><option value="2">bg2.jpg</option></select>
-	                <input type="file" name="bg_file" accept="image/jpeg" required>
-	                <input type="submit" class="cbi-button" value="上传并应用">
-	            </form>
-	            <p style="color:#aaa;font-size:12px">📤 支持上传3张 JPG (小于3MB), 选择要替换的背景编号,上传后立即生效</p>
-	        </div></div>
-	        <div class="cbi-value"><label class="cbi-value-title">删除缓存图片</label><div class="cbi-value-field">
-	            <button class="cbi-button cbi-button-remove" onclick="apiCall('api_clear_cache', {}, true, this)">删除缓存</button>
-	        </div></div>
-	        <h3>背景日志</h3>
-	        <div style="background:rgba(0,0,0,.5);padding:12px;border-radius:8px;max-height:250px;overflow-y:auto;font-family:monospace;font-size:12px;color:#0f0;white-space:pre-wrap"><%=pcdata(bg_log)%></div>
-	    </div>
-	</div>
+<!-- 合并后的系统日志区域 -->
+<div class="cbi-map" style="margin-top:20px;">
+    <h2>系统日志</h2>
+    <div class="cbi-section-node">
+        <h3>更新日志</h3>
+        <div style="background:rgba(0,0,0,.5);padding:12px;border-radius:8px;max-height:300px;overflow-y:auto;font-family:monospace;font-size:12px;color:#0f0;white-space:pre-wrap" id="log-container"><%=pcdata(log)%></div>
+        
+        <h3 style="margin-top:20px;">背景加载日志</h3>
+        <div style="background:rgba(0,0,0,.5);padding:12px;border-radius:8px;max-height:300px;overflow-y:auto;font-family:monospace;font-size:12px;color:#0f0;white-space:pre-wrap"><%=pcdata(bg_log)%></div>
+    </div>
+</div>
+
 <script type="text/javascript">
-	    // 统一的 API 调用函数
-	    function apiCall(endpoint, data, reloadOnSuccess, btn) {
-	        if (btn) btn.classList.add('spinning');
-	        document.getElementById('loadingOverlay').classList.add('active'); // 新增：显示加载动画
-	
-	        var formData = new URLSearchParams();
-	        formData.append('token', '<%=token%>');
-	        for (var key in data) {
-	            formData.append(key, data[key]);
-	        }
-	
-	        fetch('<%=luci.dispatcher.build_url("admin/status/banner")%>/' + endpoint, {
-	            method: 'POST',
-	            body: formData
-	        })
-	        .then(response => {
-	            if (!response.ok) { throw new Error('Network response was not ok: ' + response.statusText); }
-	            return response.json();
-	        })
-	        .then(result => {
-	            if (btn) btn.classList.remove('spinning');
-	            document.getElementById('loadingOverlay').classList.remove('active'); // 新增：隐藏加载动画
-	            alert(result.message || (result.success ? '操作成功' : '操作失败'));
-	            if (result.success && reloadOnSuccess) {
-	                // 针对背景组加载，增加延迟确保文件完全写入
-	                var delay = (endpoint === 'api_load_group') ? 3000 : 1500;
-	                setTimeout(function() { window.location.reload(); }, delay);
-	            }
-	            // 修正点：收到成功响应后，立即更新UI，而不是依赖页面刷新
-	            if (result.success && endpoint === 'api_set_persistent_storage') {
-	                document.getElementById('persistent-text').textContent = data.persistent_storage === '1' ? '已启用' : '已禁用';
-	                document.getElementById('persistent-checkbox').checked = (data.persistent_storage === '1');
-	            }
-	        })
-	        .catch(error => {
-	            if (btn) btn.classList.remove('spinning');
-	            document.getElementById('loadingOverlay').classList.remove('active'); // 新增：隐藏加载动画
-	            alert('请求失败: ' + error);
-	        });
-	    }
-	
-	    // 本地表单验证 (从 background.htm 复制)
-	    document.getElementById('customBgForm').addEventListener('submit', function(e) {
-	        var url = this.custom_bg_url.value.trim();
-	        if (!url.match(/^https:\/\/.*\.jpe?g$/i  )) {
-	            e.preventDefault();
-	            alert('⚠️ 格式錯誤！請確保鏈接以 https:// 開頭  ，並以 .jpg 或 .jpeg 結尾。');
-	        }
-	    });
-	
-	    document.getElementById('uploadForm').addEventListener('submit', function(e) {
-	        var file = this.bg_file.files[0];
-	        if (!file) {
-	            e.preventDefault();
-	            alert('⚠️ 请选择文件');
-	            return;
-	        }
-	        if (file.size > 3145728) {
-	            e.preventDefault();
-	            alert('⚠️ 文件大小不能超过 3MB');
-	            return;
-	        }
-	        if (!file.type.match('image/jpeg') && !file.name.match(/\.jpe?g$/i)) {
-	            e.preventDefault();
-	            alert('⚠️ 仅支持 JPG/JPEG 格式');
-	        }
-	    });
-	
-	</script>
-	<% 
-	local uci = require("uci").cursor()
-	local bg_enabled = uci:get("banner", "banner", "bg_enabled") or "1"
-	if bg_enabled == "1" then 
-	%>
-	<style>
-	.bg-selector { position: fixed; bottom: 30px; right: 30px; display: flex; gap: 12px; z-index: 999; }
-	.bg-circle { width: 50px; height: 50px; border-radius: 50%; border: 3px solid rgba(255,255,255,.8); background-size: cover; cursor: pointer; transition: all .3s; }
-	.bg-circle:hover { transform: scale(1.15); border-color: #4fc3f7; }
-	@media (max-width: 768px) {
-	    .bg-selector { bottom: 15px; right: 15px; gap: 8px; }
-	    .bg-circle { width: 40px; height: 40px; }
-	}
-	</style>
-	<div class="bg-selector">
-	    <% for i = 0, 2 do %>
-	    <div class="bg-circle" style="background-image:url(/luci-static/banner/bg<%=i%>.jpg?t=<%=os.time()%>)" onclick="changeBgSettings(<%=i%>)" title="切换背景 <%=i+1%>"></div>
-	    <% end %>
-	</div>
-	<script>
-	function changeBgSettings(n) {
-	    var formData = new URLSearchParams();
-	    formData.append('token', '<%=token%>');
-	    formData.append('bg', n);
-	    
-	    fetch('<%=luci.dispatcher.build_url("admin/status/banner/api_set_bg")%>', {
-	        method: 'POST',
-	        body: formData
-	    })
-	    .then(response => response.json())
-	    .then(result => {
-	        if (result.success) {
-	            window.location.reload();
-	        } else {
-	            alert('切换失败: ' + result.message);
-	        }
-	    })
-	    .catch(error => {
-	        alert('请求失败: ' + error);
-	    });
-	}
-	</script>
-	<% end %>
-	<%+footer%>
-SETTINGSVIEW
+// ==================== Toast 自动消失提示函数 ====================
+function showToast(message, type) {
+    var toast = document.createElement('div');
+    toast.className = 'toast ' + (type || 'success');
+    toast.textContent = message;
+    document.body.appendChild(toast);
+    
+    setTimeout(function() {
+        toast.style.opacity = '0';
+        setTimeout(function() { 
+            if (toast.parentNode) {
+                document.body.removeChild(toast); 
+            }
+        }, 300);
+    }, 2500);
+}
 
+// ==================== 统一的 API 调用函数 ====================
+function apiCall(endpoint, data, reloadOnSuccess, btn) {
+    if (btn) btn.classList.add('spinning');
+    document.getElementById('loadingOverlay').classList.add('active');
+
+    var formData = new URLSearchParams();
+    formData.append('token', '<%=token%>');
+    for (var key in data) {
+        formData.append(key, data[key]);
+    }
+
+    fetch('<%=luci.dispatcher.build_url("admin/status/banner")%>/' + endpoint, {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => {
+        if (!response.ok) { 
+            throw new Error('网络响应异常: ' + response.statusText); 
+        }
+        return response.json();
+    })
+    .then(result => {
+        if (btn) btn.classList.remove('spinning');
+        document.getElementById('loadingOverlay').classList.remove('active');
+        
+        // 使用 Toast 替代 alert
+        var message = result.message || (result.success ? '✓ 操作成功' : '✗ 操作失败');
+        showToast(message, result.success ? 'success' : 'error');
+        
+        if (result.success && reloadOnSuccess) {
+            // 针对背景组加载，增加延迟确保文件完全写入
+            var delay = (endpoint === 'api_load_group') ? 3000 : 1500;
+            setTimeout(function() { window.location.reload(); }, delay);
+        }
+        
+        // 修正点:收到成功响应后,立即更新UI,而不是依赖页面刷新
+        if (result.success && endpoint === 'api_set_persistent_storage') {
+            document.getElementById('persistent-text').textContent = data.persistent_storage === '1' ? '已启用' : '已禁用';
+            document.getElementById('persistent-checkbox').checked = (data.persistent_storage === '1');
+        }
+    })
+    .catch(error => {
+        if (btn) btn.classList.remove('spinning');
+        document.getElementById('loadingOverlay').classList.remove('active');
+        showToast('✗ 请求失败: ' + error.message, 'error');
+    });
+}
+
+// ==================== 本地表单验证 ====================
+document.getElementById('customBgForm').addEventListener('submit', function(e) {
+    var url = this.custom_bg_url.value.trim();
+    if (!url.match(/^https:\/\/.*\.jpe?g$/i)) {
+        e.preventDefault();
+        showToast('⚠️ 格式错误:请确保链接以 https:// 开头,并以 .jpg 或 .jpeg 结尾', 'error');
+    }
+});
+
+document.getElementById('uploadForm').addEventListener('submit', function(e) {
+    var file = this.bg_file.files[0];
+    if (!file) {
+        e.preventDefault();
+        showToast('⚠️ 请选择文件', 'error');
+        return;
+    }
+    if (file.size > 3145728) {
+        e.preventDefault();
+        showToast('⚠️ 文件大小不能超过 3MB', 'error');
+        return;
+    }
+    if (!file.type.match('image/jpeg') && !file.name.match(/\.jpe?g$/i)) {
+        e.preventDefault();
+        showToast('⚠️ 仅支持 JPG/JPEG 格式', 'error');
+    }
+});
+</script>
+
+<% 
+local uci = require("uci").cursor()
+local bg_enabled = uci:get("banner", "banner", "bg_enabled") or "1"
+if bg_enabled == "1" then 
+%>
+<style>
+.bg-selector { position: fixed; bottom: 30px; right: 30px; display: flex; gap: 12px; z-index: 999; }
+.bg-circle { width: 50px; height: 50px; border-radius: 50%; border: 3px solid rgba(255,255,255,.8); background-size: cover; cursor: pointer; transition: all .3s; }
+.bg-circle:hover { transform: scale(1.15); border-color: #4fc3f7; }
+@media (max-width: 768px) {
+    .bg-selector { bottom: 15px; right: 15px; gap: 8px; }
+    .bg-circle { width: 40px; height: 40px; }
+}
+</style>
+<div class="bg-selector">
+    <% for i = 0, 2 do %>
+    <div class="bg-circle" style="background-image:url(/luci-static/banner/bg<%=i%>.jpg?t=<%=os.time()%>)" onclick="changeBgSettings(<%=i%>)" title="切换背景 <%=i+1%>"></div>
+    <% end %>
+</div>
+<script>
+function changeBgSettings(n) {
+    var formData = new URLSearchParams();
+    formData.append('token', '<%=token%>');
+    formData.append('bg', n);
+    
+    fetch('<%=luci.dispatcher.build_url("admin/status/banner/api_set_bg")%>', {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => response.json())
+    .then(result => {
+        if (result.success) {
+            showToast('✓ 背景已切换到 bg' + n, 'success');
+            setTimeout(function() { window.location.reload(); }, 1000);
+        } else {
+            showToast('✗ 切换失败: ' + result.message, 'error');
+        }
+    })
+    .catch(error => {
+        showToast('✗ 请求失败: ' + error.message, 'error');
+    });
+}
+</script>
+<% end %>
+<%+footer%>
+SETTINGSVIEW
 
 # Make scripts executable
 chmod +x "$PKG_DIR"/root/usr/bin/*.sh

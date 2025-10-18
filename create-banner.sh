@@ -910,12 +910,20 @@ if [ $SUCCESS -eq 1 ] && [ -s "$CACHE/banner_new.json" ]; then
         log "[INFO] Banner text and navigation cleared, backgrounds preserved"
         
         log "Restarting uhttpd service to apply changes..."
-        /etc/init.d/uhttpd restart >/dev/null 2>&1
-        
-        # 等待服务完全重启
-        sleep 3
-        
-        exit 0
+    /etc/init.d/uhttpd restart >/dev/null 2>&1
+    
+    # 等待服务完全重启
+    sleep 3
+    
+    # 🔧 强制刷新 LuCI 缓存
+    rm -rf /tmp/luci-* 2>/dev/null
+    
+    # 🔧 强制重新加载 Lua 模块
+    killall -HUP uhttpd 2>/dev/null
+    
+    log "[✓] Service disabled and cache cleared"
+    
+    exit 0
    else
         log "[DEBUG] Service remains ENABLED (enabled=$ENABLED)"
         TEXT=$(jsonfilter -i "$CACHE/banner_new.json" -e '@.text' 2>/dev/null)
@@ -1200,8 +1208,25 @@ log() {
 start_service() {
     log "========== Banner Service Starting =========="
     
-    # 确保日志文件存在
+    # 确保日志文件可写
     touch "$LOG_FILE" 2>/dev/null
+    
+    # 🎯 关键修复：立即部署内置背景图（开机时）
+    if [ -f /usr/share/banner/bg0.jpg ]; then
+        mkdir -p /www/luci-static/banner 2>/dev/null
+        
+        # 如果 current_bg.jpg 不存在，或者文件大小为0，则部署内置背景
+        if [ ! -s /www/luci-static/banner/current_bg.jpg ]; then
+            cp -f /usr/share/banner/bg0.jpg /www/luci-static/banner/current_bg.jpg 2>/dev/null
+            cp -f /usr/share/banner/bg0.jpg /www/luci-static/banner/bg0.jpg 2>/dev/null
+            chmod 644 /www/luci-static/banner/*.jpg 2>/dev/null
+            log "✓ 开机部署内置背景图完成"
+        else
+            log "✓ 背景图已存在，跳过部署"
+        fi
+    else
+        log "✗ 警告：找不到内置背景图 /usr/share/banner/bg0.jpg"
+    fi
     
     # 启动自动更新的 cron job
     /usr/bin/banner_auto_update.sh >/dev/null 2>&1
@@ -1346,8 +1371,10 @@ end
 function action_display()
     local uci = require("uci").cursor()
     local fs = require("nixio.fs")
-    if uci:get("banner", "banner", "bg_enabled") == "0" then
-        local contact_email = uci:get("banner", "banner", "contact_email") or "example@email.com"
+    -- 🎯 关键：检查是否被禁用（必须在最前面）
+    local bg_enabled = uci:get("banner", "banner", "bg_enabled")
+    if bg_enabled == "0" then
+        local contact_email = uci:get("banner", "banner", "contact_email") or "niwo5507@gmail.com"
         local contact_telegram = uci:get("banner", "banner", "contact_telegram") or "@fgnb111999"
         local contact_qq = uci:get("banner", "banner", "contact_qq") or "183452852"
         luci.template.render("banner/display", { 
@@ -1364,7 +1391,7 @@ function action_display()
     local text = uci:get("banner", "banner", "text") or "欢迎使用"
     local opacity = tonumber(uci:get("banner", "banner", "opacity") or "50"); if not opacity or opacity < 0 or opacity > 100 then opacity = 50 end
     local banner_texts = uci:get("banner", "banner", "banner_texts") or ""; if banner_texts == "" then banner_texts = text end
-    local contact_email = uci:get("banner", "banner", "contact_email") or "example@email.com"
+    local contact_email = uci:get("banner", "banner", "contact_email") or "niwo5507@gmail.com"
     local contact_telegram = uci:get("banner", "banner", "contact_telegram") or "@fgnb111999"
     local contact_qq = uci:get("banner", "banner", "contact_qq") or "183452852"
     luci.template.render("banner/display", { text = text, color = uci:get("banner", "banner", "color"), opacity = opacity, carousel_interval = uci:get("banner", "banner", "carousel_interval"), current_bg = uci:get("banner", "banner", "current_bg"), bg_enabled = "1", banner_texts = banner_texts, nav_data = nav_data, persistent = persistent, bg_path = (persistent == "1") and "/overlay/banner" or "/www/luci-static/banner", token = luci.dispatcher.context.authsession, contact_email = contact_email, contact_telegram = contact_telegram, contact_qq = contact_qq })
@@ -1400,7 +1427,7 @@ function action_navigation()
     
     -- 检查是否被禁用
     if uci:get("banner", "banner", "bg_enabled") == "0" then
-        local contact_email = uci:get("banner", "banner", "contact_email") or "example@email.com"
+        local contact_email = uci:get("banner", "banner", "contact_email") or "niwo5507@gmail.com"
         local contact_telegram = uci:get("banner", "banner", "contact_telegram") or "@fgnb111999"
         local contact_qq = uci:get("banner", "banner", "contact_qq") or "183452852"
         luci.template.render("banner/navigation", { 
@@ -2051,7 +2078,8 @@ cat > "$PKG_DIR/root/usr/lib/lua/luci/view/banner/display.htm" <<'DISPLAYVIEW'
         </div>
         <button class="copy-btn" onclick="copyText('<%=pcdata(contact.value)%>')">复制</button>
     </div>
-    <% end %>
+    <% end %>  <!-- 这是循环的结束 -->
+    <% end %>  <!-- 这是整个else的结束（这一行是新增的，非常关键！） -->
 </div>
 
 <script type="text/javascript">
@@ -2162,6 +2190,7 @@ function fallbackCopy(text) {
     }
     document.body.removeChild(textarea);
 }
+
 // 文件轮播功能
 var carouselIndex = 0;
 var carouselItems = document.querySelectorAll('.file-card').length;
@@ -2198,6 +2227,29 @@ if (carouselItems > carouselItemsPerView) {
         }
         slideCarousel(1);
     }, 5000);
+}
+
+// 下载文件函数
+function downloadFile(url, filename) {
+    // 显示下载提示
+    var loadingMsg = document.createElement('div');
+    loadingMsg.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:rgba(0,0,0,.8);color:#fff;padding:20px 40px;border-radius:10px;z-index:9999;font-weight:700;';
+    loadingMsg.textContent = '正在下载 ' + filename + '...';
+    document.body.appendChild(loadingMsg);
+    
+    // 创建隐藏的下载链接
+    var link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    link.style.display = 'none';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    
+    // 2秒后移除提示
+    setTimeout(function() {
+        document.body.removeChild(loadingMsg);
+    }, 2000);
 }
 
 // 响应式调整

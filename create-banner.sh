@@ -6,6 +6,7 @@
 set -e
 
 echo "=========================================="
+echo "你好！Hello!"
 echo "OpenWrt Banner Plugin v2.7 - Final Optimized"
 echo "=========================================="
 

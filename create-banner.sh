@@ -2290,6 +2290,7 @@ function changePage(page) {
     window.location.href = window.location.pathname + '?page=' + page;
 }
 </script>
+<% end %>
 <%+footer%>
 DISPLAYVIEW
 

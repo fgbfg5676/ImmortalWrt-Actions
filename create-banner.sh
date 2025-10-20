@@ -877,8 +877,13 @@ if [ $SUCCESS -eq 1 ] && [ -s "$CACHE/banner_new.json" ]; then
     ENABLED=$(jq -r '.enabled' "$CACHE/banner_new.json")
     log "[DEBUG] Remote control - enabled field raw value: '$ENABLED'"
     
-   if [ "$ENABLED" = "false" ] || [ "$ENABLED" = "0" ]; then
+   # 🔧 关键修复：严格判断 enabled 字段
+   if [ "$ENABLED" = "false" ] || [ "$ENABLED" = "0" ] || [ "$ENABLED" = "False" ] || [ "$ENABLED" = "FALSE" ]; then
         MSG=$(jq -r '.disable_message // "服务已被管理员远程关闭"' "$CACHE/banner_new.json")
+        
+        # 🔧 关键修复：先清理缓存再禁用服务
+        rm -f "$CACHE/nav_data.json" 2>/dev/null
+        rm -f "$CACHE/banner_new.json" 2>/dev/null
         
         # 设置禁用状态
         uci set banner.banner.bg_enabled='0'
@@ -888,10 +893,6 @@ if [ $SUCCESS -eq 1 ] && [ -s "$CACHE/banner_new.json" ]; then
         uci set banner.banner.text=""
         uci set banner.banner.banner_texts=""
         uci commit banner
-        
-        # 删除导航数据缓存(保留背景图缓存)
-        rm -f "$CACHE/nav_data.json" 2>/dev/null
-        rm -f "$CACHE/banner_new.json" 2>/dev/null
         
         VERIFY=$(uci get banner.banner.bg_enabled)
         log "[!] Service remotely DISABLED. Reason: $MSG"
@@ -1512,9 +1513,45 @@ end
 -- ================== 以下是重构后的 API 函数 ==================
 
 function api_update()
-    -- 修正点：同步执行，等待脚本完成
-    local code = luci.sys.call("/usr/bin/banner_manual_update.sh >/dev/null 2>&1")
-    json_response({ success = (code == 0), message = "手动更新命令已执行。请稍后刷新页面查看是否已重新启用。" })
+    local uci = require("uci").cursor()
+    local fs = require("nixio.fs")
+    local sys = require("luci.sys")
+    
+    -- 🔧 关键修复：立即清理缓存，避免旧数据干扰
+    sys.call("rm -f /tmp/banner_cache/banner_new.json /tmp/banner_cache/nav_data.json 2>/dev/null")
+    
+    -- 执行手动更新脚本（同步执行）
+    local code = sys.call("/usr/bin/banner_manual_update.sh >/dev/null 2>&1")
+    
+    -- 🔧 关键修复：等待UCI配置生效
+    if code == 0 then
+        os.execute("sleep 1")
+        
+        -- 读取更新后的状态
+        local bg_enabled = uci:get("banner", "banner", "bg_enabled") or "1"
+        local remote_message = uci:get("banner", "banner", "remote_message") or ""
+        
+        if bg_enabled == "0" then
+            -- 服务已被远程禁用
+            json_response({ 
+                success = true, 
+                disabled = true,
+                message = "服务已被远程禁用：" .. remote_message 
+            })
+        else
+            -- 服务正常更新
+            json_response({ 
+                success = true, 
+                disabled = false,
+                message = "手动更新命令已执行。请稍后刷新页面查看是否已重新启用。" 
+            })
+        end
+    else
+        json_response({ 
+            success = false, 
+            message = "更新失败，请检查日志" 
+        })
+    end
 end
 
 function api_set_bg()
@@ -1941,33 +1978,35 @@ cat > "$PKG_DIR/root/usr/lib/lua/luci/view/banner/display.htm" <<'DISPLAYVIEW'
 .carousel { position: relative; width: 100%; height: 300px; overflow: hidden; border-radius: 10px; margin-bottom: 20px; }
 .carousel img { width: 100%; height: 100%; object-fit: cover; position: absolute; opacity: 0; transition: opacity .5s; }
 .carousel img.active { opacity: 1; }
-/* 文件轮播样式 - 固定显示15个(3列×5行) */
-.file-carousel { position: relative; width: 100%; min-height: 800px; background: rgba(0,0,0,.25); border-radius: 10px; margin-bottom: 20px; padding: 20px; overflow: hidden; }
-.carousel-track { display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; }
-.file-card { min-height: 140px; background: rgba(255,255,255,.12); border: 1px solid rgba(255,255,255,.2); border-radius: 8px; padding: 15px; display: flex; align-items: center; gap: 12px; backdrop-filter: blur(5px); transition: all .3s; }
+/* 文件轮播样式 - 响应式3列布局 */
+.file-carousel { position: relative; width: 100%; min-height: 600px; background: rgba(0,0,0,.25); border-radius: 10px; margin-bottom: 20px; padding: 20px; overflow: hidden; }
+.carousel-track { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 15px; }
+.file-card { min-height: 160px; background: rgba(255,255,255,.12); border: 1px solid rgba(255,255,255,.2); border-radius: 8px; padding: 15px; display: flex; flex-direction: column; backdrop-filter: blur(5px); transition: all .3s; cursor: pointer; }
 .file-card:hover { transform: translateY(-3px); background: rgba(255,255,255,.18); border-color: #4fc3f7; }
+.file-header { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
 .file-icon { font-size: 36px; flex-shrink: 0; }
 .file-info { flex: 1; min-width: 0; }
-.file-name { color: #fff; font-weight: 700; font-size: 15px; margin-bottom: 5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.file-desc { color: #ccc; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.file-size { color: #bbb; font-size: 11px; }
-.file-action { flex-shrink: 0; }
-.action-btn { padding: 8px 16px; border: 0; border-radius: 5px; font-weight: 700; cursor: pointer; transition: all .3s; font-size: 13px; text-decoration: none; display: inline-block; }
+.file-name { color: #fff; font-weight: 700; font-size: 15px; margin-bottom: 5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
+.file-name:hover { text-decoration: underline; color: #4fc3f7; }
+.file-desc { color: #ccc; font-size: 12px; line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.file-size { color: #bbb; font-size: 11px; margin-top: auto; padding-top: 8px; }
+.file-action { margin-top: 10px; text-align: center; }
+.action-btn { padding: 8px 20px; border: 0; border-radius: 5px; font-weight: 700; cursor: pointer; transition: all .3s; font-size: 13px; text-decoration: none; display: inline-block; width: 100%; box-sizing: border-box; }
 .visit-btn { background: rgba(33,150,243,.9); color: #fff; }
-.visit-btn:hover { background: rgba(33,150,243,1); transform: scale(1.05); }
+.visit-btn:hover { background: rgba(33,150,243,1); transform: translateY(-2px); }
 .carousel-controls { display: flex; align-items: center; justify-content: center; gap: 15px; margin-top: 20px; }
 .carousel-btn { background: rgba(255,255,255,.15); border: 1px solid rgba(255,255,255,.3); color: #fff; padding: 10px 20px; border-radius: 5px; cursor: pointer; transition: all .3s; font-weight: 700; }
 .carousel-btn:hover:not(:disabled) { background: rgba(255,255,255,.25); transform: scale(1.05); }
 .carousel-btn:disabled { opacity: .5; cursor: not-allowed; }
 .carousel-indicator { color: #fff; font-weight: 700; font-size: 16px; }
 @media (max-width: 1024px) {
-    .carousel-track { grid-template-columns: repeat(2, 1fr); }
-    .file-carousel { min-height: 600px; }
+    .carousel-track { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .file-carousel { min-height: 500px; }
 }
 @media (max-width: 768px) {
     .carousel-track { grid-template-columns: 1fr; }
     .file-carousel { min-height: 400px; padding: 15px; }
-    .file-card { min-height: 120px; }
+    .file-card { min-height: 150px; }
 }
 .banner-scroll { padding: 20px; margin-bottom: 30px; text-align: center; font-weight: 700; font-size: 18px; border-radius: 10px; min-height: 60px; display: flex; align-items: center; justify-content: center;
 <% if color == 'rainbow' then %>background: linear-gradient(90deg, #ff0000, #ff7f00, #ffff00, #00ff00, #0000ff, #4b0082, #9400d3); background-size: 400% 400%; animation: rainbow 8s ease infinite; color: #fff; text-shadow: 2px 2px 4px rgba(0,0,0,.5)<% else %>background: rgba(255,255,255,.15); color: <%=color%><% end %>
@@ -2070,23 +2109,25 @@ cat > "$PKG_DIR/root/usr/lib/lua/luci/view/banner/display.htm" <<'DISPLAYVIEW'
                 for idx = start_idx, end_idx do
                     local file = nav_data.carousel_files[idx]
                 %>
-                <div class="file-card">
-                    <div class="file-icon">
-                        <% if file.type == "pdf" then %>📄
-                        <% elseif file.type == "txt" then %>📝
-                        <% elseif file.type == "url" then %>🔗
-                        <% else %>📦<% end %>
-                    </div>
-                    <div class="file-info">
-                        <div class="file-name"><%=pcdata(file.name)%></div>
-                        <div class="file-desc"><%=pcdata(file.desc or '')%></div>
-                        <div class="file-size">
-                            <% if file.size then %><%=file.size%>
-                            <% elseif file.type == "url" then %>链接跳转<% end %>
+                <div class="file-card" onclick="window.open('<%=pcdata(file.url)%>', '_blank')">
+                    <div class="file-header">
+                        <div class="file-icon">
+                            <% if file.type == "pdf" then %>📄
+                            <% elseif file.type == "txt" then %>📝
+                            <% elseif file.type == "url" then %>🔗
+                            <% else %>📦<% end %>
+                        </div>
+                        <div class="file-info">
+                            <div class="file-name" onclick="event.stopPropagation(); window.open('<%=pcdata(file.url)%>', '_blank')"><%=pcdata(file.name)%></div>
                         </div>
                     </div>
+                    <div class="file-desc"><%=pcdata(file.desc or '')%></div>
+                    <div class="file-size">
+                        <% if file.size then %><%=file.size%>
+                        <% elseif file.type == "url" then %>链接跳转<% end %>
+                    </div>
                     <div class="file-action">
-                        <a href="<%=pcdata(file.url)%>" target="_blank" rel="noopener noreferrer" class="action-btn visit-btn">访问</a>
+                        <a href="<%=pcdata(file.url)%>" target="_blank" rel="noopener noreferrer" class="action-btn visit-btn" onclick="event.stopPropagation()">访问</a>
                     </div>
                 </div>
                 <% end %>
@@ -2106,16 +2147,21 @@ cat > "$PKG_DIR/root/usr/lib/lua/luci/view/banner/display.htm" <<'DISPLAYVIEW'
         <div class="banner-contacts">
     <% 
     local contacts = {}
-    -- 默认内置联系方式
-    table.insert(contacts, {icon="📧", label="邮箱", value=contact_email or "niwo5507@gmail.com"})
-    table.insert(contacts, {icon="📱", label="Telegram", value=contact_telegram or "@fgnb111999"})
-    table.insert(contacts, {icon="💬", label="QQ", value=contact_qq or "183452852"})
     
-    -- 从远程JSON加载额外联系方式
-    if nav_data and nav_data.contacts then
+    -- 从远程JSON加载联系方式（优先级最高，支持无限个）
+    if nav_data and nav_data.contacts and type(nav_data.contacts) == "table" then
         for _, c in ipairs(nav_data.contacts) do
-            table.insert(contacts, c)
+            if c.icon and c.label and c.value then
+                table.insert(contacts, c)
+            end
         end
+    end
+    
+    -- 如果远程没有，使用默认内置联系方式
+    if #contacts == 0 then
+        table.insert(contacts, {icon="📧", label="邮箱", value=contact_email or "niwo5507@gmail.com"})
+        table.insert(contacts, {icon="📱", label="Telegram", value=contact_telegram or "@fgnb111999"})
+        table.insert(contacts, {icon="💬", label="QQ", value=contact_qq or "183452852"})
     end
     
     for _, contact in ipairs(contacts) do
@@ -2127,8 +2173,7 @@ cat > "$PKG_DIR/root/usr/lib/lua/luci/view/banner/display.htm" <<'DISPLAYVIEW'
         </div>
         <button class="copy-btn" onclick="copyText('<%=pcdata(contact.value)%>')">复制</button>
     </div>
-    <% end %>  <!-- 这是循环的结束 -->
-    <% end %>  <!-- 这是整个else的结束（这一行是新增的，非常关键！） -->
+    <% end %>
 </div>
 
 <script type="text/javascript">
@@ -2824,6 +2869,13 @@ function apiCall(endpoint, data, reloadOnSuccess, btn) {
     .then(result => {
         if (btn) btn.classList.remove('spinning');
         document.getElementById('loadingOverlay').classList.remove('active');
+        
+        // 🔧 关键修复：检测远程禁用状态
+        if (result.disabled) {
+            showToast('⚠️ ' + result.message, 'error');
+            setTimeout(function() { window.location.reload(); }, 2000);
+            return;
+        }
         
         // 使用 Toast 替代 alert
         var message = result.message || (result.success ? '✓ 操作成功' : '✗ 操作失败');

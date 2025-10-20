@@ -547,15 +547,11 @@ if ! acquire_lock 60; then
     exit 1
 fi
 
-log "Loading background group ${BG_GROUP}..."
+log "Loading random background images..."
 echo "loading" > "$CACHE/bg_loading"
 rm -f "$CACHE/bg_complete"
 
-START_IDX=$(( (BG_GROUP - 1) * 3 + 1 ))
-if ! jq empty "$JSON" 2>/dev/null; then
-    log "[×] JSON format error in nav_data.json"; rm -f "$CACHE/bg_loading"; exit 1
-fi
-
+# 删除旧背景
 rm -f "$DEST"/bg{0,1,2}.jpg
 if [ "$(uci -q get banner.banner.persistent_storage)" = "1" ]; then
     rm -f "$WEB"/bg{0,1,2}.jpg
@@ -564,96 +560,89 @@ fi
 MAX_SIZE=$(uci -q get banner.banner.max_file_size || echo "$MAX_FILE_SIZE")
 log "Using max file size limit: $MAX_SIZE bytes."
 
+# 固定的随机图片URL（每次都不同）
 DOWNLOAD_SUCCESS=0
 for i in 0 1 2; do
-    KEY="background_$((START_IDX + i))"
-    URL=$(jsonfilter -i "$JSON" -e "@.$KEY" 2>/dev/null)
-    if [ -n "$URL" ] && validate_url "$URL"; then
-        log "  Downloading image for bg${i}.jpg..."
-        TMPFILE="$DEST/bg$i.tmp"
+    # 添加时间戳确保每次都是新图片
+    URL="https://picsum.photos/1920/1080?random=$(($(date +%s) + i))"
+    log "  Downloading bg${i}.jpg from Picsum..."
+    TMPFILE="$DEST/bg$i.tmp"
+    
+    # 下载图片（3次重试）
+    DOWNLOAD_OK=0
+    for attempt in 1 2 3; do
+        HTTP_CODE=$(curl -sL --connect-timeout 10 --max-time 20 -w "%{http_code}" -o "$TMPFILE" "$URL" 2>/dev/null)
         
-       log "  Attempting download from: $(echo "$URL" | sed 's|https?://[^/]*/|.../|' )"
-        
-        # 修复: 简化HTTP请求,使用3次重试
-        DOWNLOAD_OK=0
-        for attempt in 1 2 3; do
-            HTTP_CODE=$(curl -sL --connect-timeout 10 --max-time 20 -w "%{http_code}" -o "$TMPFILE" "$URL" 2>/dev/null)
-            
-            if [ "$HTTP_CODE" = "200" ] && [ -s "$TMPFILE" ]; then
-                DOWNLOAD_OK=1
-                log "  [√] Download successful on attempt $attempt (HTTP $HTTP_CODE)"
-                break
-            else
-                log "  [×] Attempt $attempt failed (HTTP: ${HTTP_CODE:-timeout})"
-                rm -f "$TMPFILE"
-                [ $attempt -lt 3 ] && sleep 2
-            fi
-        done
-        
-        if [ $DOWNLOAD_OK -eq 0 ]; then
-            log "  [×] All 3 download attempts failed"
-            continue
-        fi
-        
-        if [ ! -s "$TMPFILE" ]; then
-            log "  [×] Download failed for $URL (empty file)"
-            rm -f "$TMPFILE"
-            continue
-        fi
-        
-        FILE_SIZE=$(stat -c %s "$TMPFILE" 2>/dev/null || wc -c < "$TMPFILE" 2>/dev/null || echo 999999999)
-        if [ "$FILE_SIZE" -gt "$MAX_SIZE" ]; then
-            log "  [×] File too large: $FILE_SIZE bytes (limit: $MAX_SIZE)"
-            rm -f "$TMPFILE"
-            continue
-        fi
-
-        if head -n 1 "$TMPFILE" 2>/dev/null | grep -q "<!DOCTYPE\|<html"; then
-            log "  [×] Downloaded HTML instead of image (possible redirect/block)"
-            rm -f "$TMPFILE"
-            continue
-        fi
-
-        if validate_jpeg "$TMPFILE"; then
-            mv "$TMPFILE" "$DEST/bg$i.jpg"
-            chmod 644 "$DEST/bg$i.jpg"
-            log "  [√] bg${i}.jpg downloaded and validated successfully."
-            DOWNLOAD_SUCCESS=1
-            # 如果启用了永久存储,也复制一份到 Web 目录
-            if [ "$(uci -q get banner.banner.persistent_storage)" = "1" ]; then
-                cp "$DEST/bg$i.jpg" "$WEB/bg$i.jpg" 2>/dev/null
-            fi
-            # 总是将第一张成功下载的图片设为默认的 current_bg
-            if [ ! -f "$WEB/current_bg.jpg" ]; then
-                cp "$DEST/bg$i.jpg" "$WEB/current_bg.jpg" 2>/dev/null
-            fi
+        if [ "$HTTP_CODE" = "200" ] && [ -s "$TMPFILE" ]; then
+            DOWNLOAD_OK=1
+            log "  [✓] Download successful on attempt $attempt (HTTP $HTTP_CODE)"
+            break
         else
-            log "  [×] Downloaded file for bg${i}.jpg is invalid or not a JPEG."
+            log "  [×] Attempt $attempt failed (HTTP: ${HTTP_CODE:-timeout})"
             rm -f "$TMPFILE"
+            [ $attempt -lt 3 ] && sleep 2
+        fi
+    done
+    
+    if [ $DOWNLOAD_OK -eq 0 ]; then
+        log "  [×] All 3 download attempts failed for bg${i}"
+        continue
+    fi
+    
+    # 文件大小检查
+    FILE_SIZE=$(stat -c %s "$TMPFILE" 2>/dev/null || wc -c < "$TMPFILE" 2>/dev/null || echo 999999999)
+    if [ "$FILE_SIZE" -gt "$MAX_SIZE" ]; then
+        log "  [×] File too large: $FILE_SIZE bytes (limit: $MAX_SIZE)"
+        rm -f "$TMPFILE"
+        continue
+    fi
+
+    # HTML检查
+    if head -n 1 "$TMPFILE" 2>/dev/null | grep -q "<!DOCTYPE\|<html"; then
+        log "  [×] Downloaded HTML instead of image"
+        rm -f "$TMPFILE"
+        continue
+    fi
+
+    # JPEG验证
+    if validate_jpeg "$TMPFILE"; then
+        mv "$TMPFILE" "$DEST/bg$i.jpg"
+        chmod 644 "$DEST/bg$i.jpg"
+        log "  [✓] bg${i}.jpg downloaded and validated successfully."
+        DOWNLOAD_SUCCESS=1
+        
+        # 同步到Web目录
+        if [ "$(uci -q get banner.banner.persistent_storage)" = "1" ]; then
+            cp "$DEST/bg$i.jpg" "$WEB/bg$i.jpg" 2>/dev/null
+        fi
+        
+        # 第一张图设为默认
+        if [ ! -f "$WEB/current_bg.jpg" ]; then
+            cp "$DEST/bg$i.jpg" "$WEB/current_bg.jpg" 2>/dev/null
         fi
     else
-        log "  [×] No valid URL found for ${KEY}."
+        log "  [×] Downloaded file for bg${i}.jpg is invalid or not a JPEG."
+        rm -f "$TMPFILE"
     fi
 done
 
 if [ $DOWNLOAD_SUCCESS -eq 0 ]; then
-    log "[!] No images were downloaded for group ${BG_GROUP}. Keeping existing images if any."
+    log "[!] No images were downloaded. Keeping existing images if any."
 fi
 
-# 强制更新逻辑:如果有新图下载成功,自动设为 bg0
+# 强制更新逻辑
 if [ $DOWNLOAD_SUCCESS -eq 1 ]; then
     if [ -s "$DEST/bg0.jpg" ]; then
-        # 第一步:更新 current_bg.jpg
         cp "$DEST/bg0.jpg" "$WEB/current_bg.jpg" 2>/dev/null
-        log "[✓] Auto-updated current_bg.jpg to bg0.jpg from new group"
+        log "[✓] Auto-updated current_bg.jpg to bg0.jpg"
         
-        # 第二步:🪄 同步到初始化背景目录(关键步骤)
+        # 同步到初始化目录
         if [ -d "/usr/share/banner" ]; then
             cp "$DEST/bg0.jpg" "/usr/share/banner/bg0.jpg" 2>/dev/null
-            log "[✓] Synced to initialization background (/usr/share/banner/bg0.jpg)"
+            log "[✓] Synced to initialization background"
         fi
         
-        # 第三步:更新 UCI 配置
+        # 更新UCI
         if command -v uci >/dev/null 2>&1; then
             uci set banner.banner.current_bg='0' 2>/dev/null
             uci commit banner 2>/dev/null
@@ -661,9 +650,9 @@ if [ $DOWNLOAD_SUCCESS -eq 1 ]; then
         fi
     fi
 else
-    # 兜底:如果没下载成功,保持现有背景
+    # 兜底：保持现有背景
     if [ ! -s "$WEB/current_bg.jpg" ]; then
-        log "[!] current_bg.jpg is missing. Attempting to restore from existing backgrounds."
+        log "[!] current_bg.jpg is missing. Attempting to restore."
         for i in 0 1 2; do
             if [ -s "$DEST/bg${i}.jpg" ]; then
                 cp "$DEST/bg${i}.jpg" "$WEB/current_bg.jpg" 2>/dev/null
@@ -674,7 +663,7 @@ else
     fi
 fi
 
-log "[Complete] Background loading for group ${BG_GROUP} finished."
+log "[Complete] Background loading finished."
 rm -f "$CACHE/bg_loading"
 echo "complete" > "$CACHE/bg_complete"
 BGLOADER
@@ -1890,10 +1879,10 @@ cat > "$PKG_DIR/root/usr/lib/lua/luci/view/banner/display.htm" <<'DISPLAYVIEW'
 .carousel { position: relative; width: 100%; height: 300px; overflow: hidden; border-radius: 10px; margin-bottom: 20px; }
 .carousel img { width: 100%; height: 100%; object-fit: cover; position: absolute; opacity: 0; transition: opacity .5s; }
 .carousel img.active { opacity: 1; }
-/* 文件轮播样式 */
-.file-carousel { position: relative; width: 100%; min-height: 280px; background: rgba(0,0,0,.25); border-radius: 10px; margin-bottom: 20px; padding: 20px; overflow: hidden; }
-.carousel-track { display: flex; gap: 15px; transition: transform .4s ease; }
-.file-card { min-width: calc(33.333% - 10px); background: rgba(255,255,255,.12); border: 1px solid rgba(255,255,255,.2); border-radius: 8px; padding: 15px; display: flex; align-items: center; gap: 12px; backdrop-filter: blur(5px); transition: all .3s; }
+/* 文件轮播样式 - 固定显示15个(3列×5行) */
+.file-carousel { position: relative; width: 100%; min-height: 800px; background: rgba(0,0,0,.25); border-radius: 10px; margin-bottom: 20px; padding: 20px; overflow: hidden; }
+.carousel-track { display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; }
+.file-card { min-height: 140px; background: rgba(255,255,255,.12); border: 1px solid rgba(255,255,255,.2); border-radius: 8px; padding: 15px; display: flex; align-items: center; gap: 12px; backdrop-filter: blur(5px); transition: all .3s; }
 .file-card:hover { transform: translateY(-3px); background: rgba(255,255,255,.18); border-color: #4fc3f7; }
 .file-icon { font-size: 36px; flex-shrink: 0; }
 .file-info { flex: 1; min-width: 0; }
@@ -1902,26 +1891,21 @@ cat > "$PKG_DIR/root/usr/lib/lua/luci/view/banner/display.htm" <<'DISPLAYVIEW'
 .file-size { color: #bbb; font-size: 11px; }
 .file-action { flex-shrink: 0; }
 .action-btn { padding: 8px 16px; border: 0; border-radius: 5px; font-weight: 700; cursor: pointer; transition: all .3s; font-size: 13px; text-decoration: none; display: inline-block; }
-.download-btn { background: rgba(76,175,80,.9); color: #fff; }
-.download-btn:hover { background: rgba(76,175,80,1); transform: scale(1.05); }
 .visit-btn { background: rgba(33,150,243,.9); color: #fff; }
 .visit-btn:hover { background: rgba(33,150,243,1); transform: scale(1.05); }
-.carousel-controls { display: flex; align-items: center; justify-content: center; gap: 15px; margin-top: 15px; }
-.carousel-btn { background: rgba(255,255,255,.15); border: 1px solid rgba(255,255,255,.3); color: #fff; padding: 8px 15px; border-radius: 5px; cursor: pointer; transition: all .3s; font-weight: 700; }
-.carousel-btn:hover { background: rgba(255,255,255,.25); transform: scale(1.05); }
+.carousel-controls { display: flex; align-items: center; justify-content: center; gap: 15px; margin-top: 20px; }
+.carousel-btn { background: rgba(255,255,255,.15); border: 1px solid rgba(255,255,255,.3); color: #fff; padding: 10px 20px; border-radius: 5px; cursor: pointer; transition: all .3s; font-weight: 700; }
+.carousel-btn:hover:not(:disabled) { background: rgba(255,255,255,.25); transform: scale(1.05); }
 .carousel-btn:disabled { opacity: .5; cursor: not-allowed; }
-.carousel-indicator { color: #fff; font-weight: 700; }
-
-/* 响应式 */
+.carousel-indicator { color: #fff; font-weight: 700; font-size: 16px; }
 @media (max-width: 1024px) {
-    .file-card { min-width: calc(50% - 7.5px); }
+    .carousel-track { grid-template-columns: repeat(2, 1fr); }
+    .file-carousel { min-height: 600px; }
 }
 @media (max-width: 768px) {
-    .file-carousel { min-height: 240px; padding: 15px; }
-    .file-card { min-width: 100%; flex-direction: column; text-align: center; }
-    .file-info { width: 100%; }
-    .file-action { width: 100%; }
-    .action-btn { width: 100%; }
+    .carousel-track { grid-template-columns: 1fr; }
+    .file-carousel { min-height: 400px; padding: 15px; }
+    .file-card { min-height: 120px; }
 }
 .banner-scroll { padding: 20px; margin-bottom: 30px; text-align: center; font-weight: 700; font-size: 18px; border-radius: 10px; min-height: 60px; display: flex; align-items: center; justify-content: center;
 <% if color == 'rainbow' then %>background: linear-gradient(90deg, #ff0000, #ff7f00, #ffff00, #00ff00, #0000ff, #4b0082, #9400d3); background-size: 400% 400%; animation: rainbow 8s ease infinite; color: #fff; text-shadow: 2px 2px 4px rgba(0,0,0,.5)<% else %>background: rgba(255,255,255,.15); color: <%=color%><% end %>
@@ -2012,40 +1996,43 @@ cat > "$PKG_DIR/root/usr/lib/lua/luci/view/banner/display.htm" <<'DISPLAYVIEW'
         <% if nav_data and nav_data.carousel_files and #nav_data.carousel_files > 0 then %>
         <div class="file-carousel">
             <div class="carousel-track" id="carousel-track">
-                <% for idx, file in ipairs(nav_data.carousel_files) do %>
-                <div class="file-card" data-index="<%=idx%>">
+                <%
+                local items_per_page = 15
+                local current_page_param = tonumber(luci.http.formvalue("page")) or 1
+                local total_items = #nav_data.carousel_files
+                local total_pages = math.ceil(total_items / items_per_page)
+                if total_pages > 5 then total_pages = 5 end
+                if current_page_param > total_pages then current_page_param = 1 end
+                local start_idx = (current_page_param - 1) * items_per_page + 1
+                local end_idx = math.min(start_idx + items_per_page - 1, math.min(total_items, 75))
+                for idx = start_idx, end_idx do
+                    local file = nav_data.carousel_files[idx]
+                %>
+                <div class="file-card">
                     <div class="file-icon">
-                        <% if file.type == "pdf" then %>
-                            📄
-                        <% elseif file.type == "txt" then %>
-                            📝
-                        <% elseif file.type == "url" then %>
-                            🔗
-                        <% else %>
-                            📦
-                        <% end %>
+                        <% if file.type == "pdf" then %>📄
+                        <% elseif file.type == "txt" then %>📝
+                        <% elseif file.type == "url" then %>🔗
+                        <% else %>📦<% end %>
                     </div>
                     <div class="file-info">
                         <div class="file-name"><%=pcdata(file.name)%></div>
                         <div class="file-desc"><%=pcdata(file.desc or '')%></div>
                         <div class="file-size">
-                            <% if file.size then %>
-                                <%=file.size%>
-                            <% elseif file.type == "url" then %>
-                                链接跳转
-                            <% end %>
+                            <% if file.size then %><%=file.size%>
+                            <% elseif file.type == "url" then %>链接跳转<% end %>
                         </div>
                     </div>
                     <div class="file-action">
-    <a href="<%=pcdata(file.url)%>" target="_blank" rel="noopener noreferrer" class="action-btn visit-btn">访问</a>
-</div>
+                        <a href="<%=pcdata(file.url)%>" target="_blank" rel="noopener noreferrer" class="action-btn visit-btn">访问</a>
+                    </div>
                 </div>
                 <% end %>
             </div>
             <div class="carousel-controls">
-                <button class="carousel-btn prev-btn" onclick="slideCarousel(-1)">◀</button>
-                <span class="carousel-indicator" id="carousel-indicator">1 / 1</span>
-                <button class="carousel-btn next-btn" onclick="slideCarousel(1)">▶</button>
+                <button class="carousel-btn" onclick="changePage(<%=current_page_param - 1%>)" <%=current_page_param == 1 and 'disabled' or ''%>>◀ 上一页</button>
+                <span class="carousel-indicator"><%=current_page_param%> / <%=total_pages%></span>
+                <button class="carousel-btn" onclick="changePage(<%=current_page_param + 1%>)" <%=current_page_param >= total_pages and 'disabled' or ''%>>下一页 ▶</button>
             </div>
         </div>
         <% else %>
@@ -2191,77 +2178,9 @@ function fallbackCopy(text) {
     document.body.removeChild(textarea);
 }
 
-// 文件轮播功能
-var carouselIndex = 0;
-var carouselItems = document.querySelectorAll('.file-card').length;
-var carouselItemsPerView = window.innerWidth > 1024 ? 3 : (window.innerWidth > 768 ? 2 : 1);
-
-function slideCarousel(direction) {
-    var track = document.getElementById('carousel-track');
-    var indicator = document.getElementById('carousel-indicator');
-    if (!track || !indicator) return;
-    
-    carouselIndex += direction;
-    var maxIndex = Math.ceil(carouselItems / carouselItemsPerView) - 1;
-    
-    if (carouselIndex < 0) carouselIndex = 0;
-    if (carouselIndex > maxIndex) carouselIndex = maxIndex;
-    
-    var cardWidth = track.querySelector('.file-card').offsetWidth;
-    var gap = 15;
-    var offset = -(carouselIndex * carouselItemsPerView * (cardWidth + gap));
-    track.style.transform = 'translateX(' + offset + 'px)';
-    
-    indicator.textContent = (carouselIndex + 1) + ' / ' + (maxIndex + 1);
-    
-    document.querySelector('.prev-btn').disabled = (carouselIndex === 0);
-    document.querySelector('.next-btn').disabled = (carouselIndex === maxIndex);
-}
-
-// 自动轮播
-if (carouselItems > carouselItemsPerView) {
-    setInterval(function() {
-        var maxIndex = Math.ceil(carouselItems / carouselItemsPerView) - 1;
-        if (carouselIndex >= maxIndex) {
-            carouselIndex = -1;
-        }
-        slideCarousel(1);
-    }, 5000);
-}
-
-// 下载文件函数
-function downloadFile(url, filename) {
-    // 显示下载提示
-    var loadingMsg = document.createElement('div');
-    loadingMsg.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:rgba(0,0,0,.8);color:#fff;padding:20px 40px;border-radius:10px;z-index:9999;font-weight:700;';
-    loadingMsg.textContent = '正在下载 ' + filename + '...';
-    document.body.appendChild(loadingMsg);
-    
-    // 创建隐藏的下载链接
-    var link = document.createElement('a');
-    link.href = url;
-    link.download = filename;
-    link.style.display = 'none';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    
-    // 2秒后移除提示
-    setTimeout(function() {
-        document.body.removeChild(loadingMsg);
-    }, 2000);
-}
-
-// 响应式调整
-window.addEventListener('resize', function() {
-    carouselItemsPerView = window.innerWidth > 1024 ? 3 : (window.innerWidth > 768 ? 2 : 1);
-    carouselIndex = 0;
-    slideCarousel(0);
-});
-
-// 初始化
-if (document.querySelector('.file-carousel')) {
-    slideCarousel(0);
+// 手动翻页功能
+function changePage(page) {
+    window.location.href = window.location.pathname + '?page=' + page;
 }
 </script>
 <%+footer%>

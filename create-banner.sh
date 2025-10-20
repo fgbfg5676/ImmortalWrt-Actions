@@ -50,13 +50,13 @@ fi
 # 允许 GitHub Actions Runner 路径
 IS_GITHUB_ACTIONS=0
 if echo "$ABS_PKG_DIR" | grep -qE "^/home/runner/work/|^/github/workspace"; then
-    echo "âš™ å…è®¸ GitHub Actions è·¯å¾„: $ABS_PKG_DIR"
+    echo "✓ Allowed GitHub Actions path: $ABS_PKG_DIR"
     IS_GITHUB_ACTIONS=1
 fi
 
 
 if echo "$ABS_PKG_DIR" | grep -qE "^/home/[^/]+/.*openwrt"; then
-    echo "âš™ å…è®¸æœ¬åœ°å¼€å'è·¯å¾„: $ABS_PKG_DIR"
+    echo "✓ Allowed local development path: $ABS_PKG_DIR"
     IS_GITHUB_ACTIONS=1
 fi
 if [ $IS_GITHUB_ACTIONS -eq 0 ]; then
@@ -917,9 +917,13 @@ if [ $SUCCESS -eq 1 ] && [ -s "$CACHE/banner_new.json" ]; then
         log "[DEBUG] Service remains ENABLED (enabled=$ENABLED)"
         TEXT=$(jsonfilter -i "$CACHE/banner_new.json" -e '@.text' 2>/dev/null)
         if [ -n "$TEXT" ]; then
+                        # 複製新數據到緩存
             cp "$CACHE/banner_new.json" "$CACHE/nav_data.json"
+            
+            # 設置橫幅文本
             uci set banner.banner.text="$TEXT"
             
+            # 提取並設置聯繫方式
             CONTACT_EMAIL=$(jsonfilter -i "$CACHE/banner_new.json" -e '@.contact_info.email' 2>/dev/null)
             CONTACT_TG=$(jsonfilter -i "$CACHE/banner_new.json" -e '@.contact_info.telegram' 2>/dev/null)
             CONTACT_QQ=$(jsonfilter -i "$CACHE/banner_new.json" -e '@.contact_info.qq' 2>/dev/null)
@@ -928,27 +932,29 @@ if [ $SUCCESS -eq 1 ] && [ -s "$CACHE/banner_new.json" ]; then
             if [ -n "$CONTACT_TG" ]; then uci set banner.banner.contact_telegram="$CONTACT_TG"; fi
             if [ -n "$CONTACT_QQ" ]; then uci set banner.banner.contact_qq="$CONTACT_QQ"; fi
             
+            # 設置橫幅顏色和滾動文本列表
             uci set banner.banner.color="$(jsonfilter -i "$CACHE/banner_new.json" -e '@.color' 2>/dev/null || echo 'rainbow')"
             uci set banner.banner.banner_texts="$(jsonfilter -i "$CACHE/banner_new.json" -e '@.banner_texts[*]' 2>/dev/null | tr '\n' '|')"
             
-            # 关键修复: 确保启用状态
+            # 關鍵修復: 確保啟用狀態並清除遠程消息
             uci set banner.banner.bg_enabled='1'
             uci delete banner.banner.remote_message >/dev/null 2>&1
             
+            # 設置最後更新時間
             uci set banner.banner.last_update=$(date +%s)
+            
+            # 一次性提交所有更改
             uci commit banner
-           # 清除可能残留的锁文件
-            rm -f /tmp/banner_manual_update.lock /tmp/banner_auto_update.lock 2>/dev/null
-            uci set banner.banner.last_update=$(date +%s)
-            uci commit banner
-           # 清除可能残留的锁文件
+            
+            # 清除可能殘留的鎖文件
             rm -f /tmp/banner_manual_update.lock /tmp/banner_auto_update.lock 2>/dev/null
             
-            # 🪄 触发背景组加载，自动更新初始化背景
+            # 🪄 觸發背景組加載，自動更新初始化背景
             BG_GROUP=$(uci -q get banner.banner.bg_group || echo 1)
             /usr/bin/banner_bg_loader.sh "$BG_GROUP" >> /tmp/banner_update.log 2>&1 &
             
             log "[√] Manual update applied successfully."
+
         else
             log "[×] Update failed: Invalid JSON content (missing 'text' field)."
             rm -f "$CACHE/banner_new.json"
@@ -1220,21 +1226,76 @@ start_service() {
     # 启动自动更新的 cron job
     /usr/bin/banner_auto_update.sh >/dev/null 2>&1
     
-    # 首次开机网络检测和更新 (在后台运行)
+        # 首次開機網絡檢測和更新 (在後台運行，更健壯的版本)
     (
+        # 為這個後台任務創建一個唯一的鎖文件
+        local BG_PID_FILE="/var/run/banner_init_check.pid"
+        
+        # 檢查是否已有實例在運行
+        if [ -f "$BG_PID_FILE" ] && kill -0 "$(cat "$BG_PID_FILE")" 2>/dev/null; then
+            log "⚠️ 網路巡檢員已在運行，本次啟動跳過。"
+            exit 0
+        fi
+        
+        # 寫入當前進程ID
+        echo $$ > "$BG_PID_FILE"
+        
+        # 設置一個清理陷阱，確保退出時刪除 PID 文件
+        trap 'rm -f "$BG_PID_FILE"' EXIT
+
         # 清理可能存在的舊標記
         rm -f /tmp/banner_first_boot_done
 
         # 延遲5秒開始，避免開機初期過於繁忙
         sleep 5
 
+        # 增加一個總超時 (15分鐘)，防止無限循環
+        local TOTAL_TIMEOUT=900
+        local START_TIME=$(date +%s)
+
+        # ==================== 全新的、更強大的網絡檢測函數 ====================
+        check_network() {
+            # 優先檢測國內常用 DNS (阿里/騰訊)
+            if ping -c 1 -W 2 223.5.5.5 >/dev/null 2>&1 || ping -c 1 -W 2 119.29.29.29 >/dev/null 2>&1; then
+                log "✅ Network ready (Domestic DNS reachable)."
+                return 0
+            fi
+            
+            # 其次檢測海外常用 DNS (Google/Cloudflare)
+            if ping -c 1 -W 2 8.8.8.8 >/dev/null 2>&1 || ping -c 1 -W 2 1.1.1.1 >/dev/null 2>&1; then
+                log "✅ Network ready (Global DNS reachable)."
+                return 0
+            fi
+            
+            # 再次嘗試檢測 IPv6 連通性
+            if ping -6 -c 1 -W 2 2400:3200::1 >/dev/null 2>&1 || ping -6 -c 1 -W 2 2001:4860:4860::8888 >/dev/null 2>&1; then
+                log "✅ Network ready (IPv6 DNS reachable)."
+                return 0
+            fi
+            
+            # 最後兜底：嘗試訪問一個高可用的域名
+            if curl -s --head --connect-timeout 3 "http://www.qualcomm.cn/generate_204" | grep "204 No Content" >/dev/null 2>&1; then
+                log "✅ Network ready (HTTP connectivity check passed )."
+                return 0
+            fi
+
+            return 1
+        }
+        # =================================================================
+
         # 循環偵測網路，直到成功
         while [ ! -f /tmp/banner_first_boot_done ]; do
-            log "正在偵測網路連線 (ping 223.5.5.5)..."
+            # 檢查是否超時
+            local CURRENT_TIME=$(date +%s)
+            if [ $((CURRENT_TIME - START_TIME)) -gt $TOTAL_TIMEOUT ]; then
+                log "❌ 網路巡檢員運行超時 (${TOTAL_TIMEOUT}秒)，自動退出。"
+                break
+            fi
 
-            # 使用 ping 指令檢查公網連線
-            if ping -c 1 -W 3 223.5.5.5 >/dev/null 2>&1; then
-                log "✅ 網路已就緒！準備執行首次更新。"
+            log "正在偵測網路連線..."
+
+            if check_network; then
+                log "🚀 網路已就緒！準備執行首次更新。"
                 
                 # 執行真正的手動更新腳本，並將其輸出記錄到更新日誌
                 /usr/bin/banner_manual_update.sh >> /tmp/banner_update.log 2>&1
@@ -1242,15 +1303,16 @@ start_service() {
                 # 建立成功標記，以便結束偵測循環
                 touch /tmp/banner_first_boot_done
                 
-                log "✅ 首次開機更新任務已觸發。"
+                log "🎉 首次開機更新任務已觸發。"
                 break # 成功後退出循環
             else
                 # 如果網路未就緒，等待15秒後重試
-                log "網路尚未就緒，15秒後重試..."
+                log "⏳ 網路尚未就緒，15秒後重試..."
                 sleep 15
             fi
         done
     ) &
+
 
     log "========== Banner Service Started (網路巡檢員已在後台運行) =========="
 }

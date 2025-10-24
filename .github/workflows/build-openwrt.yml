@@ -306,7 +306,7 @@ jobs:
         echo "FIRMWARE_PATH=$(pwd)/bin/targets/*/*" >> $GITHUB_ENV
 
     - name: Upload firmware artifact
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v5
       with:
         name: OpenWrt_${{ env.FILE_NAME }}_${{ env.DEVICE_NAME }}_${{ env.FILE_DATE }}
         path: ${{ env.FIRMWARE_PATH }}
@@ -314,7 +314,7 @@ jobs:
 
     - name: Upload build logs and config
       if: always()
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v5
       with:
         name: build-info_${{ env.FILE_DATE }}
         path: |

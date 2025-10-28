@@ -239,31 +239,33 @@ echo "调试：Makefile 生成成功，大小 $(wc -c < "$PKG_DIR/Makefile") 字
 # UCI Configuration
 cat > "$PKG_DIR/root/etc/config/banner" <<'UCICONF'
 config banner 'banner'
-	option text '🎉 福利导航的内容会不定时更新，关注作者不迷路'
+	option text 'Banner text'
 	option color 'rainbow'
-	option opacity '50' # 0-100
-	option carousel_interval '5000' # 1000-30000 (ms)
-	option bg_group '1' # 1-4
-	option bg_enabled '1' # 0 or 1
-	option persistent_storage '0' # 0 or 1
-	option current_bg '0' # 0-2
-	list update_urls 'https://raw.githubusercontent.com/fgbfg5676/openwrt-banner/main/banner.json'
-	list update_urls 'https://gitee.com/fgbfg5676/openwrt-banner/raw/main/banner.json'
-	option selected_url 'https://raw.githubusercontent.com/fgbfg5676/openwrt-banner/main/banner.json'
-	option update_interval '10800' # seconds
+	option opacity '50'
+	option carousel_interval '5000'
+	option bg_group '1'
+	option bg_enabled '1'
+	option persistent_storage '0'
+	option current_bg '0'
+	list update_urls 'https://gitee-banner-worker-cn.niwo5507.workers.dev/api/banner'
+	list update_urls 'https://github-openwrt-banner-production.niwo5507.workers.dev/api/banner'
+	list update_urls 'https://banner-vercel.vercel.app/api/'
+	option selected_url 'https://gitee-banner-worker-cn.niwo5507.workers.dev/api/banner'
+	option update_interval '10800'
 	option last_update '0'
 	option banner_texts ''
 	option remote_message ''
-	option cache_dir '/tmp/banner_cache' # Cache directory
-	option web_dir '/www/luci-static/banner' # Web directory
-	option persistent_dir '/overlay/banner' # Persistent storage directory
-	option curl_timeout '15' # seconds
-	option wait_timeout '5' # seconds
-	option cleanup_age '3' # days
-	option restart_delay '15' # seconds
+	option cache_dir '/tmp/banner_cache'
+	option web_dir '/www/luci-static/banner'
+	option persistent_dir '/overlay/banner'
+	option curl_timeout '15'
+	option wait_timeout '5'
+	option cleanup_age '3'
+	option restart_delay '15'
 	option contact_email 'niwo5507@gmail.com'
 	option contact_telegram '@fgnb111999'
 	option contact_qq '183452852'
+	option preferred_source 'domestic'
 UCICONF
 
 cat > "$PKG_DIR/root/usr/share/banner/timeouts.conf" <<'TIMEOUTS'
@@ -667,6 +669,129 @@ log "[Complete] Background loading finished."
 rm -f "$CACHE/bg_loading"
 echo "complete" > "$CACHE/bg_complete"
 BGLOADER
+# ==================== NEW: Banner v3.0 三源更新脚本 ====================
+cat > "$PKG_DIR/root/usr/bin/banner_update.sh" <<'BANNER_UPDATE'
+#!/bin/sh
+# Banner v3.0 - Multi-source Update with User Selection
+# Features: User preference persistence + Automatic fallback
+
+CACHE="/tmp/banner_cache/nav_data.json"
+STATE="/tmp/banner_state"
+LOG="/tmp/banner_update.log"
+
+mkdir -p $(dirname $CACHE) $(dirname $STATE)
+
+log() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" >> $LOG
+    # 日志轮转（>100KB）
+    [ -f "$LOG" ] && [ $(stat -c%s "$LOG" 2>/dev/null || echo 0) -gt 102400 ] && \
+        tail -n 100 "$LOG" > "$LOG.tmp" && mv "$LOG.tmp" "$LOG"
+}
+
+# 检查网络
+check_network() {
+    ip route show default >/dev/null 2>&1 && return 0
+    log "No network, using cache"
+    return 1
+}
+
+# JSON 验证
+validate_json() {
+    local file="$1"
+    [ ! -s "$file" ] && return 1
+    head -n 1 "$file" | grep -q "<!DOCTYPE\|<html" && return 1
+    grep -q "nav_tabs" "$file" && return 0
+    return 1
+}
+
+# 下载源
+download_source() {
+    local name="$1"
+    local url="$2"
+    local timeout="$3"
+    
+    log "Trying [$name] timeout=${timeout}s"
+    
+    if curl -sL --max-time $timeout "$url" -o $CACHE.tmp 2>/dev/null; then
+        if validate_json $CACHE.tmp; then
+            mv $CACHE.tmp $CACHE
+            log "✓ Success: $name"
+            return 0
+        else
+            log "✗ Invalid JSON from $name"
+            rm -f $CACHE.tmp
+            return 1
+        fi
+    else
+        log "✗ Timeout/Error: $name"
+        rm -f $CACHE.tmp
+        return 1
+    fi
+}
+
+# ============ 主逻辑 ============
+
+log "========== Banner Update Start =========="
+
+# 检查网络
+check_network || {
+    echo "cache" > $STATE
+    exit 0
+}
+
+# 读取用户选择（从 UCI 持久化配置）
+PREFERRED=$(uci -q get banner.banner.preferred_source 2>/dev/null || echo "domestic")
+log "User preferred: $PREFERRED"
+
+# 定义三个源
+DOMESTIC="https://gitee-banner-worker-cn.niwo5507.workers.dev/api/banner"
+INTERNATIONAL="https://github-openwrt-banner-production.niwo5507.workers.dev/api/banner"
+VERCEL="https://banner-vercel.vercel.app/api/"
+
+# 根据用户选择排序优先级
+case "$PREFERRED" in
+    "international")
+        SOURCES="international:$INTERNATIONAL:30 vercel:$VERCEL:30 domestic:$DOMESTIC:20"
+        ;;
+    "vercel")
+        SOURCES="vercel:$VERCEL:30 international:$INTERNATIONAL:30 domestic:$DOMESTIC:20"
+        ;;
+    *)
+        SOURCES="domestic:$DOMESTIC:20 international:$INTERNATIONAL:30 vercel:$VERCEL:30"
+        ;;
+esac
+
+log "Priority: $SOURCES"
+
+# 尝试所有源
+ACTUAL_SOURCE="cache"
+for source_line in $SOURCES; do
+    IFS=':' read -r name url timeout <<EOF
+$source_line
+EOF
+    
+    if download_source "$name" "$url" "$timeout"; then
+        ACTUAL_SOURCE=$name
+        break
+    fi
+done
+
+# 保存当前状态（用于 UI 显示）
+mkdir -p $(dirname $STATE)
+cat > $STATE <<EOF
+preferred_source=$PREFERRED
+actual_source=$ACTUAL_SOURCE
+last_update=$(date +%s)
+EOF
+
+log "State: preferred=$PREFERRED actual=$ACTUAL_SOURCE"
+log "========== Banner Update Complete =========="
+
+exit 0
+BANNER_UPDATE
+
+chmod +x "$PKG_DIR/root/usr/bin/banner_update.sh"
+echo "✓ Created: banner_update.sh"
 
 # Manual update script
 cat > "$PKG_DIR/root/usr/bin/banner_manual_update.sh" <<'MANUALUPDATE'
@@ -1108,20 +1233,35 @@ if [ ! -f "$BOOT_FLAG" ]; then
     fi
     
     # 执行首次更新
+    # Execute first boot update (prefer new script)
     log "[BOOT] Executing first boot update..."
-    if /usr/bin/banner_manual_update.sh; then
-        log "[BOOT] ✓ First boot update successful"
-        touch "$BOOT_FLAG"
-        rm -f "$RETRY_FLAG" "$RETRY_TIMER"
+    if [ -x /usr/bin/banner_update.sh ]; then
+        log "[BOOT] Using new banner_update.sh"
+        if /usr/bin/banner_update.sh; then
+            log "[BOOT] OK First boot update successful (new)"
+            touch "$BOOT_FLAG"
+            rm -f "$RETRY_FLAG" "$RETRY_TIMER"
+        else
+            log "[BOOT] X First boot update failed, will retry"
+            echo "$(date +%s)" > "$RETRY_TIMER"
+            echo "0" > "$RETRY_FLAG"
+            touch "$BOOT_FLAG"
+        fi
     else
-        log "[BOOT] ✗ First boot update failed, will retry"
-        echo "$(date +%s)" > "$RETRY_TIMER"
-        echo "0" > "$RETRY_FLAG"
-        touch "$BOOT_FLAG"
+        log "[BOOT] Using fallback banner_manual_update.sh"
+        if /usr/bin/banner_manual_update.sh; then
+            log "[BOOT] OK First boot update successful (fallback)"
+            touch "$BOOT_FLAG"
+            rm -f "$RETRY_FLAG" "$RETRY_TIMER"
+        else
+            log "[BOOT] X First boot update failed, will retry"
+            echo "$(date +%s)" > "$RETRY_TIMER"
+            echo "0" > "$RETRY_FLAG"
+            touch "$BOOT_FLAG"
+        fi
     fi
     
     exit 0
-fi
 
 # ==================== 重试逻辑 ====================
 if [ -f "$RETRY_TIMER" ]; then
@@ -1160,6 +1300,7 @@ if [ -f "$RETRY_TIMER" ]; then
 fi
 
 # ==================== 定期更新逻辑 ====================
+# Scheduled update logic
 LAST_UPDATE=$(uci -q get banner.banner.last_update || echo 0)
 CURRENT_TIME=$(date +%s)
 INTERVAL=$(uci -q get banner.banner.update_interval || echo 10800)
@@ -1176,7 +1317,13 @@ if ! check_network; then
     exit 0
 fi
 
-/usr/bin/banner_manual_update.sh
+# Use new script if available
+if [ -x /usr/bin/banner_update.sh ]; then
+    /usr/bin/banner_update.sh
+else
+    /usr/bin/banner_manual_update.sh
+fi
+
 if [ $? -ne 0 ]; then
     log "[ERROR] Scheduled update failed"
 fi
@@ -1396,7 +1543,7 @@ function index()
     entry({"admin", "status", "banner", "display"}, call("action_display"), _("首页"), 1)
     entry({"admin", "status", "banner", "navigation"}, call("action_navigation"), _("导航展示"), 2)
     entry({"admin", "status", "banner", "settings"}, call("action_settings"), _("设置"), 3)
-    
+    entry({"admin", "status", "banner", "api_set_source"}, post("api_set_source")).leaf = true
     -- 重构为纯 API 接口,供前端 AJAX 调用
     entry({"admin", "status", "banner", "api_update"}, post("api_update")).leaf = true
     entry({"admin", "status", "banner", "api_set_bg"}, post("api_set_bg")).leaf = true
@@ -1469,6 +1616,7 @@ function action_settings()
         token = luci.dispatcher.context.authsession, 
         log = log,
         bg_log = bg_log -- 新增
+        preferred_source = uci:get("banner", "banner", "preferred_source") or "domestic"
     })
 end
 
@@ -1890,6 +2038,20 @@ function api_clear_logs()
     luci.sys.call("echo '' > /tmp/banner_update.log 2>/dev/null")
     luci.sys.call("echo '' > /tmp/banner_bg.log 2>/dev/null")
     json_response({ success = true, message = "日志已清空" })
+end
+-- NEW: 设置用户选择的源
+function api_set_source()
+    local source = luci.http.formvalue("source")
+    local valid = { domestic=1, international=1, vercel=1 }
+    
+    if valid[source] then
+        local uci = require("uci").cursor()
+        uci:set("banner", "banner", "preferred_source", source)
+        uci:commit("banner")
+        json_response({ success = true, message = "已选择" .. source .. "源" })
+    else
+        json_response({ success = false, message = "无效的源" })
+    end
 end
 CONTROLLER
 
@@ -2681,7 +2843,20 @@ input:checked + .toggle-slider:before { transform: translateX(26px); }
         <% if remote_message and remote_message ~= "" then %>
         <div style="background:rgba(217,83,79,.8);color:#fff;padding:15px;border-radius:10px;margin-bottom:20px;text-align:center"><%=pcdata(remote_message)%></div>
         <% end %>
-        
+        <!-- NEW: 源选择卡片 -->
+<div style="background:rgba(0,0,0,.3);border:1px solid rgba(255,255,255,.2);border-radius:10px;padding:15px;margin-bottom:20px">
+    <div style="color:#fff;font-weight:700;margin-bottom:10px">📡 选择数据源</div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap">
+        <button onclick="switchSource('domestic')" id="btn-domestic" style="padding:8px 15px;border:none;border-radius:5px;background:rgba(76,175,80,.9);color:#fff;cursor:pointer;font-weight:700">🇨🇳 国内源</button>
+        <button onclick="switchSource('international')" id="btn-international" style="padding:8px 15px;border:none;border-radius:5px;background:rgba(255,255,255,.2);color:#fff;cursor:pointer;font-weight:700">🌍 国际源</button>
+        <button onclick="switchSource('vercel')" id="btn-vercel" style="padding:8px 15px;border:none;border-radius:5px;background:rgba(255,255,255,.2);color:#fff;cursor:pointer;font-weight:700">⚡ 备用源</button>
+    </div>
+</div>
+
+<!-- 状态显示 -->
+<div id="source-status" style="background:rgba(33,150,243,.3);color:#fff;padding:10px 15px;border-radius:8px;margin-bottom:20px;font-size:12px;display:none">
+    <div id="status-text">ℹ️ 正在使用: 国内源</div>
+</div>
         <div class="cbi-value">
             <label class="cbi-value-title">背景透明度</label>
             <div class="cbi-value-field">
@@ -2971,6 +3146,57 @@ function changeBgSettings(n) {
         showToast('✗ 请求失败: ' + error.message, 'error');
     });
 }
+<script>
+// NEW: 源选择相关函数
+function switchSource(source) {
+    var formData = new URLSearchParams();
+    formData.append('token', '<%=token%>');
+    formData.append('source', source);
+    
+    fetch('<%=luci.dispatcher.build_url("admin/status/banner/api_set_source")%>', {
+        method: 'POST',
+        body: formData
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.success) {
+            showToast('✓ ' + data.message, 'success');
+            updateSourceDisplay(source);
+            // 立即运行更新
+            fetch('<%=luci.dispatcher.build_url("admin/status/banner/api_update")%>', {
+                method: 'POST',
+                body: 'token=<%=token%>'
+            });
+        } else {
+            showToast('✗ ' + data.message, 'error');
+        }
+    });
+}
+
+function updateSourceDisplay(source) {
+    var names = {
+        domestic: '国内源',
+        international: '国际源',
+        vercel: '备用源'
+    };
+    
+    document.getElementById('status-text').textContent = 'ℹ️ 正在使用: ' + names[source];
+    document.getElementById('source-status').style.display = 'block';
+    
+    // 更新按钮状态
+    ['domestic', 'international', 'vercel'].forEach(s => {
+        var btn = document.getElementById('btn-' + s);
+        btn.style.background = (s === source) ? 'rgba(76,175,80,.9)' : 'rgba(255,255,255,.2)';
+    });
+}
+
+// 页面加载时读取当前选择
+window.addEventListener('DOMContentLoaded', function() {
+    var pref = '<%=preferred_source%>';
+    if (pref) {
+        updateSourceDisplay(pref);
+    }
+});
 </script>
 <% end %>
 <%+footer%>

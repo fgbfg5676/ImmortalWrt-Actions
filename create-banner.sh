@@ -1438,7 +1438,23 @@ function action_display()
         })
         return
     end
-    local nav_data = { nav_tabs = {} }; pcall(function() nav_data = require("luci.jsonc").parse(fs.readfile("/tmp/banner_cache/nav_data.json")) end)
+    local nav_data = { nav_tabs = {}, carousel_files = {} }
+    local json_file = "/tmp/banner_cache/nav_data.json"
+    if fs.access(json_file) then
+        local json_content = fs.readfile(json_file)
+        if json_content and json_content ~= "" then
+            local success, parsed_data = pcall(function() 
+                return require("luci.jsonc").parse(json_content) 
+            end)
+            if success and parsed_data then
+                nav_data = parsed_data
+                -- 确保 carousel_files 存在
+                if not nav_data.carousel_files then
+                    nav_data.carousel_files = {}
+                end
+            end
+        end
+    end
     local persistent = uci:get("banner", "banner", "persistent_storage") or "0"
     local text = uci:get("banner", "banner", "text") or "欢迎使用"
     local opacity = tonumber(uci:get("banner", "banner", "opacity") or "50"); if not opacity or opacity < 0 or opacity > 100 then opacity = 50 end
@@ -1493,10 +1509,23 @@ function action_navigation()
     end
     
     -- 加载导航数据
-    local nav_data = { nav_tabs = {} }
-    pcall(function() 
-        nav_data = require("luci.jsonc").parse(fs.readfile("/tmp/banner_cache/nav_data.json")) 
-    end)
+    local nav_data = { nav_tabs = {}, carousel_files = {} }
+    local json_file = "/tmp/banner_cache/nav_data.json"
+    if fs.access(json_file) then
+        local json_content = fs.readfile(json_file)
+        if json_content and json_content ~= "" then
+            local success, parsed_data = pcall(function() 
+                return require("luci.jsonc").parse(json_content) 
+            end)
+            if success and parsed_data then
+                nav_data = parsed_data
+                -- 确保 carousel_files 存在
+                if not nav_data.carousel_files then
+                    nav_data.carousel_files = {}
+                end
+            end
+        end
+    end
     
     local persistent = uci:get("banner", "banner", "persistent_storage") or "0"
     local opacity = tonumber(uci:get("banner", "banner", "opacity") or "50")

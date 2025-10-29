@@ -57,7 +57,7 @@ fi
 
 if echo "$ABS_PKG_DIR" | grep -qE "^/home/[^/]+/.*openwrt"; then
     echo "✓ Allowed local development path: $ABS_PKG_DIR"
-    IS_GITHUB_ACTIONS=1
+    IS_GITHUB_ACTIONS=0
 fi
 if [ $IS_GITHUB_ACTIONS -eq 0 ]; then
 # 黑名单检查：禁止危险的系统路径
@@ -247,10 +247,10 @@ config banner 'banner'
 	option bg_enabled '1' # 0 or 1
 	option persistent_storage '0' # 0 or 1
 	option current_bg '0' # 0-2
-	list update_urls 'https://gitee-banner-worker-cn.niwo5507.workers.dev/api/banner'
+	list update_urls 'https://gitee.com/fgbfg5676/openwrt-banner/raw/main/banner.json'
                 list update_urls 'https://github-openwrt-banner-production.niwo5507.workers.dev/api/banner'
                 list update_urls 'https://banner-vercel.vercel.app/api/'
-                option selected_url 'https://gitee-banner-worker-cn.niwo5507.workers.dev/api/banner'
+                option selected_url 'https://gitee.com/fgbfg5676/openwrt-banner/raw/main/banner.json'
 	option update_interval '10800' # seconds
 	option last_update '0'
 	option banner_texts ''
@@ -312,7 +312,7 @@ log() {
     local log_file="${LOG:-/tmp/banner_update.log}"
 
     if echo "$msg" | grep -qE 'https?://|[0-9]{1,3}\.[0-9]{1,3}'; then
-        msg=$(echo "$msg" | sed -E 's|https?://[^[:space:]]+|[URL]|g' | sed -E 's|[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|[IP]|g')
+        msg=$(echo "$msg" | sed -E 's|https?://[^[:space:]]+|[URL]|g' | sed -E 's|[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}|[IP]|g')
     fi
     
     if ! echo "[$timestamp] $msg" >> "$log_file" 2>/dev/null; then
@@ -397,7 +397,7 @@ log() {
     local log_file="${LOG:-/tmp/banner_update.log}"
 
     if echo "$msg" | grep -qE 'https?://|[0-9]{1,3}\.[0-9]{1,3}'; then
-        msg=$(echo "$msg" | sed -E 's|https?://[^[:space:]]+|[URL]|g' | sed -E 's|[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|[IP]|g')
+        msg=$(echo "$msg" | sed -E 's|https?://[^[:space:]]+|[URL]|g' | sed -E 's|[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}|[IP]|g')
     fi
     
     if ! echo "[$timestamp] $msg" >> "$log_file" 2>/dev/null; then
@@ -590,13 +590,21 @@ for i in 0 1 2; do
         continue
     fi
     
-    # 文件大小检查
-    FILE_SIZE=$(stat -c %s "$TMPFILE" 2>/dev/null || wc -c < "$TMPFILE" 2>/dev/null || echo 999999999)
-    if [ "$FILE_SIZE" -gt "$MAX_SIZE" ]; then
-        log "  [×] File too large: $FILE_SIZE bytes (limit: $MAX_SIZE)"
-        rm -f "$TMPFILE"
-        continue
-    fi
+    # 检查文件是否存在且不为空
+if [ ! -s "$TMPFILE" ]; then
+    log "  [×] Downloaded file is empty or does not exist"
+    continue
+fi
+
+# 获取文件大小
+FILE_SIZE=$(stat -c %s "$TMPFILE" 2>/dev/null || stat -f %z "$TMPFILE" 2>/dev/null || wc -c < "$TMPFILE")
+
+# 检查文件大小
+if [ "$FILE_SIZE" -gt "$MAX_SIZE" ]; then
+    log "  [×] File too large: $FILE_SIZE bytes (limit: $MAX_SIZE)"
+    rm -f "$TMPFILE"
+    continue
+fi
 
     # HTML检查
     if head -n 1 "$TMPFILE" 2>/dev/null | grep -q "<!DOCTYPE\|<html"; then
@@ -688,7 +696,7 @@ log() {
     local log_file="${LOG:-/tmp/banner_update.log}"
 
     if echo "$msg" | grep -qE 'https?://|[0-9]{1,3}\.[0-9]{1,3}'; then
-        msg=$(echo "$msg" | sed -E 's|https?://[^[:space:]]+|[URL]|g' | sed -E 's|[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|[IP]|g')
+        msg=$(echo "$msg" | sed -E 's|https?://[^[:space:]]+|[URL]|g' | sed -E 's|[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}|[IP]|g')
     fi
     
     if ! echo "[$timestamp] $msg" >> "$log_file" 2>/dev/null; then
@@ -791,10 +799,10 @@ config banner 'banner'
     option bg_enabled '1'
     option persistent_storage '0'
     option current_bg '0'
-    list update_urls 'https://gitee-banner-worker-cn.niwo5507.workers.dev/api/banner'
+    list update_urls 'https://gitee.com/fgbfg5676/openwrt-banner/raw/main/banner.json'
     list update_urls 'https://github-openwrt-banner-production.niwo5507.workers.dev/api/banner'
     list update_urls 'https://banner-vercel.vercel.app/api/'
-    option selected_url 'https://gitee-banner-worker-cn.niwo5507.workers.dev/api/banner'
+    option selected_url 'https://gitee.com/fgbfg5676/openwrt-banner/raw/main/banner.json'
     option update_interval '10800'
     option last_update '0'
     option banner_texts ''
@@ -823,13 +831,6 @@ if [ -f "$AUTO_LOCK_FILE" ]; then
 fi
 
 log "========== Manual Update Started =========="
-
-validate_url() {
-    case "$1" in
-        http://*|https://*) return 0;;
-        *) log "[×] Invalid URL format: $1"; return 1;;
-    esac
-}
 
 URLS=$(uci -q get banner.banner.update_urls | tr ' ' '\n')
 SELECTED_URL=$(uci -q get banner.banner.selected_url)
@@ -2686,10 +2687,11 @@ input:checked + .toggle-slider:before { transform: translateX(26px); }
         <div class="cbi-value">
             <label class="cbi-value-title">选择数据源</label>
             <div class="cbi-value-field" style="display:flex;gap:10px;flex-wrap:wrap;">
-                <button class="cbi-button" style="background:rgba(76,175,80,0.9);flex:1;min-width:120px;" onclick="apiCall('api_set_update_url', {selected_url: 'https://gitee-banner-worker-cn.niwo5507.workers.dev/api/banner'}, false, this)">🇨🇳 国内源</button>
-                <button class="cbi-button" style="background:rgba(33,150,243,0.9);flex:1;min-width:120px;" onclick="apiCall('api_set_update_url', {selected_url: 'https://github-openwrt-banner-production.niwo5507.workers.dev/api/banner'}, false, this)">🌐 国际源</button>
-                <button class="cbi-button" style="background:rgba(255,152,0,0.9);flex:1;min-width:120px;" onclick="apiCall('api_set_update_url', {selected_url: 'https://banner-vercel.vercel.app/api/'}, false, this)">⚡ 备用源</button>
+                <button class="cbi-button source-btn" id="btn-domestic" style="background:rgba(76,175,80,0.9);flex:1;min-width:120px;border:2px solid transparent;transition:all 0.3s;" onclick="switchDataSource('https://gitee.com/fgbfg5676/openwrt-banner/raw/main/banner.json', this, '🇨🇳 国内源')">🇨🇳 国内源</button>
+                <button class="cbi-button source-btn" id="btn-global" style="background:rgba(33,150,243,0.9);flex:1;min-width:120px;border:2px solid transparent;transition:all 0.3s;" onclick="switchDataSource('https://github-openwrt-banner-production.niwo5507.workers.dev/api/banner', this, '🌐 国际源')">🌐 国际源</button>
+                <button class="cbi-button source-btn" id="btn-backup" style="background:rgba(255,152,0,0.9);flex:1;min-width:120px;border:2px solid transparent;transition:all 0.3s;" onclick="switchDataSource('https://banner-vercel.vercel.app/api/', this, '⚡ 备用源')">⚡ 备用源</button>
             </div>
+            <div id="source-indicator" style="margin-top:12px;padding:10px;border-radius:6px;text-align:center;color:#fff;font-weight:700;display:none;"></div>
         </div>
         <div class="cbi-value">
             <label class="cbi-value-title">背景透明度</label>
@@ -2729,15 +2731,11 @@ input:checked + .toggle-slider:before { transform: translateX(26px); }
         </div>
         
         <div class="cbi-value">
-            <label class="cbi-value-title">选择背景图组</label>
+            <label class="cbi-value-title">刷新背景图</label>
             <div class="cbi-value-field">
-                <select name="group">
-                    <% for i = 1, 4 do %>
-                    <option value="<%=i%>"<%=bg_group==tostring(i) and ' selected'%>>第 <%=i%> 组 (bg<%=(i-1)*3+1%>-bg<%=i*3%>)</option>
-                    <% end %>
-                </select>
-                <button class="cbi-button" onclick="apiCall('api_load_group', {group: this.previousElementSibling.value}, true, this)">加载背景组</button>
+                <button class="cbi-button" style="background:rgba(156,39,176,0.9);width:100%;padding:12px;" onclick="refreshBackground(this)">🔄 刷新背景（随机3张新图）</button>
             </div>
+            <p style="color:#aaa;font-size:12px;margin-top:8px;">💡 点击按钮拉取3张新的随机背景图，1.5秒后自动刷新页面</p>
         </div>
         
         <div class="cbi-value">
@@ -2897,7 +2895,112 @@ function apiCall(endpoint, data, reloadOnSuccess, btn) {
         showToast('✗ 请求失败: ' + error.message, 'error');
     });
 }
+// ==================== 数据源切换函数 ====================
+function switchDataSource(url, btn, sourceName) {
+    // 更新按钮样式 - 选中状态显示金色边框
+    document.querySelectorAll('.source-btn').forEach(function(b) {
+        b.style.borderColor = 'transparent';
+        b.style.boxShadow = 'none';
+    });
+    btn.style.borderColor = '#FFD700';
+    btn.style.boxShadow = '0 0 10px rgba(255, 215, 0, 0.5)';
+    
+    // 显示源指示器
+    var indicator = document.getElementById('source-indicator');
+    indicator.textContent = '✓ 已切换至：' + sourceName;
+    indicator.style.background = 'rgba(76, 175, 80, 0.8)';
+    indicator.style.display = 'block';
+    
+    // 调用API切换
+    var formData = new URLSearchParams();
+    formData.append('token', '<%=token%>');
+    formData.append('selected_url', url);
+    
+    fetch('<%=luci.dispatcher.build_url("admin/status/banner/api_set_update_url")%>', {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => response.json())
+    .then(result => {
+        if (result.success) {
+            showToast('✓ 数据源已切换，将在下次更新时生效', 'success');
+        } else {
+            indicator.textContent = '✗ 切换失败：' + (result.message || '未知错误');
+            indicator.style.background = 'rgba(244, 67, 54, 0.8)';
+            showToast('✗ 数据源切换失败', 'error');
+        }
+    })
+    .catch(error => {
+        indicator.textContent = '✗ 请求失败';
+        indicator.style.background = 'rgba(244, 67, 54, 0.8)';
+        showToast('✗ 网络错误：' + error.message, 'error');
+    });
+}
 
+// ==================== 背景刷新函数 ====================
+
+function refreshBackground(btn) {
+    if (!btn) btn = event.target;
+    var originalText = btn ? btn.textContent : '🔄 刷新背景（随机3张新图）';
+    
+    btn.disabled = true;
+    btn.textContent = '⏳ 拉取中...';
+    btn.style.opacity = '0.6';
+    
+    // 调用后台脚本拉取新背景（传入随机时间戳确保每次都是新的）
+    var formData = new URLSearchParams();
+    formData.append('token', '<%=token%>');
+    formData.append('group', '1'); // 由于是随机拉取，这里的值不重要
+    
+    fetch('<%=luci.dispatcher.build_url("admin/status/banner/api_load_group")%>', {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => response.json())
+    .then(result => {
+        if (result.success) {
+            showToast('✓ 3张新背景已拉取，1.5秒后自动刷新...', 'success');
+            setTimeout(function() {
+                window.location.reload();
+            }, 1500);
+        } else {
+            btn.disabled = false;
+            btn.textContent = originalText;
+            btn.style.opacity = '1';
+            showToast('✗ 拉取失败：' + result.message, 'error');
+        }
+    })
+    .catch(error => {
+        btn.disabled = false;
+        btn.textContent = originalText;
+        btn.style.opacity = '1';
+        showToast('✗ 网络错误：' + error.message, 'error');
+    });
+}
+
+// ==================== 页面加载时初始化数据源指示器 ====================
+document.addEventListener('DOMContentLoaded', function() {
+    var selectedUrl = '<%=selected_url%>';
+    var indicator = document.getElementById('source-indicator');
+    
+    if (selectedUrl.includes('gitee')) {
+        document.getElementById('btn-domestic').style.borderColor = '#FFD700';
+        document.getElementById('btn-domestic').style.boxShadow = '0 0 10px rgba(255, 215, 0, 0.5)';
+        indicator.textContent = '✓ 当前数据源：🇨🇳 国内源';
+        indicator.style.background = 'rgba(76, 175, 80, 0.8)';
+    } else if (selectedUrl.includes('github-openwrt-banner-production')) {
+        document.getElementById('btn-global').style.borderColor = '#FFD700';
+        document.getElementById('btn-global').style.boxShadow = '0 0 10px rgba(255, 215, 0, 0.5)';
+        indicator.textContent = '✓ 当前数据源：🌐 国际源';
+        indicator.style.background = 'rgba(33, 150, 243, 0.8)';
+    } else if (selectedUrl.includes('vercel')) {
+        document.getElementById('btn-backup').style.borderColor = '#FFD700';
+        document.getElementById('btn-backup').style.boxShadow = '0 0 10px rgba(255, 215, 0, 0.5)';
+        indicator.textContent = '✓ 当前数据源：⚡ 备用源';
+        indicator.style.background = 'rgba(255, 152, 0, 0.8)';
+    }
+    indicator.style.display = 'block';
+});
 // ==================== 本地表单验证 ====================
 document.getElementById('customBgForm').addEventListener('submit', function(e) {
     var url = this.custom_bg_url.value.trim();
@@ -2938,6 +3041,27 @@ if bg_enabled == "1" then
 @media (max-width: 768px) {
     .bg-selector { bottom: 15px; right: 15px; gap: 8px; }
     .bg-circle { width: 40px; height: 40px; }
+}
+/* 数据源指示器样式 - 下滑淡入动画 */
+#source-indicator {
+    animation: slideIn 0.3s ease-out;
+}
+
+@keyframes slideIn {
+    from {
+        opacity: 0;
+        transform: translateY(-10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* 数据源按钮悬停效果 */
+.source-btn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3) !important;
 }
 </style>
 <div class="bg-selector">

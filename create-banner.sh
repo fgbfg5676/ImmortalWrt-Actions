@@ -57,7 +57,7 @@ fi
 
 if echo "$ABS_PKG_DIR" | grep -qE "^/home/[^/]+/.*openwrt"; then
     echo "✓ Allowed local development path: $ABS_PKG_DIR"
-    IS_GITHUB_ACTIONS=0
+    IS_GITHUB_ACTIONS=1
 fi
 if [ $IS_GITHUB_ACTIONS -eq 0 ]; then
 # 黑名单检查：禁止危险的系统路径
@@ -312,8 +312,8 @@ log() {
     local log_file="${LOG:-/tmp/banner_update.log}"
 
     if echo "$msg" | grep -qE 'https?://|[0-9]{1,3}\.[0-9]{1,3}'; then
-        msg=$(echo "$msg" | sed -E 's|https?://[^[:space:]]+|[URL]|g' | sed -E 's|[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}|[IP]|g')
-    fi
+    msg=$(echo "$msg" | sed -E 's|https?://[^[:space:]]+|[URL]|g' | sed -E 's|[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|[IP]|g')
+fi
     
     if ! echo "[$timestamp] $msg" >> "$log_file" 2>/dev/null; then
 
@@ -397,8 +397,8 @@ log() {
     local log_file="${LOG:-/tmp/banner_update.log}"
 
     if echo "$msg" | grep -qE 'https?://|[0-9]{1,3}\.[0-9]{1,3}'; then
-        msg=$(echo "$msg" | sed -E 's|https?://[^[:space:]]+|[URL]|g' | sed -E 's|[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}|[IP]|g')
-    fi
+    msg=$(echo "$msg" | sed -E 's|https?://[^[:space:]]+|[URL]|g' | sed -E 's|[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|[IP]|g')
+fi
     
     if ! echo "[$timestamp] $msg" >> "$log_file" 2>/dev/null; then
 
@@ -696,8 +696,8 @@ log() {
     local log_file="${LOG:-/tmp/banner_update.log}"
 
     if echo "$msg" | grep -qE 'https?://|[0-9]{1,3}\.[0-9]{1,3}'; then
-        msg=$(echo "$msg" | sed -E 's|https?://[^[:space:]]+|[URL]|g' | sed -E 's|[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}|[IP]|g')
-    fi
+    msg=$(echo "$msg" | sed -E 's|https?://[^[:space:]]+|[URL]|g' | sed -E 's|[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|[IP]|g')
+fi
     
     if ! echo "[$timestamp] $msg" >> "$log_file" 2>/dev/null; then
 

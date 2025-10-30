@@ -572,7 +572,13 @@ for i in 0 1 2; do
     # 下载图片（3次重试）
     DOWNLOAD_OK=0
     for attempt in 1 2 3; do
-        HTTP_CODE=$(curl -sL --connect-timeout 10 --max-time 20 -w "%{http_code}" -o "$TMPFILE" "$URL" 2>/dev/null)
+        HTTP_CODE=$(curl -sL \
+  -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36" \
+  -k \
+  --connect-timeout 5 \
+  --max-time 20 \
+  --retry 1 \
+  -w "%{http_code}" -o "$TMPFILE" "$URL" 2>/dev/null)
         
         if [ "$HTTP_CODE" = "200" ] && [ -s "$TMPFILE" ]; then
             DOWNLOAD_OK=1
@@ -840,14 +846,30 @@ CURL_TIMEOUT=$(uci -q get banner.banner.curl_timeout || echo 15)
 if [ -n "$SELECTED_URL" ] && validate_url "$SELECTED_URL"; then
     for i in 1 2 3; do
         log "Attempt $i/3 with selected URL: $SELECTED_URL"
-        curl -sL --connect-timeout 10 --max-time "$CURL_TIMEOUT" "$SELECTED_URL" -o "$CACHE/banner_new.json" 2>/dev/null
+        curl -sL \
+          -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36" \
+          -H "Accept: application/json" \
+          -H "Accept-Language: zh-CN,zh;q=0.9" \
+          -H "Accept-Encoding: gzip, deflate, br" \
+          -H "Cache-Control: no-cache" \
+          --compressed \
+          -k \
+          --connect-timeout 5 \
+          --max-time 15 \
+          --retry 2 \
+          --retry-delay 1 \
+          "$SELECTED_URL" -o "$CACHE/banner_new.json" 2>/dev/null
         if [ -s "$CACHE/banner_new.json" ] && jq empty "$CACHE/banner_new.json" 2>/dev/null; then
-            log "[√] Selected URL download successful (valid JSON)."
+            log "[âˆš] Selected URL download successful (valid JSON)."
             SUCCESS=1
             break
         fi
         rm -f "$CACHE/banner_new.json"
-        sleep 2
+        if [ $i -lt 3 ]; then
+            WAIT_TIME=$((2 ** (i - 1)))
+            log "Waiting ${WAIT_TIME}s before retry..."
+            sleep $WAIT_TIME
+        fi
     done
 fi
 
@@ -856,16 +878,32 @@ if [ $SUCCESS -eq 0 ]; then
         if [ "$url" != "$SELECTED_URL" ] && validate_url "$url"; then
             for i in 1 2 3; do
                 log "Attempt $i/3 with fallback URL: $url"
-                curl -sL --connect-timeout 10 --max-time "$CURL_TIMEOUT" "$url" -o "$CACHE/banner_new.json" 2>/dev/null
+                curl -sL \
+                  -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36" \
+                  -H "Accept: application/json" \
+                  -H "Accept-Language: zh-CN,zh;q=0.9" \
+                  -H "Accept-Encoding: gzip, deflate, br" \
+                  -H "Cache-Control: no-cache" \
+                  --compressed \
+                  -k \
+                  --connect-timeout 5 \
+                  --max-time 15 \
+                  --retry 2 \
+                  --retry-delay 1 \
+                  "$url" -o "$CACHE/banner_new.json" 2>/dev/null
                 if [ -s "$CACHE/banner_new.json" ] && jq empty "$CACHE/banner_new.json" 2>/dev/null; then
-                    log "[√] Fallback URL download successful (valid JSON). Updating selected URL."
+                    log "[âˆš] Fallback URL download successful (valid JSON). Updating selected URL."
                     uci set banner.banner.selected_url="$url"
                     uci commit banner
                     SUCCESS=1
                     break 2
                 fi
                 rm -f "$CACHE/banner_new.json"
-                sleep 2
+                if [ $i -lt 3 ]; then
+                    WAIT_TIME=$((2 ** (i - 1)))
+                    log "Waiting ${WAIT_TIME}s before retry..."
+                    sleep $WAIT_TIME
+                fi
             done
         fi
     done
@@ -965,7 +1003,18 @@ if [ $SUCCESS -eq 1 ] && [ -s "$CACHE/banner_new.json" ]; then
         fi
     fi
 else
-    log "[×] Update failed: All sources are unreachable or provided invalid data."
+    log "[Ã—] Update failed: All sources are unreachable or provided invalid data."
+    log "[!] This is likely due to network restrictions:"
+    log "    - Gitee might be blocked or rate-limited in your region"
+    log "    - Workers/Vercel might be inaccessible"
+    log "    - Your ISP might be blocking these services"
+    log "[!] Next steps:"
+    log "    1. Check your network connectivity: ping 8.8.8.8"
+    log "    2. Wait 5 minutes and the script will retry automatically"
+    log "    3. Check logs: tail -f /tmp/banner_update.log"
+    log "    4. If persistent, consider using a VPN/proxy"
+    
+    # 如果需要的话，以下代码保持原样（可选）
     if [ ! -f "$CACHE/nav_data.json" ]; then
         log "[!] No local cache found. Attempting to use built-in default JSON data."
         DEFAULT_JSON_PATH=$(grep -oE '/default/banner_default.json' /usr/lib/ipkg/info/luci-app-banner.list | sed 's|/default/banner_default.json||' | head -n1)/default/banner_default.json
@@ -1003,24 +1052,50 @@ log() {
     fi
 }
 
-# ==================== 🚨 关键修复: 简化网络检查 ====================
+# ==================== 🚨 关键修复: 网络检查 ====================
 check_network() {
-    # 方法1: 检查默认路由
-    if ip route show default >/dev/null 2>&1; then
+    # 方法1：直接测试能否访问 Gitee（最有效的检测）
+    if curl -s --head \
+      -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" \
+      --connect-timeout 3 \
+      --max-time 5 \
+      "https://gitee.com" >/dev/null 2>&1; then
+        log "Network check: Gitee reachable (direct connection)"
         return 0
     fi
     
-    # 方法2: 尝试 ping 网关
+    # 方法2：检查国内 DNS（阿里云）
+    if ping -c 1 -W 2 223.5.5.5 >/dev/null 2>&1; then
+        log "Network check: Aliyun DNS (223.5.5.5) reachable"
+        return 0
+    fi
+    
+    # 方法3：检查国内 DNS（腾讯）
+    if ping -c 1 -W 2 119.29.29.29 >/dev/null 2>&1; then
+        log "Network check: Tencent DNS (119.29.29.29) reachable"
+        return 0
+    fi
+    
+    # 方法4：检查国际 DNS（Google）
+    if ping -c 1 -W 2 8.8.8.8 >/dev/null 2>&1; then
+        log "Network check: Google DNS (8.8.8.8) reachable"
+        return 0
+    fi
+    
+    # 方法5：检查国际 DNS（Cloudflare）
+    if ping -c 1 -W 2 1.1.1.1 >/dev/null 2>&1; then
+        log "Network check: Cloudflare DNS (1.1.1.1) reachable"
+        return 0
+    fi
+    
+    # 方法6：检查本地网关（最后的保障）
     local gateway=$(ip route show default 2>/dev/null | awk '{print $3; exit}')
     if [ -n "$gateway" ] && ping -c 1 -W 1 "$gateway" >/dev/null 2>&1; then
+        log "Network check: Local gateway ($gateway) reachable"
         return 0
     fi
     
-    # 方法3: 检查网络接口状态
-    if ip link show | grep -q 'state UP'; then
-        return 0
-    fi
-    
+    log "Network check: All methods failed - no connectivity detected"
     return 1
 }
 
@@ -1093,7 +1168,7 @@ if [ ! -f "$BOOT_FLAG" ]; then
     # 等待网络 (最多30秒)
     log "[BOOT] Waiting for network..."
     WAIT_COUNT=0
-    while [ $WAIT_COUNT -lt 15 ]; do
+    while [ $WAIT_COUNT -lt 30 ]; do
         if check_network; then
             log "[BOOT] ✓ Network ready after ${WAIT_COUNT} attempts"
             break
@@ -1102,7 +1177,7 @@ if [ ! -f "$BOOT_FLAG" ]; then
         WAIT_COUNT=$((WAIT_COUNT + 1))
     done
     
-    if [ $WAIT_COUNT -ge 15 ]; then
+    if [ $WAIT_COUNT -ge 30 ]; then
         log "[BOOT] ⚠ Network not ready, will retry in 5 minutes"
         echo "$(date +%s)" > "$RETRY_TIMER"
         echo "0" > "$RETRY_FLAG"
@@ -1250,8 +1325,8 @@ start_service() {
         # 清理可能存在的舊標記
         rm -f /tmp/banner_first_boot_done
 
-        # 延遲5秒開始，避免開機初期過於繁忙
-        sleep 5
+        # 延遲10秒開始，避免開機初期過於繁忙
+        sleep 10
 
         # 增加一個總超時 (15分鐘)，防止無限循環
         local TOTAL_TIMEOUT=900

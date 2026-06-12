@@ -21,20 +21,25 @@ jobs:
       contents: write
 
     steps:
-    - name: 清理上次编译残留
+    - name: 释放磁盘空间
       run: |
-        echo "=== 清理前磁盘状态 ==="
+        echo "=== 清理前 ==="
         df -hT
-        # 清理上次 openwrt 编译中间文件
-        rm -rf $GITHUB_WORKSPACE/openwrt/build_dir 2>/dev/null || true
-        rm -rf $GITHUB_WORKSPACE/openwrt/staging_dir 2>/dev/null || true
-        rm -rf $GITHUB_WORKSPACE/openwrt/dl 2>/dev/null || true
-        # 清理 runner 诊断日志
-        find /home/runner/actions-runner/_diag -name "*.log" -mtime +1 -delete 2>/dev/null || true
-        # 清理 apt 缓存
+        sudo rm -rf /usr/share/dotnet
+        sudo rm -rf /usr/local/lib/android
+        sudo rm -rf /opt/ghc
+        sudo rm -rf /opt/hostedtoolcache/CodeQL
+        sudo rm -rf /usr/local/share/boost
+        sudo rm -rf /usr/lib/jvm
+        sudo rm -rf /usr/share/swift
+        sudo rm -rf /usr/local/share/chromium
+        sudo rm -rf /usr/share/miniconda
+        sudo rm -rf /usr/local/share/powershell
+        sudo rm -rf /usr/local/lib/node_modules
+        sudo docker image prune -af 2>/dev/null || true
         sudo apt-get clean
         sudo rm -rf /tmp/apt-dpkg-install-* 2>/dev/null || true
-        echo "=== 清理后磁盘状态 ==="
+        echo "=== 清理后 ==="
         df -hT
 
     - name: Optimize Disk Space
@@ -42,20 +47,8 @@ jobs:
       with:
         operate_sudo: "True"
 
-    - name: Freeing up disk space
-      uses: easimon/maximize-build-space@master
-      with:
-        root-reserve-mb: 4096
-        swap-size-mb: 1024
-        remove-dotnet: 'true'
-        remove-android: 'true'
-        remove-haskell: 'true'
-        remove-codeql: 'true'
-
-    - name: After freeing up disk space
-      run: |
-        echo "After freeing up disk space"
-        df -hT
+    - name: 确认磁盘空间
+      run: df -hT
 
     - name: Checkout repository
       uses: actions/checkout@v4
@@ -107,7 +100,6 @@ jobs:
           echo ""
           echo "Makefile preview:"
           head -30 openwrt/package/custom/luci-app-banner/Makefile
-          echo ""
           if [ -f "openwrt/package/custom/luci-app-banner/default/bg_default.jpg" ]; then
             echo "✓ bg_default.jpg exists ($(wc -c < openwrt/package/custom/luci-app-banner/default/bg_default.jpg) bytes)"
           else
@@ -236,7 +228,7 @@ jobs:
       if: always()
       run: |
         echo "=== 清理编译中间文件 ==="
-        cd $GITHUB_WORKSPACE/openwrt 2>/dev/null || true
-        rm -rf build_dir staging_dir 2>/dev/null || true
+        rm -rf $GITHUB_WORKSPACE/openwrt/build_dir 2>/dev/null || true
+        rm -rf $GITHUB_WORKSPACE/openwrt/staging_dir 2>/dev/null || true
         echo "=== 清理后磁盘状态 ==="
         df -hT

@@ -38,21 +38,16 @@ jobs:
         df -hT
         echo "=============================================================================="
 
-    # 關鍵修復：完全恢復用戶原始工作流中 easimon/maximize-build-space@master 的配置
-    # 這是您原始工作流中唯一驗證過可行的磁盤擴展方式，僅保留 root-reserve-mb 和 swap-size-mb 兩個參數
     - name: Maximize Build Space (Partition Expansion - Reverted to Original Stable Config)
       uses: easimon/maximize-build-space@master
       with: 
         root-reserve-mb: 2048
         swap-size-mb: 1
-        # 根據用戶原始工作流，僅保留這兩個參數，避免引入無效或導致衝突的參數
 
-    # 輔助清理：在分區擴展後，使用 hugoalh 進行更細緻的緩存清理
     - name: Optimize Disk Space (hugoalh/disk-space-optimizer-ghaction)
       uses: hugoalh/disk-space-optimizer-ghaction@v0.8.1
       with:
         operate_sudo: "True"
-        # 移除 general_exclude，避免誤刪編譯器相關文件
         docker_include: ".+"
         docker_prune: "True"
         docker_clean: "True"
@@ -72,13 +67,12 @@ jobs:
         echo "=============================================================================="
 
     - name: Checkout repository
-      uses: actions/checkout@v4 # 鎖定到穩定版 v4
+      uses: actions/checkout@v4
 
     - name: Initialization environment
       env:
         DEBIAN_FRONTEND: noninteractive
       run: |
-        # 提前執行 apt 緩存清理和大型目錄清理，確保 apt-get update/install 有足夠空間
         sudo apt-get clean
         sudo rm -rf /var/lib/apt/lists/*
         sudo rm -rf /etc/apt/sources.list.d/* /usr/local/lib/android /opt/ghc /usr/share/dotnet /usr/local/graalvm /usr/local/.ghcup \
@@ -130,47 +124,8 @@ jobs:
     - name: Debug banner package creation details
       run: |
         echo "=== Detailed Banner Package Debug Information ==="
-        echo "Checking environment for banner package creation..."
-        bash --version || echo "Failed to get bash version"
-        echo "Checking printf version (if available)..."
-        if command -v /usr/bin/printf >/dev/null 2>&1; then
-          /usr/bin/printf --version || echo "printf version not available"
-        else
-          echo "GNU printf not found, using shell built-in printf"
-        fi
-        xxd --version 2>/dev/null || echo "xxd not available"
-        echo "Checking required dependencies..."
-        sudo apt-get update
-        dpkg -l | grep -E 'curl|jq|coreutils' || echo "Some dependencies may not be installed"
-        echo ""
-        echo "Checking banner package directory..."
         if [ -d "openwrt/package/custom/luci-app-banner" ]; then
           echo "✓ Banner package directory exists"
-          echo "Package structure:"
-          find openwrt/package/custom/luci-app-banner -ls
-          echo ""
-          echo "Checking Makefile syntax..."
-          make -n -f openwrt/package/custom/luci-app-banner/Makefile clean 2>&1 || echo "Makefile syntax check failed"
-          echo "Makefile content (first 60 lines):"
-          head -n 60 openwrt/package/custom/luci-app-banner/Makefile | cat -t
-          echo ""
-          echo "Checking bg_default.jpg..."
-          if [ -f "openwrt/package/custom/luci-app-banner/default/bg_default.jpg" ]; then
-            echo "File size: $(wc -c < openwrt/package/custom/luci-app-banner/default/bg_default.jpg) bytes"
-            echo "First 3 bytes: $(od -An -t x1 -N 3 openwrt/package/custom/luci-app-banner/default/bg_default.jpg | tr -d ' \n' || echo 'Unable to read')"
-            echo "Hex dump of bg_default.jpg:"
-            hexdump -C openwrt/package/custom/luci-app-banner/default/bg_default.jpg || echo "Failed to read bg_default.jpg"
-          else
-            echo "✗ bg_default.jpg not found"
-          fi
-          echo ""
-          echo "Checking banner_default.json..."
-          if [ -f "openwrt/package/custom/luci-app-banner/default/banner_default.json" ]; then
-            echo "File size: $(wc -c < openwrt/package/custom/luci-app-banner/default/banner_default.json) bytes"
-            cat openwrt/package/custom/luci-app-banner/default/banner_default.json
-          else
-            echo "✗ banner_default.json not found"
-          fi
         else
           echo "✗ Banner package directory not found"
           exit 1
@@ -179,24 +134,10 @@ jobs:
     - name: Debug banner package creation
       run: |
         echo "=== Banner Package Debug Information ==="
-        echo "Checking if banner package was created..."
         if [ -d "openwrt/package/custom/luci-app-banner" ]; then
           echo "✓ Banner package directory exists"
-          echo "Package structure:"
-          find openwrt/package/custom/luci-app-banner -type f | sort
-          echo ""
-          echo "Makefile preview:"
-          head -30 openwrt/package/custom/luci-app-banner/Makefile
-          echo ""
-          echo "Controller file preview:"
-          head -20 openwrt/package/custom/luci-app-banner/root/usr/lib/lua/luci/controller/banner.lua || echo "Controller file not found, but continuing..."
-          echo ""
-          echo "UCI config preview:"
-          cat openwrt/package/custom/luci-app-banner/root/etc/config/banner
         else
           echo "✗ Banner package directory NOT found"
-          echo "Available custom packages:"
-          ls -la openwrt/package/custom/ 2>/dev/null || echo "No custom packages found"
           exit 1
         fi
 
@@ -208,14 +149,18 @@ jobs:
           "../$DIY_P1_SH"
         fi
 
+    - name: Add SBWML feeds
+      run: |
+        cd openwrt
+        sed -i '/packages_lang_golang/d' feeds.conf.default
+        echo "src-git golang https://github.com/sbwml/packages_lang_golang" >> feeds.conf.default
+        echo "src-git sbwml https://github.com/sbwml/openwrt_pkgs" >> feeds.conf.default
+
     - name: Update and Install feeds
       run: |
         cd openwrt
-        # 保留官方依赖，仅追加 sbwml 插件源
-        echo "src-git sbwml https://github.com/sbwml/openwrt_pkgs" >> feeds.conf.default
-        
         ./scripts/feeds update -a
-        # 针对独立第三方 Golang 源，若有特定需求才进行强制替换，这里先用安全覆盖
+        rm -rf feeds/packages/lang/golang
         ./scripts/feeds install -a -f
 
     - name: Copy custom configuration
@@ -230,23 +175,7 @@ jobs:
     - name: Verify banner package in config
       run: |
         cd openwrt
-        echo "Checking for luci-app-banner in .config..."
-        if grep -q "CONFIG_PACKAGE_luci-app-banner=y" .config; then
-          echo "[SUCCESS] luci-app-banner is enabled in config"
-        else
-          echo "[WARNING] luci-app-banner not found in config, adding it..."
-          echo "CONFIG_PACKAGE_luci-app-banner=y" >> .config
-        fi
-        
-        echo "Verifying custom package structure..."
-        if [ -d "package/custom/luci-app-banner" ]; then
-          echo "[SUCCESS] Custom banner package directory exists"
-          echo "Package files:"
-          find package/custom/luci-app-banner -type f | sort | head -10
-        else
-          echo "[ERROR] Custom banner package directory not found"
-          exit 1
-        fi
+        echo "CONFIG_PACKAGE_luci-app-banner=y" >> .config
 
     - name: Run DIY part2 script
       run: |
@@ -256,55 +185,22 @@ jobs:
           "../$DIY_P2_SH"
         fi
 
-   - name: Generate final config and verify banner
+    - name: Generate final config and verify banner
       run: |
         cd openwrt
+        echo "=== 正在清除可能導致語法錯誤的文本污染 ==="
         
-        # =================================================================
-        # 【终极修复】强力清洗所有包含非法描述、导致 defconfig 崩溃的 Makefile 描述行
-        # =================================================================
-        echo "=== 正在执行 Makefile 语法强力清洗，消灭 Multi-container 和 runc 污染 ==="
-        find package/ -name Makefile -exec sed -i '/^.*Multi-container.*/d' {} + 2>/dev/null || true
-        find package/ -name Makefile -exec sed -i '/^.*runc specification.*/d' {} + 2>/dev/null || true
-        find feeds/ -name Makefile -exec sed -i '/^.*Multi-container.*/d' {} + 2>/dev/null || true
-        find feeds/ -name Makefile -exec sed -i '/^.*runc specification.*/d' {} + 2>/dev/null || true
+        # 安全清洗命令：移除所有包含 Multi-container 和 runc 混淆文本的行
+        find package/ -name "Makefile" -exec sed -i '/Multi-container/d' {} + || true
+        find package/ -name "Makefile" -exec sed -i '/runc/d' {} + || true
+        find feeds/ -name "Makefile" -exec sed -i '/Multi-container/d' {} + || true
+        find feeds/ -name "Makefile" -exec sed -i '/runc/d' {} + || true
         
-        # 强制删除上一次生成的残余毒瘤缓存，确保本次扫描完全干净
         rm -rf tmp/
-        # =================================================================
-        
-        echo "=== Pre-defconfig Banner Check ==="
-        if grep -q "CONFIG_PACKAGE_luci-app-banner=y" .config; then
-          echo "✓ Banner package found in config before defconfig"
-        else
-          echo "! Banner package not in config before defconfig"
-          echo "CONFIG_PACKAGE_luci-app-banner=y" >> .config
-        fi
+        echo "CONFIG_PACKAGE_luci-app-banner=y" >> .config
         
         echo "Running make defconfig..."
         make defconfig
-        
-        echo "=== Post-defconfig Banner Check ==="
-        if grep -q "CONFIG_PACKAGE_luci-app-banner=y" .config; then
-          echo "✓ Banner package confirmed in final config"
-        else
-          echo "✗ Banner package missing from final config after defconfig"
-          echo "This might indicate package dependency issues"
-          echo "Adding banner package to config again..."
-          echo "CONFIG_PACKAGE_luci-app-banner=y" >> .config
-          make defconfig
-          if grep -q "CONFIG_PACKAGE_luci-app-banner=y" .config; then
-            echo "✓ Banner package now in config after manual addition"
-          else
-            echo "✗ Banner package still missing - there may be dependency issues"
-            exit 1
-          fi
-        fi
-        
-        echo "=== Configuration Summary ==="
-        echo "Total enabled packages: $(grep -c "^CONFIG_PACKAGE.*=y" .config)"
-        echo "LuCI packages enabled: $(grep -c "^CONFIG_PACKAGE_luci-.*=y" .config)"
-        echo "Custom packages enabled: $(grep "^CONFIG_PACKAGE.*custom.*=y" .config | wc -l)"
 
     - name: SSH connection to Actions
       uses: mxschmitt/action-tmate@v3
@@ -314,10 +210,7 @@ jobs:
       id: package
       run: |
         cd openwrt
-        
         make defconfig
-        
-        # 使用 8 线程并行下载所有依赖源码包，并加入 3 次出错重试机制
         echo "Starting to download package sources..."
         for i in {1..3}; do
             make download -j8 && break || {
@@ -325,8 +218,6 @@ jobs:
                 sleep 5
             }
         done
-        
-        # 检查并清理下载失败的小文件（小于 1024 字节的破损包）
         find dl -size -1024c -exec ls -l {} \;
         find dl -size -1024c -exec rm -f {} \;
 
@@ -336,32 +227,8 @@ jobs:
         cd openwrt
         echo "Starting build process..."
         echo -e "$(nproc) thread compile"
-        
-        # 优先使用多线程编译，如果失败则自动切换到单线程编译并输出详细日志
         make -j$(nproc) || make -j1 || make -j1 V=s
         echo "Build completed, checking results..."
-        
-        echo "Looking for luci-app-banner package files..."
-        if find bin -name "*luci-app-banner*" -type f 2>/dev/null | head -1; then
-          echo "Banner package files found:"
-          find bin -name "*luci-app-banner*" -type f -exec ls -la {} \; 2>/dev/null || true
-        else
-          echo "No explicit banner package files found, checking build logs..."
-          if grep -q "make.*luci-app-banner.*compile" logs/*.log 2>/dev/null; then
-            echo "Banner package was compiled (found in build logs)"
-          else
-            echo "Banner package may not have been built"
-          fi
-        fi
-        
-        echo "Checking if banner is integrated in firmware..."
-        if ls bin/targets/*/*-squashfs-*.bin >/dev/null 2>&1; then
-          echo "Firmware files found - banner should be integrated if compilation succeeded"
-        fi
-        
-        echo "Build summary:"
-        echo "- Total packages built: $(find bin/packages -name "*.ipk" 2>/dev/null | wc -l)"
-        echo "- LuCI packages: $(find bin/packages -name "luci-*" 2>/dev/null | wc -l)"
         
         grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
         [ -s DEVICE_NAME ] && echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> $GITHUB_ENV

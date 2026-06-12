@@ -11,7 +11,7 @@ on:
 
 env:
   REPO_URL: https://github.com/immortalwrt/immortalwrt
-  REPO_BRANCH: openwrt-master
+  REPO_BRANCH: master
   FEEDS_CONF: feeds.conf.default
   CONFIG_FILE: .config
   DIY_P1_SH: diy-part1.sh
@@ -412,7 +412,7 @@ jobs:
         commit: main
         artifacts: ${{ env.FIRMWARE }}/*
         body: |
-          - 默认IP：10.10.10.100 默认密码：无
+          - 默认IP：192.168.3.1 默认密码：无
           - 当前使用版本:【编译前的最后一次[➦主源码](https://github.com/immortalwrt/immortalwrt/tree/openwrt-master)更新記錄】
           ${{ env.useVersionInfo }}
 

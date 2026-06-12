@@ -15,6 +15,7 @@
 
 # Add a feed source
 #sed -i '$a src-git mosdns https://github.com/Gzxhwq/openwrt-mos;dev' feeds.conf.default
+sed -i '/my_packages/d' feeds.conf.default
 sed -i '$a src-git my_packages https://github.com/Gzxhwq/openwrt-packages' feeds.conf.default
 # sed -i '$a src-git passwall_packages https://github.com/xiaorouji/openwrt-passwall-packages' feeds.conf.default
 
@@ -23,7 +24,7 @@ sed -i '$a src-git my_packages https://github.com/Gzxhwq/openwrt-packages' feeds
 # svn co https://github.com/QiuSimons/openwrt-mos/trunk/v2ray-geodata package/others/v2ray-geodata
 
 # svn co https://github.com/Gzxhwq/openwrt-passwall-packages/branches/sing-box-git/sing-box package/others/sing-box
-git submodule add https://github.com/Gzxhwq/openwrt-packages.git package/others/my_packages
+
 # sed -i '/iptables-mod-socket/d' ./package/feeds/my_packages/sing-box/Makefile
 # svn co https://github.com/Gzxhwq/openwrt-passwall-packages/branches/xray-core-git/xray-core package/others/xray-core
 # svn co https://github.com/xiaorouji/openwrt-passwall-packages/trunk/tuic-client package/others/tuic-client
@@ -36,4 +37,3 @@ git submodule add https://github.com/Gzxhwq/openwrt-packages.git package/others/
 # git submodule add https://github.com/ophub/luci-app-amlogic.git package/others/luci-app-amlogic
 # 移除原本的 git submodule 命令，改用普通的 git clone 并替换为全新的官方公开地址
 git clone https://github.com/Openwrt-Passwall/openwrt-passwall2.git package/others/luci-app-passwall2
-

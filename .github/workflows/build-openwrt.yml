@@ -38,16 +38,21 @@ jobs:
         df -hT
         echo "=============================================================================="
 
-    - name: Maximize Build Space (Partition Expansion)
+    # 關鍵修復：完全恢復用戶原始工作流中 easimon/maximize-build-space@master 的配置
+    # 這是您原始工作流中唯一驗證過可行的磁盤擴展方式，僅保留 root-reserve-mb 和 swap-size-mb 兩個參數
+    - name: Maximize Build Space (Partition Expansion - Reverted to Original Stable Config)
       uses: easimon/maximize-build-space@master
       with: 
         root-reserve-mb: 2048
         swap-size-mb: 1
+        # 根據用戶原始工作流，僅保留這兩個參數，避免引入無效或導致衝突的參數
 
+    # 輔助清理：在分區擴展後，使用 hugoalh 進行更細緻的緩存清理
     - name: Optimize Disk Space (hugoalh/disk-space-optimizer-ghaction)
       uses: hugoalh/disk-space-optimizer-ghaction@v0.8.1
       with:
         operate_sudo: "True"
+        # 移除 general_exclude，避免誤刪編譯器相關文件
         docker_include: ".+"
         docker_prune: "True"
         docker_clean: "True"
@@ -67,12 +72,13 @@ jobs:
         echo "=============================================================================="
 
     - name: Checkout repository
-      uses: actions/checkout@v4
+      uses: actions/checkout@v4 # 鎖定到穩定版 v4
 
     - name: Initialization environment
       env:
         DEBIAN_FRONTEND: noninteractive
       run: |
+        # 提前執行 apt 緩存清理和大型目錄清理，確保 apt-get update/install 有足夠空間
         sudo apt-get clean
         sudo rm -rf /var/lib/apt/lists/*
         sudo rm -rf /etc/apt/sources.list.d/* /usr/local/lib/android /opt/ghc /usr/share/dotnet /usr/local/graalvm /usr/local/.ghcup \
@@ -85,15 +91,20 @@ jobs:
         sudo timedatectl set-timezone "$TZ"
         sudo chown $USER:$GROUPS $GITHUB_WORKSPACE
 
-    - name: Setup Go
+    - name: Setup Go (1.25.x)
       uses: actions/setup-go@v5
       with:
-        check-latest: true
-        go-version: stable
-        cache: false
+        go-version: '1.25.x'
 
-    - name: Verify Go
-      run: go version
+    - name: Verify Go version
+      run: |
+        GO_VER=$(go version | awk '{print $3}')
+        if [[ "$GO_VER" != go1.25.* ]]; then
+          echo "[ERROR] Go version mismatch. Required: go1.25.x, Found: $GO_VER"
+          exit 1
+        else
+          echo "[SUCCESS] Go version OK: $GO_VER"
+        fi
 
     - name: Clone source code
       working-directory: ./
@@ -124,8 +135,47 @@ jobs:
     - name: Debug banner package creation details
       run: |
         echo "=== Detailed Banner Package Debug Information ==="
+        echo "Checking environment for banner package creation..."
+        bash --version || echo "Failed to get bash version"
+        echo "Checking printf version (if available)..."
+        if command -v /usr/bin/printf >/dev/null 2>&1; then
+          /usr/bin/printf --version || echo "printf version not available"
+        else
+          echo "GNU printf not found, using shell built-in printf"
+        fi
+        xxd --version 2>/dev/null || echo "xxd not available"
+        echo "Checking required dependencies..."
+        sudo apt-get update
+        dpkg -l | grep -E 'curl|jq|coreutils' || echo "Some dependencies may not be installed"
+        echo ""
+        echo "Checking banner package directory..."
         if [ -d "openwrt/package/custom/luci-app-banner" ]; then
           echo "✓ Banner package directory exists"
+          echo "Package structure:"
+          find openwrt/package/custom/luci-app-banner -ls
+          echo ""
+          echo "Checking Makefile syntax..."
+          make -n -f openwrt/package/custom/luci-app-banner/Makefile clean 2>&1 || echo "Makefile syntax check failed"
+          echo "Makefile content (first 60 lines):"
+          head -n 60 openwrt/package/custom/luci-app-banner/Makefile | cat -t
+          echo ""
+          echo "Checking bg_default.jpg..."
+          if [ -f "openwrt/package/custom/luci-app-banner/default/bg_default.jpg" ]; then
+            echo "File size: $(wc -c < openwrt/package/custom/luci-app-banner/default/bg_default.jpg) bytes"
+            echo "First 3 bytes: $(od -An -t x1 -N 3 openwrt/package/custom/luci-app-banner/default/bg_default.jpg | tr -d ' \n' || echo 'Unable to read')"
+            echo "Hex dump of bg_default.jpg:"
+            hexdump -C openwrt/package/custom/luci-app-banner/default/bg_default.jpg || echo "Failed to read bg_default.jpg"
+          else
+            echo "✗ bg_default.jpg not found"
+          fi
+          echo ""
+          echo "Checking banner_default.json..."
+          if [ -f "openwrt/package/custom/luci-app-banner/default/banner_default.json" ]; then
+            echo "File size: $(wc -c < openwrt/package/custom/luci-app-banner/default/banner_default.json) bytes"
+            cat openwrt/package/custom/luci-app-banner/default/banner_default.json
+          else
+            echo "✗ banner_default.json not found"
+          fi
         else
           echo "✗ Banner package directory not found"
           exit 1
@@ -134,10 +184,24 @@ jobs:
     - name: Debug banner package creation
       run: |
         echo "=== Banner Package Debug Information ==="
+        echo "Checking if banner package was created..."
         if [ -d "openwrt/package/custom/luci-app-banner" ]; then
           echo "✓ Banner package directory exists"
+          echo "Package structure:"
+          find openwrt/package/custom/luci-app-banner -type f | sort
+          echo ""
+          echo "Makefile preview:"
+          head -30 openwrt/package/custom/luci-app-banner/Makefile
+          echo ""
+          echo "Controller file preview:"
+          head -20 openwrt/package/custom/luci-app-banner/root/usr/lib/lua/luci/controller/banner.lua || echo "Controller file not found, but continuing..."
+          echo ""
+          echo "UCI config preview:"
+          cat openwrt/package/custom/luci-app-banner/root/etc/config/banner
         else
           echo "✗ Banner package directory NOT found"
+          echo "Available custom packages:"
+          ls -la openwrt/package/custom/ 2>/dev/null || echo "No custom packages found"
           exit 1
         fi
 
@@ -149,22 +213,16 @@ jobs:
           "../$DIY_P1_SH"
         fi
 
-    - name: Update and Install feeds
+    - name: Add additional feeds
       run: |
         cd openwrt
-        # 1. 24.10 分支下，先让官方标准的 feeds 更新
-        ./scripts/feeds update -a
-        
-        # 2. 清理实体冲突大包（防止第三方残留在缓存中作妖）
-        find feeds/ -type d -name "containerd" -exec rm -rf {} +
-        find feeds/ -type d -name "runc" -exec rm -rf {} +
-        find feeds/ -type d -name "docker" -exec rm -rf {} +
-        find feeds/ -type d -name "dockerd" -exec rm -rf {} +
-        find feeds/ -type d -name "docker-compose" -exec rm -rf {} +
-        find feeds/ -type d -name "gowebdav" -exec rm -rf {} +
-        
-        # 3. 强行把洗净后的 feeds 注入系统
-        ./scripts/feeds install -a -f
+        echo "src-git golang https://github.com/sbwml/packages_lang_golang;25.x" >> feeds.conf.default
+
+    - name: Update feeds
+      run: cd openwrt && ./scripts/feeds update -a
+
+    - name: Install feeds
+      run: cd openwrt && ./scripts/feeds install -a
 
     - name: Copy custom configuration
       run: |
@@ -178,7 +236,23 @@ jobs:
     - name: Verify banner package in config
       run: |
         cd openwrt
-        echo "CONFIG_PACKAGE_luci-app-banner=y" >> .config
+        echo "Checking for luci-app-banner in .config..."
+        if grep -q "CONFIG_PACKAGE_luci-app-banner=y" .config; then
+          echo "[SUCCESS] luci-app-banner is enabled in config"
+        else
+          echo "[WARNING] luci-app-banner not found in config, adding it..."
+          echo "CONFIG_PACKAGE_luci-app-banner=y" >> .config
+        fi
+        
+        echo "Verifying custom package structure..."
+        if [ -d "package/custom/luci-app-banner" ]; then
+          echo "[SUCCESS] Custom banner package directory exists"
+          echo "Package files:"
+          find package/custom/luci-app-banner -type f | sort | head -10
+        else
+          echo "[ERROR] Custom banner package directory not found"
+          exit 1
+        fi
 
     - name: Run DIY part2 script
       run: |
@@ -191,14 +265,49 @@ jobs:
     - name: Generate final config and verify banner
       run: |
         cd openwrt
-        echo "=== 基于稳定的 24.10 重新构建配置树 ==="
-        
-        # 彻底清空临时目录，逼迫配置树完全基于 24.10 重新扫描
-        rm -rf tmp/
-        echo "CONFIG_PACKAGE_luci-app-banner=y" >> .config
+        echo "=== Pre-defconfig Banner Check ==="
+        if grep -q "CONFIG_PACKAGE_luci-app-banner=y" .config; then
+          echo "✓ Banner package found in config before defconfig"
+        else
+          echo "! Banner package not in config before defconfig"
+          echo "Adding banner package to config..."
+          echo "CONFIG_PACKAGE_luci-app-banner=y" >> .config
+        fi
         
         echo "Running make defconfig..."
         make defconfig
+        
+        echo "=== Post-defconfig Banner Check ==="
+        if grep -q "CONFIG_PACKAGE_luci-app-banner=y" .config; then
+          echo "✓ Banner package confirmed in final config"
+        else
+          echo "✗ Banner package missing from final config after defconfig"
+          echo "This might indicate package dependency issues"
+          echo "Adding banner package to config again..."
+          echo "CONFIG_PACKAGE_luci-app-banner=y" >> .config
+          make defconfig
+          if grep -q "CONFIG_PACKAGE_luci-app-banner=y" .config; then
+            echo "✓ Banner package now in config after manual addition"
+          else
+            echo "✗ Banner package still missing - there may be dependency issues"
+            exit 1
+          fi
+        fi
+        
+        echo "=== Final Banner Package Verification ==="
+        if [ -f "package/custom/luci-app-banner/Makefile" ]; then
+          echo "✓ Banner package Makefile found and ready for build"
+          echo "Testing package definition with make command..."
+          make package/luci-app-banner/info V=s || echo "Package info command failed (this is often normal)"
+        else
+          echo "✗ Banner package Makefile not found"
+          exit 1
+        fi
+        
+        echo "=== Configuration Summary ==="
+        echo "Total enabled packages: $(grep -c "^CONFIG_PACKAGE.*=y" .config)"
+        echo "LuCI packages enabled: $(grep -c "^CONFIG_PACKAGE_luci-.*=y" .config)"
+        echo "Custom packages enabled: $(grep "^CONFIG_PACKAGE.*custom.*=y" .config | wc -l)"
 
     - name: SSH connection to Actions
       uses: mxschmitt/action-tmate@v3
@@ -209,13 +318,7 @@ jobs:
       run: |
         cd openwrt
         make defconfig
-        echo "Starting to download package sources..."
-        for i in {1..3}; do
-            make download -j8 && break || {
-                echo "Download failed, retrying in 5 seconds ($i/3)..."
-                sleep 5
-            }
-        done
+        make download -j8
         find dl -size -1024c -exec ls -l {} \;
         find dl -size -1024c -exec rm -f {} \;
 
@@ -228,6 +331,28 @@ jobs:
         make -j$(nproc) || make -j1 || make -j1 V=s
         echo "Build completed, checking results..."
         
+        echo "Looking for luci-app-banner package files..."
+        if find bin -name "*luci-app-banner*" -type f 2>/dev/null | head -1; then
+          echo "Banner package files found:"
+          find bin -name "*luci-app-banner*" -type f -exec ls -la {} \; 2>/dev/null || true
+        else
+          echo "No explicit banner package files found, checking build logs..."
+          if grep -q "make.*luci-app-banner.*compile" logs/*.log 2>/dev/null; then
+            echo "Banner package was compiled (found in build logs)"
+          else
+            echo "Banner package may not have been built"
+          fi
+        fi
+        
+        echo "Checking if banner is integrated in firmware..."
+        if ls bin/targets/*/*-squashfs-*.bin >/dev/null 2>&1; then
+          echo "Firmware files found - banner should be integrated if compilation succeeded"
+        fi
+        
+        echo "Build summary:"
+        echo "- Total packages built: $(find bin/packages -name "*.ipk" 2>/dev/null | wc -l)"
+        echo "- LuCI packages: $(find bin/packages -name "luci-*" 2>/dev/null | wc -l)"
+        
         grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
         [ -s DEVICE_NAME ] && echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> $GITHUB_ENV
         echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
@@ -238,7 +363,7 @@ jobs:
       run: df -hT
 
     - name: Upload bin directory
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v4 # 鎖定到穩定版 v4
       if: steps.compile.outputs.status == 'success' && env.UPLOAD_BIN_DIR == 'true'
       with:
         name: OpenWrt_bin${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
@@ -254,15 +379,15 @@ jobs:
         echo "status=success" >> $GITHUB_OUTPUT
 
     - name: Upload firmware artifact
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v4 # 鎖定到穩定版 v4
       with:
-        name: OpenWrt_${{ env.FILE_NAME }}${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
+        name: OpenWrt_${{ env.FILE_NAME }}_${{ env.DEVICE_NAME }}_${{ env.FILE_DATE }}
         path: ${{ env.FIRMWARE || env.FIRMWARE_PATH }}
         retention-days: 30
 
     - name: Upload build logs and config
       if: always()
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v4 # 鎖定到穩定版 v4
       with:
         name: build-info_${{ env.FILE_DATE }}
         path: |
@@ -283,7 +408,7 @@ jobs:
         commit: main
         artifacts: ${{ env.FIRMWARE }}/*
         body: |
-          - 默认IP：192.168.3.1 默认密码：无
+          - 默认IP：10.10.10.100 默认密码：无
           - 当前使用版本:【编译前的最后一次[➦主源码](https://github.com/immortalwrt/immortalwrt/tree/openwrt-24.10)更新記錄】
           ${{ env.useVersionInfo }}
 

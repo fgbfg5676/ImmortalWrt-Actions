@@ -10,30 +10,17 @@
 # Description: OpenWrt DIY script part 1 (Before Update feeds)
 #
 
-# Uncomment a feed source
-#sed -i 's/^#\(.*helloworld\)/\1/' feeds.conf.default
-
-# Add a feed source
-#sed -i '$a src-git mosdns https://github.com/Gzxhwq/openwrt-mos;dev' feeds.conf.default
+# 1. 清理重置原有的大包源，防止衝突
 sed -i '/my_packages/d' feeds.conf.default
 sed -i '$a src-git my_packages https://github.com/Gzxhwq/openwrt-packages' feeds.conf.default
-# sed -i '$a src-git passwall_packages https://github.com/xiaorouji/openwrt-passwall-packages' feeds.conf.default
 
-# Add external packages
-# svn co https://github.com/ophub/luci-app-amlogic/trunk/luci-app-amlogic package/others/luci-app-amlogic
-# svn co https://github.com/QiuSimons/openwrt-mos/trunk/v2ray-geodata package/others/v2ray-geodata
+# 2. 【核心找回】移除官方內置不帶 2 的舊版 Passwall 源，防止編譯名衝突
+sed -i '/passwall/d' feeds.conf.default
 
-# svn co https://github.com/Gzxhwq/openwrt-passwall-packages/branches/sing-box-git/sing-box package/others/sing-box
+# 3. 用最標準的 feeds 方式強行注入官方全新的 Passwall2 獨立源
+# 這樣在 make download 和編譯時，日誌裡絕對會單獨出現你熟悉的 passwall2
+echo "src-git passwall2 https://github.com/Openwrt-Passwall/openwrt-passwall2.git;main" >> feeds.conf.default
 
-# sed -i '/iptables-mod-socket/d' ./package/feeds/my_packages/sing-box/Makefile
-# svn co https://github.com/Gzxhwq/openwrt-passwall-packages/branches/xray-core-git/xray-core package/others/xray-core
-# svn co https://github.com/xiaorouji/openwrt-passwall-packages/trunk/tuic-client package/others/tuic-client
-
-# svn co https://github.com/xiaorouji/openwrt-passwall/trunk/luci-app-passwall package/others/luci-app-passwall
-# svn co https://github.com/xiaorouji/openwrt-passwall2/trunk/luci-app-passwall2 package/others/luci-app-passwall2
-
-# git submodule add https://github.com/jerrykuku/luci-app-argon-config.git package/others/luci-app-argon-config
-# git submodule add https://github.com/jerrykuku/luci-theme-argon.git package/others/luci-theme-argon
-# git submodule add https://github.com/ophub/luci-app-amlogic.git package/others/luci-app-amlogic
-# 移除原本的 git submodule 命令，改用普通的 git clone 并替换为全新的官方公开地址
-git clone https://github.com/Openwrt-Passwall/openwrt-passwall2.git package/others/luci-app-passwall2
+# 4. 輔助清理：保證沒有殘留的本地錯位目錄干擾編譯
+rm -rf package/others/luci-app-passwall2
+rm -rf package/others/luci-app-passwall

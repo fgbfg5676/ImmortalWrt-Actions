@@ -152,6 +152,7 @@ jobs:
     - name: Add SBWML feeds
       run: |
         cd openwrt
+        # 刪除原廠低版本 Go 源，換上 sbwml 的高版本 Go 1.26 核心源
         sed -i '/packages_lang_golang/d' feeds.conf.default
         echo "src-git golang https://github.com/sbwml/packages_lang_golang" >> feeds.conf.default
         echo "src-git sbwml https://github.com/sbwml/openwrt_pkgs" >> feeds.conf.default
@@ -160,6 +161,17 @@ jobs:
       run: |
         cd openwrt
         ./scripts/feeds update -a
+        
+        # 【核心破局修正】精準定點切除 sbwml 以及 packages 中帶有流氓英文描述、導致編譯崩潰的容器相關衝突包
+        # 這樣做能完美保留 Go 1.26 環境，同時徹底拔掉引發 invalid statement 的毒瘤
+        rm -rf feeds/sbwml/gowebdav
+        rm -rf feeds/packages/utils/containerd
+        rm -rf feeds/packages/utils/runc
+        rm -rf feeds/packages/utils/docker
+        rm -rf feeds/packages/utils/dockerd
+        rm -rf feeds/packages/utils/docker-compose
+        
+        # 刪除殘留，強推安裝 sbwml 的高版本 golang
         rm -rf feeds/packages/lang/golang
         ./scripts/feeds install -a -f
 
@@ -188,16 +200,12 @@ jobs:
     - name: Generate final config and verify banner
       run: |
         cd openwrt
-        echo "=== 正在執行 Makefile 終極無死角清洗，消滅所有未知英文語句污染 ==="
+        echo "=== 正在重置並生成帶有 Go 1.26 高版本環境的配置文件 ==="
         
-        # 暴力清洗：直接抹除所有第三方倉庫 Makefile 裡不小心頂格寫出來的英文垃圾介紹文本
-        find package/ feeds/ -name "Makefile" -exec sed -i '/^The /d' {} + || true
-        find package/ feeds/ -name "Makefile" -exec sed -i '/^A /d' {} + || true
-        find package/ feeds/ -name "Makefile" -exec sed -i '/^An /d' {} + || true
-        find package/ feeds/ -name "Makefile" -exec sed -i '/Multi-container/d' {} + || true
-        find package/ feeds/ -name "Makefile" -exec sed -i '/runc/d' {} + || true
-        
+        # 清理快取索引，迫使編譯器重新掃描乾淨、無衝突的 Makefile
+        ./scripts/feeds feed clean
         rm -rf tmp/
+        
         echo "CONFIG_PACKAGE_luci-app-banner=y" >> .config
         
         echo "Running make defconfig..."

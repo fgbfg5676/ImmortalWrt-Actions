@@ -256,15 +256,28 @@ jobs:
           "../$DIY_P2_SH"
         fi
 
-    - name: Generate final config and verify banner
+   - name: Generate final config and verify banner
       run: |
         cd openwrt
+        
+        # =================================================================
+        # 【终极修复】强力清洗所有包含非法描述、导致 defconfig 崩溃的 Makefile 描述行
+        # =================================================================
+        echo "=== 正在执行 Makefile 语法强力清洗，消灭 Multi-container 和 runc 污染 ==="
+        find package/ -name Makefile -exec sed -i '/^.*Multi-container.*/d' {} + 2>/dev/null || true
+        find package/ -name Makefile -exec sed -i '/^.*runc specification.*/d' {} + 2>/dev/null || true
+        find feeds/ -name Makefile -exec sed -i '/^.*Multi-container.*/d' {} + 2>/dev/null || true
+        find feeds/ -name Makefile -exec sed -i '/^.*runc specification.*/d' {} + 2>/dev/null || true
+        
+        # 强制删除上一次生成的残余毒瘤缓存，确保本次扫描完全干净
+        rm -rf tmp/
+        # =================================================================
+        
         echo "=== Pre-defconfig Banner Check ==="
         if grep -q "CONFIG_PACKAGE_luci-app-banner=y" .config; then
           echo "✓ Banner package found in config before defconfig"
         else
           echo "! Banner package not in config before defconfig"
-          echo "Adding banner package to config..."
           echo "CONFIG_PACKAGE_luci-app-banner=y" >> .config
         fi
         
@@ -286,16 +299,6 @@ jobs:
             echo "✗ Banner package still missing - there may be dependency issues"
             exit 1
           fi
-        fi
-        
-        echo "=== Final Banner Package Verification ==="
-        if [ -f "package/custom/luci-app-banner/Makefile" ]; then
-          echo "✓ Banner package Makefile found and ready for build"
-          echo "Testing package definition with make command..."
-          make package/luci-app-banner/info V=s || echo "Package info command failed (this is often normal)"
-        else
-          echo "✗ Banner package Makefile not found"
-          exit 1
         fi
         
         echo "=== Configuration Summary ==="

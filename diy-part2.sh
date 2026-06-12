@@ -89,20 +89,30 @@ else
     log_error "config_generate file not found, cannot modify default LAN IP"
 fi
 
-# -------------------- 插件处理 --------------------
+# -------------------- 插件處理 (安全升級版) --------------------
 PLUGIN_LIST=("luci-app-partexp")
 PLUGIN_REPOS=("https://github.com/sirpdboy/luci-app-partexp.git")
+
+# 創建一個獨立的自訂插件目錄，避免污染官方 package 根目錄
+mkdir -p package/custom
 
 for i in "${!PLUGIN_LIST[@]}"; do
     PLUGIN_NAME="${PLUGIN_LIST[$i]}"
     PLUGIN_URL="${PLUGIN_REPOS[$i]}"
-    PLUGIN_PATH="package/$PLUGIN_NAME"
+    # 關鍵修改：將路徑指定到 package/custom/ 下
+    PLUGIN_PATH="package/custom/$PLUGIN_NAME"
 
-    if [ ! -d "$PLUGIN_PATH/.git" ]; then
-        log_info "Cloning $PLUGIN_NAME..."
-        git clone --depth 1 "$PLUGIN_URL" "$PLUGIN_PATH" || log_error "Failed to clone $PLUGIN_NAME"
-        log_success "Plugin $PLUGIN_NAME cloned successfully"
-    else
-        log_info "$PLUGIN_NAME already exists, skipping clone"
+    # 強制清理舊的殘留目錄，防止垃圾文件或舊快取導致 defconfig 語法報錯
+    if [ -d "$PLUGIN_PATH" ]; then
+        log_info "Cleaning old $PLUGIN_NAME..."
+        rm -rf "$PLUGIN_PATH"
     fi
+
+    log_info "Cloning $PLUGIN_NAME into package/custom/..."
+    git clone --depth 1 "$PLUGIN_URL" "$PLUGIN_PATH" || log_error "Failed to clone $PLUGIN_NAME"
+    log_success "Plugin $PLUGIN_NAME cloned successfully"
 done
+
+# 徹底清除 openwrt 內部的臨時快取目錄，強迫 make defconfig 重新掃描乾淨的目錄
+rm -rf tmp/
+log_success "Build temp cache cleaned up."

@@ -38,18 +38,24 @@ jobs:
         df -hT
         echo "=============================================================================="
 
-    # 優先使用 hugoalh/disk-space-optimizer-ghaction，並採用上游更詳細的清理配置
-    # 移除 easimon/maximize-build-space 以避免潛在衝突和冗餘清理
+    # 關鍵修復：恢復並優先執行磁盤擴展步驟，確保根分區有足夠空間
+    - name: Maximize Build Space (Partition Expansion)
+      uses: easimon/maximize-build-space@v2 # 使用 v2 版本，更穩定
+      with: 
+        root-reserve-mb: 2048
+        swap-size-mb: 1
+        remove-dotnet: 'true'
+        remove-android: 'true'
+        remove-haskell: 'true'
+        remove-codeql: 'true'
+        remove-docker-images: 'true'
+
+    # 輔助清理：在分區擴展後，使用 hugoalh 進行更細緻的緩存清理
     - name: Optimize Disk Space (hugoalh/disk-space-optimizer-ghaction)
       uses: hugoalh/disk-space-optimizer-ghaction@v0.8.1
       with:
         operate_sudo: "True"
-        general_include: ".+"
-        general_exclude: |-
-          ^GCC$
-          ^G\+\+$
-          Clang
-          LLVM
+        # 移除 general_exclude，避免誤刪編譯器相關文件
         docker_include: ".+"
         docker_prune: "True"
         docker_clean: "True"
@@ -69,7 +75,7 @@ jobs:
         echo "=============================================================================="
 
     - name: Checkout repository
-      uses: actions/checkout@v6
+      uses: actions/checkout@v4 # 確保使用穩定版 v4
 
     - name: Initialization environment
       env:
@@ -360,7 +366,7 @@ jobs:
       run: df -hT
 
     - name: Upload bin directory
-      uses: actions/upload-artifact@v7
+      uses: actions/upload-artifact@v4 # 確保使用穩定版 v4
       if: steps.compile.outputs.status == 'success' && env.UPLOAD_BIN_DIR == 'true'
       with:
         name: OpenWrt_bin${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
@@ -376,7 +382,7 @@ jobs:
         echo "status=success" >> $GITHUB_OUTPUT
 
     - name: Upload firmware artifact
-      uses: actions/upload-artifact@v7
+      uses: actions/upload-artifact@v4 # 確保使用穩定版 v4
       with:
         name: OpenWrt_${{ env.FILE_NAME }}_${{ env.DEVICE_NAME }}_${{ env.FILE_DATE }}
         path: ${{ env.FIRMWARE || env.FIRMWARE_PATH }}
@@ -384,7 +390,7 @@ jobs:
 
     - name: Upload build logs and config
       if: always()
-      uses: actions/upload-artifact@v7
+      uses: actions/upload-artifact@v4 # 確保使用穩定版 v4
       with:
         name: build-info_${{ env.FILE_DATE }}
         path: |

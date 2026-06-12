@@ -11,7 +11,7 @@ on:
 
 env:
   REPO_URL: https://github.com/immortalwrt/immortalwrt
-  REPO_BRANCH: master
+  REPO_BRANCH: openwrt-24.10
   FEEDS_CONF: feeds.conf.default
   CONFIG_FILE: .config
   DIY_P1_SH: diy-part1.sh
@@ -149,23 +149,13 @@ jobs:
           "../$DIY_P1_SH"
         fi
 
-    - name: Add SBWML Go 1.26 Core ONLY
-      run: |
-        cd openwrt
-        # 1. 彻底清除生态里残留的旧 golang 仓库配置
-        sed -i '/packages_lang_golang/d' feeds.conf.default
-        # 2. 注入 sbwml 剥离出来的纯净 Go 1.26 核心环境，解决 golang/host missing 的严重错误
-        echo "src-git golang https://github.com/sbwml/packages_lang_golang" >> feeds.conf.default
-
     - name: Update and Install feeds
       run: |
         cd openwrt
-        # 更新核心索引
+        # 1. 24.10 分支下，先让官方标准的 feeds 更新
         ./scripts/feeds update -a
         
-        # 【理清思路核心动作】
-        # 直接把所有可能引发“Luci / LuCI / The / Docker”顶格错误描述、且你的路由器根本用不到的第三方容器大包全部从实体目录上铲除！
-        # 这样能确保在 install 之前，这些带毒的 Makefile 绝对没有机会污染 OpenWrt 的全局配置树。
+        # 2. 清理实体冲突大包（防止第三方残留在缓存中作妖）
         find feeds/ -type d -name "containerd" -exec rm -rf {} +
         find feeds/ -type d -name "runc" -exec rm -rf {} +
         find feeds/ -type d -name "docker" -exec rm -rf {} +
@@ -173,10 +163,7 @@ jobs:
         find feeds/ -type d -name "docker-compose" -exec rm -rf {} +
         find feeds/ -type d -name "gowebdav" -exec rm -rf {} +
         
-        # 彻底切除官方旧的 golang 依赖实体
-        rm -rf feeds/packages/lang/golang
-        
-        # 正式全局强推安装
+        # 3. 强行把洗净后的 feeds 注入系统
         ./scripts/feeds install -a -f
 
     - name: Copy custom configuration
@@ -204,9 +191,9 @@ jobs:
     - name: Generate final config and verify banner
       run: |
         cd openwrt
-        echo "=== 正在生成完全重构的干净配置树 ==="
+        echo "=== 基于稳定的 24.10 重新构建配置树 ==="
         
-        # 彻底扬了残留的脏缓存，让 OpenWrt 依据最新的干净 feeds 重新扫描
+        # 彻底清空临时目录，逼迫配置树完全基于 24.10 重新扫描
         rm -rf tmp/
         echo "CONFIG_PACKAGE_luci-app-banner=y" >> .config
         
@@ -297,7 +284,7 @@ jobs:
         artifacts: ${{ env.FIRMWARE }}/*
         body: |
           - 默认IP：192.168.3.1 默认密码：无
-          - 当前使用版本:【编译前的最后一次[➦主源码](https://github.com/immortalwrt/immortalwrt/tree/openwrt-master)更新記錄】
+          - 当前使用版本:【编译前的最后一次[➦主源码](https://github.com/immortalwrt/immortalwrt/tree/openwrt-24.10)更新記錄】
           ${{ env.useVersionInfo }}
 
     - name: Delete workflow runs

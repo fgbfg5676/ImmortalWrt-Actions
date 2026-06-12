@@ -105,21 +105,4 @@ for i in "${!PLUGIN_LIST[@]}"; do
     else
         log_info "$PLUGIN_NAME already exists, skipping clone"
     fi
-
-    if ! grep -q "CONFIG_PACKAGE_$PLUGIN_NAME=y" .config 2>/dev/null; then
-        echo "CONFIG_PACKAGE_$PLUGIN_NAME=y" >> .config
-        log_success "$PLUGIN_NAME enabled"
-    else
-        log_info "$PLUGIN_NAME already enabled, skipping"
-    fi
 done
-
-# -------------------- PassWall2 --------------------
-if ! grep -q "CONFIG_PACKAGE_luci-app-passwall2=y" .config 2>/dev/null; then
-    echo "CONFIG_PACKAGE_luci-app-passwall2=y" >> .config
-    log_success "PassWall2 enabled"
-else
-    log_info "PassWall2 already enabled, skipping"
-fi
-
-# -------------------- Golang 更新 (已移除，因與 Workflow 中 SBWML Feed 衝突) --------------------

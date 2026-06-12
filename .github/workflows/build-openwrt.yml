@@ -21,9 +21,20 @@ jobs:
       contents: write
 
     steps:
-    - name: Before freeing up disk space
+    - name: 清理上次编译残留
       run: |
-        echo "Before freeing up disk space"
+        echo "=== 清理前磁盘状态 ==="
+        df -hT
+        # 清理上次 openwrt 编译中间文件
+        rm -rf $GITHUB_WORKSPACE/openwrt/build_dir 2>/dev/null || true
+        rm -rf $GITHUB_WORKSPACE/openwrt/staging_dir 2>/dev/null || true
+        rm -rf $GITHUB_WORKSPACE/openwrt/dl 2>/dev/null || true
+        # 清理 runner 诊断日志
+        find /home/runner/actions-runner/_diag -name "*.log" -mtime +1 -delete 2>/dev/null || true
+        # 清理 apt 缓存
+        sudo apt-get clean
+        sudo rm -rf /tmp/apt-dpkg-install-* 2>/dev/null || true
+        echo "=== 清理后磁盘状态 ==="
         df -hT
 
     - name: Optimize Disk Space
@@ -154,7 +165,6 @@ jobs:
       run: |
         cd openwrt
 
-        # 确保 banner 包在 config 中
         if ! grep -q "CONFIG_PACKAGE_luci-app-banner=y" .config; then
           echo "Adding luci-app-banner to config..."
           echo "CONFIG_PACKAGE_luci-app-banner=y" >> .config
@@ -162,7 +172,6 @@ jobs:
 
         make defconfig
 
-        # defconfig 后再次确认
         if grep -q "CONFIG_PACKAGE_luci-app-banner=y" .config; then
           echo "✓ Banner package confirmed in final config"
         else
@@ -222,3 +231,12 @@ jobs:
           openwrt/.config
           openwrt/bin/packages/
         retention-days: 7
+
+    - name: 清理编译中间文件
+      if: always()
+      run: |
+        echo "=== 清理编译中间文件 ==="
+        cd $GITHUB_WORKSPACE/openwrt 2>/dev/null || true
+        rm -rf build_dir staging_dir 2>/dev/null || true
+        echo "=== 清理后磁盘状态 ==="
+        df -hT

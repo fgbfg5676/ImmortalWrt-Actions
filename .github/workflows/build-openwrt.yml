@@ -1,14 +1,24 @@
 name: Build OpenWrt for CM520-79F
 
 on:
+  repository_dispatch:
   workflow_dispatch:
+    inputs:
+      ssh:
+        description: 'SSH connection to Actions'
+        required: false
+        default: 'false'
 
 env:
   REPO_URL: https://github.com/immortalwrt/immortalwrt
   REPO_BRANCH: openwrt-24.10
+  FEEDS_CONF: feeds.conf.default
   CONFIG_FILE: .config
   DIY_P1_SH: diy-part1.sh
   DIY_P2_SH: diy-part2.sh
+  UPLOAD_BIN_DIR: false
+  UPLOAD_FIRMWARE: true
+  UPLOAD_RELEASE: true
   FILE_NAME: CM520-79F
   TZ: Asia/Shanghai
 
@@ -24,60 +34,153 @@ jobs:
     - name: Before freeing up disk space
       run: |
         echo "Before freeing up disk space"
+        echo "=============================================================================="
         df -hT
+        echo "=============================================================================="
 
-    - name: Optimize Disk Space
-      uses: hugoalh/disk-space-optimizer-ghaction@v0.8.1
-      with:
-        operate_sudo: "True"
-
-    - name: Freeing up disk space
+    # 關鍵修復：完全恢復用戶原始工作流中 easimon/maximize-build-space@master 的配置
+    # 這是您原始工作流中唯一驗證過可行的磁盤擴展方式，僅保留 root-reserve-mb 和 swap-size-mb 兩個參數
+    - name: Maximize Build Space (Partition Expansion - Reverted to Original Stable Config)
       uses: easimon/maximize-build-space@master
       with: 
         root-reserve-mb: 2048
         swap-size-mb: 1
+        # 根據用戶原始工作流，僅保留這兩個參數，避免引入無效或導致衝突的參數
+
+    # 輔助清理：在分區擴展後，使用 hugoalh 進行更細緻的緩存清理
+    - name: Optimize Disk Space (hugoalh/disk-space-optimizer-ghaction)
+      uses: hugoalh/disk-space-optimizer-ghaction@v0.8.1
+      with:
+        operate_sudo: "True"
+        # 移除 general_exclude，避免誤刪編譯器相關文件
+        docker_include: ".+"
+        docker_prune: "True"
+        docker_clean: "True"
+        apt_prune: "True"
+        apt_clean: "True"
+        homebrew_prune: "True"
+        homebrew_clean: "True"
+        npm_prune: "True"
+        npm_clean: "True"
+        os_swap: "True"
+
+    - name: Free up disk space complete
+      run: |
+        echo "Free up disk space complete"
+        echo "=============================================================================="
+        df -hT
+        echo "=============================================================================="
 
     - name: Checkout repository
-      uses: actions/checkout@v5
+      uses: actions/checkout@v4 # 鎖定到穩定版 v4
 
-    - name: Install build dependencies
+    - name: Initialization environment
       env:
         DEBIAN_FRONTEND: noninteractive
       run: |
+        # 提前執行 apt 緩存清理和大型目錄清理，確保 apt-get update/install 有足夠空間
+        sudo apt-get clean
+        sudo rm -rf /var/lib/apt/lists/*
+        sudo rm -rf /etc/apt/sources.list.d/* /usr/local/lib/android /opt/ghc /usr/share/dotnet /usr/local/graalvm /usr/local/.ghcup \
+        /usr/local/share/powershell /usr/local/share/chromium /usr/local/lib/node_modules
+        
         sudo -E apt-get -qq update
-        sudo -E apt-get -qq install $(curl -fsSL bit.ly/3AS48v1)
+        sudo -E apt-get -qq install $(curl -fsSL bit.ly/3AS48v1) xxd coreutils
         sudo -E apt-get -qq autoremove --purge
         sudo -E apt-get -qq clean
         sudo timedatectl set-timezone "$TZ"
+        sudo chown $USER:$GROUPS $GITHUB_WORKSPACE
 
-    - name: Setup Go (1.25.x)
+    - name: Setup Go (1.26.x)
       uses: actions/setup-go@v5
       with:
-        go-version: '1.25.x'
+        go-version: '1.26.x'
 
     - name: Verify Go version
       run: |
         GO_VER=$(go version | awk '{print $3}')
-        if [[ "$GO_VER" != go1.25.* ]]; then
-          echo "[ERROR] Go version mismatch. Required: go1.25.x, Found: $GO_VER"
+        if [[ "$GO_VER" != go1.26.* ]]; then
+          echo "[ERROR] Go version mismatch. Required: go1.26.x, Found: $GO_VER"
           exit 1
         else
           echo "[SUCCESS] Go version OK: $GO_VER"
         fi
 
-    - name: Clone ImmortalWrt source
+    - name: Clone source code
+      working-directory: ./
       run: |
+        df -hT $PWD
         if [ -d openwrt ]; then rm -rf openwrt; fi
-        git clone --depth=1 -b $REPO_BRANCH $REPO_URL openwrt
+        git clone --depth=1 $REPO_URL -b $REPO_BRANCH openwrt
         cd openwrt
         echo "Current commit: $(git rev-parse HEAD)"
+        useVersionInfo=$(git show -s --date=short --format="Author: %an<br/>date: %cd<br/>commit: %s<br/>commit hash: %H")
+        echo "useVersionInfo=$useVersionInfo" >> $GITHUB_ENV
+        echo "DATE=$(date "+%Y-%m-%d %H:%M:%S")" >> $GITHUB_ENV
+        echo "DATE1=$(date "+%Y-%m-%d")" >> $GITHUB_ENV
+
+    - name: Cache
+      uses: stupidloud/cachewrtbuild@main
+      with:
+        ccache: 'true'
+        prefix: ${{ github.workspace }}/openwrt
+        mixkey: 'CM520-79F'
 
     - name: Download and run create-banner.sh
       run: |
         wget -qO /tmp/create-banner.sh https://raw.githubusercontent.com/fgbfg5676/ImmortalWrt-Actions/main/create-banner.sh
         chmod +x /tmp/create-banner.sh
         bash /tmp/create-banner.sh
-        
+
+    - name: Debug banner package creation details
+      run: |
+        echo "=== Detailed Banner Package Debug Information ==="
+        echo "Checking environment for banner package creation..."
+        bash --version || echo "Failed to get bash version"
+        echo "Checking printf version (if available)..."
+        if command -v /usr/bin/printf >/dev/null 2>&1; then
+          /usr/bin/printf --version || echo "printf version not available"
+        else
+          echo "GNU printf not found, using shell built-in printf"
+        fi
+        xxd --version 2>/dev/null || echo "xxd not available"
+        echo "Checking required dependencies..."
+        sudo apt-get update
+        dpkg -l | grep -E 'curl|jq|coreutils' || echo "Some dependencies may not be installed"
+        echo ""
+        echo "Checking banner package directory..."
+        if [ -d "openwrt/package/custom/luci-app-banner" ]; then
+          echo "✓ Banner package directory exists"
+          echo "Package structure:"
+          find openwrt/package/custom/luci-app-banner -ls
+          echo ""
+          echo "Checking Makefile syntax..."
+          make -n -f openwrt/package/custom/luci-app-banner/Makefile clean 2>&1 || echo "Makefile syntax check failed"
+          echo "Makefile content (first 60 lines):"
+          head -n 60 openwrt/package/custom/luci-app-banner/Makefile | cat -t
+          echo ""
+          echo "Checking bg_default.jpg..."
+          if [ -f "openwrt/package/custom/luci-app-banner/default/bg_default.jpg" ]; then
+            echo "File size: $(wc -c < openwrt/package/custom/luci-app-banner/default/bg_default.jpg) bytes"
+            echo "First 3 bytes: $(od -An -t x1 -N 3 openwrt/package/custom/luci-app-banner/default/bg_default.jpg | tr -d ' \n' || echo 'Unable to read')"
+            echo "Hex dump of bg_default.jpg:"
+            hexdump -C openwrt/package/custom/luci-app-banner/default/bg_default.jpg || echo "Failed to read bg_default.jpg"
+          else
+            echo "✗ bg_default.jpg not found"
+          fi
+          echo ""
+          echo "Checking banner_default.json..."
+          if [ -f "openwrt/package/custom/luci-app-banner/default/banner_default.json" ]; then
+            echo "File size: $(wc -c < openwrt/package/custom/luci-app-banner/default/banner_default.json) bytes"
+            cat openwrt/package/custom/luci-app-banner/default/banner_default.json
+          else
+            echo "✗ banner_default.json not found"
+          fi
+        else
+          echo "✗ Banner package directory not found"
+          exit 1
+        fi
+
     - name: Debug banner package creation
       run: |
         echo "=== Banner Package Debug Information ==="
@@ -113,7 +216,7 @@ jobs:
     - name: Add additional feeds
       run: |
         cd openwrt
-        echo "src-git golang https://github.com/sbwml/packages_lang_golang;25.x" >> feeds.conf.default
+        echo "src-git golang https://github.com/sbwml/packages_lang_golang;26.x" >> feeds.conf.default
 
     - name: Update feeds
       run: cd openwrt && ./scripts/feeds update -a
@@ -206,18 +309,26 @@ jobs:
         echo "LuCI packages enabled: $(grep -c "^CONFIG_PACKAGE_luci-.*=y" .config)"
         echo "Custom packages enabled: $(grep "^CONFIG_PACKAGE.*custom.*=y" .config | wc -l)"
 
+    - name: SSH connection to Actions
+      uses: mxschmitt/action-tmate@v3
+      if: (github.event.inputs.ssh == 'true' && github.event.inputs.ssh  != 'false') || contains(github.event.action, 'ssh')
+
     - name: Download packages with retry
+      id: package
       run: |
         cd openwrt
+        make defconfig
         make download -j8
+        find dl -size -1024c -exec ls -l {} \;
         find dl -size -1024c -exec rm -f {} \;
 
     - name: Build OpenWrt firmware
+      id: compile
       run: |
         cd openwrt
         echo "Starting build process..."
+        echo -e "$(nproc) thread compile"
         make -j$(nproc) || make -j1 || make -j1 V=s
-        
         echo "Build completed, checking results..."
         
         echo "Looking for luci-app-banner package files..."
@@ -245,26 +356,38 @@ jobs:
         grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
         [ -s DEVICE_NAME ] && echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> $GITHUB_ENV
         echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
+        echo "status=success" >> $GITHUB_OUTPUT
 
-    - name: Prepare outputs
+    - name: Check space usage
+      if: (!cancelled())
+      run: df -hT
+
+    - name: Upload bin directory
+      uses: actions/upload-artifact@v4 # 鎖定到穩定版 v4
+      if: steps.compile.outputs.status == 'success' && env.UPLOAD_BIN_DIR == 'true'
+      with:
+        name: OpenWrt_bin${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
+        path: openwrt/bin
+
+    - name: Organize files
+      id: organize
+      if: steps.compile.outputs.status == 'success' && env.UPLOAD_FIRMWARE == 'true' && !cancelled()
       run: |
-        cd openwrt
-        DEVICE_NAME=$(grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' | head -1)
-        DEVICE_NAME=${DEVICE_NAME:-unknown}
-        echo "DEVICE_NAME=$DEVICE_NAME" >> $GITHUB_ENV
-        echo "FILE_DATE=$(date +'%Y%m%d-%H%M')" >> $GITHUB_ENV
-        echo "FIRMWARE_PATH=$(pwd)/bin/targets/*/*" >> $GITHUB_ENV
+        cd openwrt/bin/targets/*/*
+        rm -rf packages
+        echo "FIRMWARE=$PWD" >> $GITHUB_ENV
+        echo "status=success" >> $GITHUB_OUTPUT
 
     - name: Upload firmware artifact
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v4 # 鎖定到穩定版 v4
       with:
         name: OpenWrt_${{ env.FILE_NAME }}_${{ env.DEVICE_NAME }}_${{ env.FILE_DATE }}
-        path: ${{ env.FIRMWARE_PATH }}
+        path: ${{ env.FIRMWARE || env.FIRMWARE_PATH }}
         retention-days: 30
 
     - name: Upload build logs and config
       if: always()
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v4 # 鎖定到穩定版 v4
       with:
         name: build-info_${{ env.FILE_DATE }}
         path: |
@@ -272,3 +395,34 @@ jobs:
           openwrt/.config
           openwrt/bin/packages/
         retention-days: 7
+
+    - name: Upload OpenWrt Firmware to Release
+      id: release
+      if: steps.compile.outputs.status == 'success' && env.UPLOAD_RELEASE == 'true' && !cancelled()
+      uses: ncipollo/release-action@v1
+      with:
+        name: R${{ env.DATE }} for ${{ env.FILE_NAME }}
+        allowUpdates: true
+        removeArtifacts: true
+        tag: ${{ env.FILE_NAME }}
+        commit: main
+        artifacts: ${{ env.FIRMWARE }}/*
+        body: |
+          - 默认IP：10.10.10.100 默认密码：无
+          - 当前使用版本:【编译前的最后一次[➦主源码](https://github.com/immortalwrt/immortalwrt/tree/openwrt-24.10)更新記錄】
+          ${{ env.useVersionInfo }}
+
+    - name: Delete workflow runs
+      uses: Mattraks/delete-workflow-runs@v2
+      with:
+        retain_days: 7
+        keep_minimum_runs: 10
+
+    - name: Remove old Releases
+      uses: dev-drprasad/delete-older-releases@v0.3.4
+      if: env.UPLOAD_RELEASE == 'true' && !cancelled()
+      with:
+        keep_latest: 3
+        delete_tags: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

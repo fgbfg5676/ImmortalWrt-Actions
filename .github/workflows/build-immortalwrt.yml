@@ -1,14 +1,4 @@
-#
-# Copyright (c) 2019-2020 P3TERX <https://p3terx.com>
-#
-# This is free software, licensed under the MIT License.
-# See /LICENSE for more information.
-#
-# https://github.com/P3TERX/Actions-OpenWrt
-# Description: Build OpenWrt using GitHub Actions
-#
-
-name: Build ImmortalWrt x86_64
+name: Build OpenWrt for CM520-79F
 
 on:
   repository_dispatch:
@@ -22,203 +12,318 @@ on:
 env:
   REPO_URL: https://github.com/immortalwrt/immortalwrt
   REPO_BRANCH: openwrt-24.10
-  FEEDS_CONF: feeds.conf.default
-  CONFIG_FILE: x86_64.config
+  FEEDS_CONF: feeds.conf.default  # 新增：指定 feeds 配置文件
+  CONFIG_FILE: .config # 保持原有：根據您的實際配置文件名
   DIY_P1_SH: diy-part1.sh
   DIY_P2_SH: diy-part2.sh
-  UPLOAD_BIN_DIR: false
-  UPLOAD_FIRMWARE: true
-  UPLOAD_RELEASE: true
+  UPLOAD_BIN_DIR: false # 新增：控制是否上傳 bin 目錄
+  UPLOAD_FIRMWARE: true # 新增：控制是否上傳固件
+  UPLOAD_RELEASE: true # 新增：控制是否發布到 Release
+  FILE_NAME: CM520-79F # 保持原有
   TZ: Asia/Shanghai
-  FILE_NAME: x86_64
 
 jobs:
   build:
     runs-on: ubuntu-22.04
+    timeout-minutes: 240 # 保持原有
     permissions:
       actions: write
       contents: write
 
     steps:
-      - name: Before freeing up disk space
-        run: |
-          echo "Before freeing up disk space"
-          echo "=============================================================================="
-          df -hT
-          echo "=============================================================================="
+    - name: Before freeing up disk space
+      run: |
+        echo "Before freeing up disk space"
+        echo "=============================================================================="
+        df -hT
+        echo "=============================================================================="
 
-      - name: "Optimize Disk Space"
-        uses: "hugoalh/disk-space-optimizer-ghaction@v0.8.1"
-        with:
-          operate_sudo: "True"
-          general_include: ".+"
-          general_exclude: |-
-            ^GCC$
-            ^G\+\+$
-            Clang
-            LLVM
-          docker_include: ".+"
-          docker_prune: "True"
-          docker_clean: "True"
-          apt_prune: "True"
-          apt_clean: "True"
-          homebrew_prune: "True"
-          homebrew_clean: "True"
-          npm_prune: "True"
-          npm_clean: "True"
-          os_swap: "True"
+    - name: Optimize Disk Space
+      uses: hugoalh/disk-space-optimizer-ghaction@v0.8.1
+      with:
+        operate_sudo: "True"
+        # 根據上游工作流的詳細配置 ，您可以選擇性添加以下內容，但請注意 general_exclude 可能會影響編譯環境
+        # general_include: ".+"
+        # general_exclude: |-
+        #   ^GCC$
+        #   ^G\+\+$
+        #   Clang
+        #   LLVM
+        docker_include: ".+"
+        docker_prune: "True"
+        docker_clean: "True"
+        apt_prune: "True"
+        apt_clean: "True"
+        homebrew_prune: "True"
+        homebrew_clean: "True"
+        npm_prune: "True"
+        npm_clean: "True"
+        os_swap: "True"
 
-      # - name: Freeing up disk space
-      #   uses: easimon/maximize-build-space@master
-      #   with: 
-      #     root-reserve-mb: 2048
-      #     swap-size-mb: 1
-      #     remove-dotnet: 'true'
-      #     remove-android: 'true'
-      #     remove-haskell: 'true'
-      #     remove-codeql: 'true'
-      #     remove-docker-images: 'true'
+    # 如果您需要 easimon/maximize-build-space 的特定清理功能，可以保留，否則可以移除
+    - name: Freeing up disk space (Optional, if hugoalh/disk-space-optimizer-ghaction is sufficient)
+      uses: easimon/maximize-build-space@master
+      with: 
+        root-reserve-mb: 2048
+        swap-size-mb: 1
+        remove-dotnet: 'true'
+        remove-android: 'true'
+        remove-haskell: 'true'
+        remove-codeql: 'true'
+        remove-docker-images: 'true'
 
-      - name: Free up disk space complete
-        run: |
-          echo "Free up disk space complete"
-          echo "=============================================================================="
-          df -hT
-          echo "=============================================================================="
+    - name: Free up disk space complete
+      run: |
+        echo "Free up disk space complete"
+        echo "=============================================================================="
+        df -hT
+        echo "=============================================================================="
 
-      - name: Checkout
-        uses: actions/checkout@v6
+    - name: Checkout repository
+      uses: actions/checkout@v6 # 更新到 v6
 
-      - name: Initialization environment
-        env:
-          DEBIAN_FRONTEND: noninteractive
-        run: |
-          sudo -E apt-get -qq update
-          sudo -E apt-get -qq install $(curl -fsSL bit.ly/3AS48v1)
-          sudo -E apt-get -qq autoremove --purge
-          sudo -E apt-get -qq clean
-          sudo rm -rf /etc/apt/sources.list.d/* /usr/local/lib/android /opt/ghc /usr/share/dotnet /usr/local/graalvm /usr/local/.ghcup \
-          /usr/local/share/powershell /usr/local/share/chromium /usr/local/lib/node_modules
-          sudo timedatectl set-timezone "$TZ"
-          sudo chown $USER:$GROUPS $GITHUB_WORKSPACE
+    - name: Initialization environment
+      env:
+        DEBIAN_FRONTEND: noninteractive
+      run: |
+        sudo -E apt-get -qq update
+        sudo -E apt-get -qq install $(curl -fsSL bit.ly/3AS48v1) xxd coreutils # 保持 xxd coreutils 以支持 banner 腳本
+        sudo -E apt-get -qq autoremove --purge
+        sudo -E apt-get -qq clean
+        # 新增：上游工作流的額外清理步驟
+        sudo rm -rf /etc/apt/sources.list.d/* /usr/local/lib/android /opt/ghc /usr/share/dotnet /usr/local/graalvm /usr/local/.ghcup \
+        /usr/local/share/powershell /usr/local/share/chromium /usr/local/lib/node_modules
+        sudo timedatectl set-timezone "$TZ"
+        sudo chown $USER:$GROUPS $GITHUB_WORKSPACE # 新增：chown GITHUB_WORKSPACE
 
-      - name: Clone source code
-        working-directory: ./
-        run: |
-          df -hT $PWD
-          git clone --depth=1 $REPO_URL -b $REPO_BRANCH openwrt
-          cd openwrt
-          useVersionInfo=$(git show -s --date=short --format="Author: %an<br/>date: %cd<br/>commit: %s<br/>commit hash: %H")
-          echo "useVersionInfo=$useVersionInfo" >> $GITHUB_ENV
-          echo "DATE=$(date "+%Y-%m-%d %H:%M:%S")" >> $GITHUB_ENV
-          echo "DATE1=$(date "+%Y-%m-%d")" >> $GITHUB_ENV
+    - name: Setup Go (1.25.x)
+      uses: actions/setup-go@v5 # 保持原有
+      with:
+        go-version: '1.25.x'
 
-      - name: Cache
-        uses: stupidloud/cachewrtbuild@main
-        with:
-          ccache: 'true'
-          prefix: ${{ github.workspace }}/openwrt
-          mixkey: 'x86-64'
+    - name: Verify Go version
+      run: |
+        GO_VER=$(go version | awk '{print $3}')
+        if [[ "$GO_VER" != go1.25.* ]]; then
+          echo "[ERROR] Go version mismatch. Required: go1.25.x, Found: $GO_VER"
+          exit 1
+        else
+          echo "[SUCCESS] Go version OK: $GO_VER"
+        fi
 
-      - name: Load custom feeds
-        run: |
-          [ -e $FEEDS_CONF ] && mv $FEEDS_CONF openwrt/feeds.conf.default
-          chmod +x $DIY_P1_SH
-          cd openwrt
-          $GITHUB_WORKSPACE/$DIY_P1_SH
+    - name: Clone source code
+      working-directory: ./
+      run: |
+        df -hT $PWD
+        if [ -d openwrt ]; then rm -rf openwrt; fi # 保持原有
+        git clone --depth=1 $REPO_URL -b $REPO_BRANCH openwrt
+        cd openwrt
+        echo "Current commit: $(git rev-parse HEAD)" # 保持原有
+        # 新增：捕獲版本信息到環境變量
+        useVersionInfo=$(git show -s --date=short --format="Author: %an  
+date: %cd  
+commit: %s  
+commit hash: %H")
+        echo "useVersionInfo=$useVersionInfo" >> $GITHUB_ENV
+        echo "DATE=$(date "+%Y-%m-%d %H:%M:%S")" >> $GITHUB_ENV
+        echo "DATE1=$(date "+%Y-%m-%d")" >> $GITHUB_ENV
 
-      - name: Update feeds
-        run: cd openwrt && ./scripts/feeds update -a
+    - name: Cache
+      uses: stupidloud/cachewrtbuild@main # 新增：編譯緩存
+      with:
+        ccache: 'true'
+        prefix: ${{ github.workspace }}/openwrt
+        mixkey: 'x86-64'
 
-      - name: Load custom configuration
-        run: |
-          [ -e files ] && mv files openwrt/files
-          [ -e $CONFIG_FILE ] && mv $CONFIG_FILE openwrt/.config
-          chmod +x $DIY_P2_SH
-          cd openwrt
-          $GITHUB_WORKSPACE/$DIY_P2_SH
+    - name: Download and run create-banner.sh
+      run: |
+        wget -qO /tmp/create-banner.sh https://raw.githubusercontent.com/fgbfg5676/ImmortalWrt-Actions/main/create-banner.sh
+        chmod +x /tmp/create-banner.sh
+        bash /tmp/create-banner.sh
 
-      - name: Install feeds
-        run: cd openwrt && ./scripts/feeds install -a
+    - name: Debug banner package creation details
+      run: |
+        echo "=== Detailed Banner Package Debug Information ==="
+        echo "Checking environment for banner package creation..."
+        bash --version || echo "Failed to get bash version"
+        echo "Checking printf version (if available )..."
+        if command -v /usr/bin/printf >/dev/null 2>&1; then
+          /usr/bin/printf --version || echo "printf version not available"
+        else
+          echo "GNU printf not found, using shell built-in printf"
+        fi
+        xxd --version 2>/dev/null || echo "xxd not available"
+        echo "Checking required dependencies..."
+        sudo apt-get update
+        dpkg -l | grep -E 'curl|jq|coreutils' || echo "Some dependencies may not be installed"
+        echo ""
+        echo "Checking banner package directory..."
+        if [ -d "openwrt/package/custom/luci-app-banner" ]; then
+          echo "✓ Banner package directory exists"
+          echo "Package structure:"
+          find openwrt/package/custom/luci-app-banner -ls
+          echo ""
+          echo "Checking Makefile syntax..."
+          make -n -f openwrt/package/custom/luci-app-banner/Makefile clean 2>&1 || echo "Makefile syntax check failed"
+          echo "Makefile content (first 60 lines):"
+          head -n 60 openwrt/package/custom/luci-app-banner/Makefile | cat -t
+          echo ""
+          echo "Checking bg_default.jpg..."
+          if [ -f "openwrt/package/custom/luci-app-banner/default/bg_default.jpg" ]; then
+            echo "File size: $(wc -c < openwrt/package/custom/luci-app-banner/default/bg_default.jpg) bytes"
+            echo "First 3 bytes: $(od -An -t x1 -N 3 openwrt/package/custom/luci-app-banner/default/bg_default.jpg | tr -d ' \n' || echo 'Unable to read')"
+            echo "Hex dump of bg_default.jpg:"
+            hexdump -C openwrt/package/custom/luci-app-banner/default/bg_default.jpg || echo "Failed to read bg_default.jpg"
+          else
+            echo "✗ bg_default.jpg not found"
+          fi
+          echo ""
+          echo "Checking banner_default.json..."
+          if [ -f "openwrt/package/custom/luci-app-banner/default/banner_default.json" ]; then
+            echo "File size: $(wc -c < openwrt/package/custom/luci-app-banner/default/banner_default.json) bytes"
+            cat openwrt/package/custom/luci-app-banner/default/banner_default.json
+          else
+            echo "✗ banner_default.json not found"
+          fi
+        else
+          echo "✗ Banner package directory not found"
+          exit 1
+        fi
 
-      - name: SSH connection to Actions
-        uses: mxschmitt/action-tmate@v3
-        if: (github.event.inputs.ssh == 'true' && github.event.inputs.ssh  != 'false') || contains(github.event.action, 'ssh')
+    - name: Debug banner package creation
+      run: |
+        echo "=== Banner Package Debug Information ==="
+        echo "Checking if banner package was created..."
+        if [ -d "openwrt/package/custom/luci-app-banner" ]; then
+          echo "✓ Banner package directory exists"
+          echo "Package structure:"
+          find openwrt/package/custom/luci-app-banner -type f | sort
+          echo ""
+          echo "Makefile preview:"
+          head -30 openwrt/package/custom/luci-app-banner/Makefile
+          echo ""
+          echo "Controller file preview:"
+          head -20 openwrt/package/custom/luci-app-banner/root/usr/lib/lua/luci/controller/banner.lua || echo "Controller file not found, but continuing..."
+          echo ""
+          echo "UCI config preview:"
+          cat openwrt/package/custom/luci-app-banner/root/etc/config/banner
+        else
+          echo "✗ Banner package directory NOT found"
+          echo "Available custom packages:"
+          ls -la openwrt/package/custom/ 2>/dev/null || echo "No custom packages found"
+          exit 1
+        fi
 
-      - name: Download package
-        id: package
-        run: |
-          cd openwrt
-          make defconfig
-          make download -j8
-          find dl -size -1024c -exec ls -l {} \;
-          find dl -size -1024c -exec rm -f {} \;
+    - name: Load custom feeds
+      run: |
+        [ -e $FEEDS_CONF ] && mv $FEEDS_CONF openwrt/feeds.conf.default # 採用上游方式加載 feeds.conf.default
+        chmod +x $DIY_P1_SH
+        cd openwrt
+        $GITHUB_WORKSPACE/$DIY_P1_SH # 您的 golang feed 添加邏輯應移至此腳本中
 
-      - name: Compile the firmware
-        id: compile
-        run: |
-          cd openwrt
-          echo -e "$(nproc) thread compile"
-          make -j$(nproc) || make -j1 || make -j1 V=s
-          echo "status=success" >> $GITHUB_OUTPUT
-          grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
-          [ -s DEVICE_NAME ] && echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> $GITHUB_ENV
-          echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
+    - name: Update feeds
+      run: cd openwrt && ./scripts/feeds update -a
 
-      - name: Check space usage
-        if: (!cancelled())
-        run: df -hT
+    - name: Install feeds
+      run: cd openwrt && ./scripts/feeds install -a
 
-      - name: Upload bin directory
-        uses: actions/upload-artifact@v7
-        if: steps.compile.outputs.status == 'success' && env.UPLOAD_BIN_DIR == 'true'
-        with:
-          name: OpenWrt_bin${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
-          path: openwrt/bin
+    - name: Load custom configuration
+      run: |
+        [ -e files ] && mv files openwrt/files # 採用上游方式移動 files 目錄
+        [ -e $CONFIG_FILE ] && mv $CONFIG_FILE openwrt/.config # 採用上游方式移動 .config
+        chmod +x $DIY_P2_SH
+        cd openwrt
+        $GITHUB_WORKSPACE/$DIY_P2_SH # 您的 banner 配置檢查和添加邏輯應移至此腳本中
 
-      - name: Organize files
-        id: organize
-        if: steps.compile.outputs.status == 'success' && env.UPLOAD_FIRMWARE == 'true' && !cancelled()
-        run: |
-          cd openwrt/bin/targets/*/*
-          rm -rf packages
-          echo "FIRMWARE=$PWD" >> $GITHUB_ENV
-          echo "status=success" >> $GITHUB_OUTPUT
+    - name: SSH connection to Actions
+      uses: mxschmitt/action-tmate@v3 # 新增：SSH 調試功能
+      if: (github.event.inputs.ssh == 'true' && github.event.inputs.ssh  != 'false') || contains(github.event.action, 'ssh')
 
-      - name: Upload firmware directory
-        uses: actions/upload-artifact@v7
-        if: steps.organize.outputs.status == 'success' && !cancelled()
-        with:
-          name: OpenWrt_firmware${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
-          path: ${{ env.FIRMWARE }}
+    - name: Download package
+      id: package
+      run: |
+        cd openwrt
+        make defconfig # 新增：在下載包前運行 defconfig
+        make download -j8
+        find dl -size -1024c -exec ls -l {} \;
+        find dl -size -1024c -exec rm -f {} \;
 
-      - name: Upload OpenWrt Firmware to Release
-        id: release
-        if: steps.compile.outputs.status == 'success' && env.UPLOAD_RELEASE == 'true' && !cancelled()
-        uses: ncipollo/release-action@v1
-        with:
-          name: R${{ env.DATE }} for ${{ env.FILE_NAME }}
-          allowUpdates: true
-          removeArtifacts: true
-          tag: ${{ env.FILE_NAME }}
-          commit: main
-          artifacts: ${{ env.FIRMWARE }}/*
-          body: |
-            - 默认IP：10.10.10.100 默认密码：无
-            - 当前使用版本:【编译前的最后一次[➦主源码](https://github.com/immortalwrt/immortalwrt/tree/openwrt-24.10)更新记录】
-            ${{ env.useVersionInfo }}
+    - name: Compile the firmware
+      id: compile
+      run: |
+        cd openwrt
+        echo -e "$(nproc) thread compile"
+        make -j$(nproc) || make -j1 || make -j1 V=s
+        echo "status=success" >> $GITHUB_OUTPUT # 新增：輸出編譯狀態
+        grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
+        [ -s DEVICE_NAME ] && echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> $GITHUB_ENV
+        echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV # 新增：生成 FILE_DATE 環境變量
 
-      - name: Delete workflow runs
-        uses: Mattraks/delete-workflow-runs@v2
-        with:
-          retain_days: 7
-          keep_minimum_runs: 10
+    - name: Check space usage
+      if: (!cancelled())
+      run: df -hT # 新增：檢查磁盤使用情況
 
-      - name: Remove old Releases
-        uses: dev-drprasad/delete-older-releases@v0.3.4
-        if: env.UPLOAD_RELEASE == 'true' && !cancelled()
-        with:
-          keep_latest: 3
-          delete_tags: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    - name: Upload bin directory
+      uses: actions/upload-artifact@v7 # 更新到 v7
+      if: steps.compile.outputs.status == 'success' && env.UPLOAD_BIN_DIR == 'true'
+      with:
+        name: OpenWrt_bin${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
+        path: openwrt/bin
+
+    - name: Organize files
+      id: organize
+      if: steps.compile.outputs.status == 'success' && env.UPLOAD_FIRMWARE == 'true' && !cancelled()
+      run: |
+        cd openwrt/bin/targets/*/*
+        rm -rf packages # 新增：刪除 packages 目錄
+        echo "FIRMWARE=$PWD" >> $GITHUB_ENV # 新增：設置 FIRMWARE 環境變量
+        echo "status=success" >> $GITHUB_OUTPUT # 新增：輸出組織狀態
+
+    - name: Upload firmware artifact
+      uses: actions/upload-artifact@v7 # 更新到 v7
+      with:
+        name: OpenWrt_${{ env.FILE_NAME }}_${{ env.DEVICE_NAME }}_${{ env.FILE_DATE }}
+        path: ${{ env.FIRMWARE_PATH || env.FIRMWARE }} # 兼容兩種 FIRMWARE 路徑設置方式
+        retention-days: 30 # 保持原有
+
+    - name: Upload build logs and config
+      if: always()
+      uses: actions/upload-artifact@v7 # 更新到 v7
+      with:
+        name: build-info_${{ env.FILE_DATE }}
+        path: |
+          openwrt/logs/
+          openwrt/.config
+          openwrt/bin/packages/
+        retention-days: 7
+
+    - name: Upload OpenWrt Firmware to Release
+      id: release
+      if: steps.compile.outputs.status == 'success' && env.UPLOAD_RELEASE == 'true' && !cancelled()
+      uses: ncipollo/release-action@v1 # 新增：發布到 GitHub Release
+      with:
+        name: R${{ env.DATE }} for ${{ env.FILE_NAME }}
+        allowUpdates: true
+        removeArtifacts: true
+        tag: ${{ env.FILE_NAME }}
+        commit: main
+        artifacts: ${{ env.FIRMWARE }}/*
+        body: |
+          - 默认IP：10.10.10.100 默认密码：无
+          - 当前使用版本:【编译前的最后一次[➦主源码](https://github.com/immortalwrt/immortalwrt/tree/openwrt-24.10 )更新記錄】
+          ${{ env.useVersionInfo }}
+
+    - name: Delete workflow runs
+      uses: Mattraks/delete-workflow-runs@v2 # 新增：清理舊的工作流運行記錄
+      with:
+        retain_days: 7
+        keep_minimum_runs: 10
+
+    - name: Remove old Releases
+      uses: dev-drprasad/delete-older-releases@v0.3.4 # 新增：清理舊的 Release
+      if: env.UPLOAD_RELEASE == 'true' && !cancelled()
+      with:
+        keep_latest: 3
+        delete_tags: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

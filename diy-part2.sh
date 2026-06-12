@@ -11,9 +11,8 @@ WGET_OPTS="-q --timeout=30 --tries=3 --retry-connrefused --connect-timeout 10"
 ARCH="armv7"
 DTS_DIR="target/linux/ipq40xx/files/arch/arm/boot/dts"
 GENERIC_MK="target/linux/ipq40xx/image/generic.mk"
-BOARD_DIR="$PWD/board"
-CUSTOM_PLUGINS_DIR="$PWD/package/custom"
-mkdir -p "$DTS_DIR" "$BOARD_DIR" "$CUSTOM_PLUGINS_DIR"
+BOARD_DIR="target/linux/ipq40xx/base-files/etc/board.d"
+mkdir -p "$DTS_DIR" "$BOARD_DIR"
 
 # -------------------- DTS补丁 --------------------
 DTS_PATCH_URL="https://git.ix.gs/mptcp/openmptcprouter/commit/a66353a01576c5146ae0d72ee1f8b24ba33cb88e.patch"
@@ -97,7 +96,7 @@ PLUGIN_REPOS=("https://github.com/sirpdboy/luci-app-partexp.git")
 for i in "${!PLUGIN_LIST[@]}"; do
     PLUGIN_NAME="${PLUGIN_LIST[$i]}"
     PLUGIN_URL="${PLUGIN_REPOS[$i]}"
-    PLUGIN_PATH="$CUSTOM_PLUGINS_DIR/$PLUGIN_NAME"
+    PLUGIN_PATH="package/$PLUGIN_NAME"
 
     if [ ! -d "$PLUGIN_PATH/.git" ]; then
         log_info "Cloning $PLUGIN_NAME..."
@@ -105,11 +104,6 @@ for i in "${!PLUGIN_LIST[@]}"; do
         log_success "Plugin $PLUGIN_NAME cloned successfully"
     else
         log_info "$PLUGIN_NAME already exists, skipping clone"
-    fi
-
-    if [ ! -d "package/$PLUGIN_NAME" ]; then
-        cp -r "$PLUGIN_PATH" package/
-        log_success "Plugin $PLUGIN_NAME copied to package/"
     fi
 
     if ! grep -q "CONFIG_PACKAGE_$PLUGIN_NAME=y" .config 2>/dev/null; then
@@ -128,11 +122,4 @@ else
     log_info "PassWall2 already enabled, skipping"
 fi
 
-# -------------------- Golang 更新 --------------------
-log_info "Updating Golang package..."
-TMP_DIR=$(mktemp -d)
-git clone -b master --single-branch --depth 1 https://github.com/immortalwrt/packages.git "$TMP_DIR" || log_error "Failed to clone packages repo"
-rm -rf ./feeds/packages/lang/golang
-mv "$TMP_DIR/lang/golang" ./feeds/packages/lang/ || log_error "Failed to update Golang"
-rm -rf "$TMP_DIR"
-log_success "Golang package updated successfully"
+# -------------------- Golang 更新 (已移除，因與 Workflow 中 SBWML Feed 衝突) --------------------

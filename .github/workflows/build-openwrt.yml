@@ -25,10 +25,11 @@ jobs:
       run: |
         echo "=== 清理前 ==="
         df -hT
+        # 预装大目录
         sudo rm -rf /usr/share/dotnet
         sudo rm -rf /usr/local/lib/android
         sudo rm -rf /opt/ghc
-        sudo rm -rf /opt/hostedtoolcache/CodeQL
+        sudo rm -rf /opt/hostedtoolcache
         sudo rm -rf /usr/local/share/boost
         sudo rm -rf /usr/lib/jvm
         sudo rm -rf /usr/share/swift
@@ -36,9 +37,21 @@ jobs:
         sudo rm -rf /usr/share/miniconda
         sudo rm -rf /usr/local/share/powershell
         sudo rm -rf /usr/local/lib/node_modules
+        sudo rm -rf /usr/lib/google-cloud-sdk
+        sudo rm -rf /usr/lib/mono
+        sudo rm -rf /var/lib/snapd
+        sudo rm -rf /snap
+        # Docker
         sudo docker image prune -af 2>/dev/null || true
+        sudo docker system prune -af 2>/dev/null || true
+        # 预装软件包（OpenWrt编译用不到的）
+        sudo apt-get remove -y \
+          azure-cli google-cloud-cli microsoft-edge-stable google-chrome-stable \
+          firefox mono-devel libgl1-mesa-dri snapd 2>/dev/null || true
+        sudo apt-get autoremove -y 2>/dev/null || true
         sudo apt-get clean
         sudo rm -rf /tmp/apt-dpkg-install-* 2>/dev/null || true
+        sudo rm -rf /var/cache/apt/archives/*.deb 2>/dev/null || true
         echo "=== 清理后 ==="
         df -hT
 
@@ -48,7 +61,16 @@ jobs:
         operate_sudo: "True"
 
     - name: 确认磁盘空间
-      run: df -hT
+      run: |
+        echo "=== 最终可用空间 ==="
+        df -hT
+        # 低于30GB则报警
+        AVAIL=$(df / | awk 'NR==2{print $4}')
+        if [ "$AVAIL" -lt 31457280 ]; then
+          echo "[WARNING] 可用空间不足30GB，编译可能失败"
+        else
+          echo "[OK] 可用空间充足"
+        fi
 
     - name: Checkout repository
       uses: actions/checkout@v4

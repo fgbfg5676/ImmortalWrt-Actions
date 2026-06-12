@@ -1,20 +1,34 @@
 name: Build OpenWrt for CM520-79F
 
 on:
+  # 根據上游工作流新增 repository_dispatch 觸發器，並為 workflow_dispatch 增加 SSH 選項
+  repository_dispatch:
   workflow_dispatch:
+    inputs:
+      ssh:
+        description: 'SSH connection to Actions'
+        required: false
+        default: 'false'
 
 env:
   REPO_URL: https://github.com/immortalwrt/immortalwrt
   REPO_BRANCH: openwrt-24.10
+  # 保持原有 CONFIG_FILE，因為用戶的設備不是 x86_64
   CONFIG_FILE: .config
   DIY_P1_SH: diy-part1.sh
   DIY_P2_SH: diy-part2.sh
+  # 新增控制上傳的環境變量，默認值與上游保持一致，用戶可根據需求修改
+  UPLOAD_BIN_DIR: false
+  UPLOAD_FIRMWARE: true
+  UPLOAD_RELEASE: true
+  # 保持原有 FILE_NAME，符合用戶的設備命名
   FILE_NAME: CM520-79F
   TZ: Asia/Shanghai
 
 jobs:
   build:
     runs-on: ubuntu-22.04
+    # 保持原有 timeout-minutes
     timeout-minutes: 240
     permissions:
       actions: write
@@ -24,32 +38,64 @@ jobs:
     - name: Before freeing up disk space
       run: |
         echo "Before freeing up disk space"
+        echo "=============================================================================="
         df -hT
+        echo "=============================================================================="
 
-    - name: Optimize Disk Space
+    - name: Optimize Disk Space (hugoalh/disk-space-optimizer-ghaction)
       uses: hugoalh/disk-space-optimizer-ghaction@v0.8.1
       with:
         operate_sudo: "True"
+        # 採用上游更詳細的清理配置，但排除可能影響編譯環境的 general_exclude
+        docker_include: ".+"
+        docker_prune: "True"
+        docker_clean: "True"
+        apt_prune: "True"
+        apt_clean: "True"
+        homebrew_prune: "True"
+        homebrew_clean: "True"
+        npm_prune: "True"
+        npm_clean: "True"
+        os_swap: "True"
 
-    - name: Freeing up disk space
+    # 保持原有 easimon/maximize-build-space，因為用戶可能依賴其特定清理功能
+    - name: Freeing up disk space (easimon/maximize-build-space)
       uses: easimon/maximize-build-space@master
       with: 
         root-reserve-mb: 2048
         swap-size-mb: 1
+        remove-dotnet: 'true'
+        remove-android: 'true'
+        remove-haskell: 'true'
+        remove-codeql: 'true'
+        remove-docker-images: 'true'
+
+    - name: Free up disk space complete
+      run: |
+        echo "Free up disk space complete"
+        echo "=============================================================================="
+        df -hT
+        echo "=============================================================================="
 
     - name: Checkout repository
-      uses: actions/checkout@v5
+      uses: actions/checkout@v6 # 更新到 v6
 
-    - name: Install build dependencies
+    - name: Initialization environment
       env:
         DEBIAN_FRONTEND: noninteractive
       run: |
         sudo -E apt-get -qq update
+        # 保持 xxd coreutils 以支持 banner 腳本
         sudo -E apt-get -qq install $(curl -fsSL bit.ly/3AS48v1) xxd coreutils
         sudo -E apt-get -qq autoremove --purge
         sudo -E apt-get -qq clean
+        # 整合上游工作流的額外清理步驟，釋放更多空間
+        sudo rm -rf /etc/apt/sources.list.d/* /usr/local/lib/android /opt/ghc /usr/share/dotnet /usr/local/graalvm /usr/local/.ghcup \
+        /usr/local/share/powershell /usr/local/share/chromium /usr/local/lib/node_modules
         sudo timedatectl set-timezone "$TZ"
+        sudo chown $USER:$GROUPS $GITHUB_WORKSPACE # 整合上游工作流的 chown 命令
 
+    # 保持原有 Go 環境設置與驗證，這是用戶原有工作流的特定需求
     - name: Setup Go (1.25.x)
       uses: actions/setup-go@v5
       with:
@@ -65,13 +111,29 @@ jobs:
           echo "[SUCCESS] Go version OK: $GO_VER"
         fi
 
-    - name: Clone ImmortalWrt source
+    - name: Clone source code
+      working-directory: ./
       run: |
-        if [ -d openwrt ]; then rm -rf openwrt; fi
-        git clone --depth=1 -b $REPO_BRANCH $REPO_URL openwrt
+        df -hT $PWD
+        if [ -d openwrt ]; then rm -rf openwrt; fi # 保持原有，確保乾淨克隆
+        git clone --depth=1 $REPO_URL -b $REPO_BRANCH openwrt
         cd openwrt
-        echo "Current commit: $(git rev-parse HEAD)"
+        echo "Current commit: $(git rev-parse HEAD)" # 保持原有
+        # 整合上游工作流的捕獲版本信息到環境變量，用於 Release 描述
+        useVersionInfo=$(git show -s --date=short --format="Author: %an<br/>date: %cd<br/>commit: %s<br/>commit hash: %H")
+        echo "useVersionInfo=$useVersionInfo" >> $GITHUB_ENV
+        echo "DATE=$(date "+%Y-%m-%d %H:%M:%S")" >> $GITHUB_ENV
+        echo "DATE1=$(date "+%Y-%m-%d")" >> $GITHUB_ENV
 
+    - name: Cache
+      uses: stupidloud/cachewrtbuild@main # 新增：編譯緩存，顯著加快後續編譯速度
+      with:
+        ccache: 'true'
+        prefix: ${{ github.workspace }}/openwrt
+        # 根據用戶的設備類型，這裡使用一個通用或更精確的 mixkey
+        mixkey: 'CM520-79F'
+
+    # 保持原有 Banner 相關腳本與調試步驟，這是用戶的核心自定義功能
     - name: Download and run create-banner.sh
       run: |
         wget -qO /tmp/create-banner.sh https://raw.githubusercontent.com/fgbfg5676/ImmortalWrt-Actions/main/create-banner.sh
@@ -154,11 +216,13 @@ jobs:
     - name: Run DIY part1 script
       run: |
         cd openwrt
+        # 保持原有 DIY part1 腳本執行邏輯
         if [ -f "../$DIY_P1_SH" ]; then
           chmod +x "../$DIY_P1_SH"
           "../$DIY_P1_SH"
         fi
 
+    # 保持原有 golang feed 添加邏輯，確保穩定性
     - name: Add additional feeds
       run: |
         cd openwrt
@@ -173,12 +237,14 @@ jobs:
     - name: Copy custom configuration
       run: |
         cd openwrt
+        # 保持原有 .config 複製邏輯
         if [ -f "../$CONFIG_FILE" ]; then
           cp "../$CONFIG_FILE" .config
         else
           make defconfig
         fi
 
+    # 保持原有 banner 包配置驗證邏輯
     - name: Verify banner package in config
       run: |
         cd openwrt
@@ -203,11 +269,13 @@ jobs:
     - name: Run DIY part2 script
       run: |
         cd openwrt
+        # 保持原有 DIY part2 腳本執行邏輯
         if [ -f "../$DIY_P2_SH" ]; then
           chmod +x "../$DIY_P2_SH"
           "../$DIY_P2_SH"
         fi
 
+    # 保持原有生成最終配置和驗證 banner 邏輯
     - name: Generate final config and verify banner
       run: |
         cd openwrt
@@ -255,19 +323,26 @@ jobs:
         echo "LuCI packages enabled: $(grep -c "^CONFIG_PACKAGE_luci-.*=y" .config)"
         echo "Custom packages enabled: $(grep "^CONFIG_PACKAGE.*custom.*=y" .config | wc -l)"
 
+    # 新增 SSH 調試功能，根據 workflow_dispatch 的 ssh 輸入選項啟用
+    - name: SSH connection to Actions
+      uses: mxschmitt/action-tmate@v3
+      if: (github.event.inputs.ssh == 'true' && github.event.inputs.ssh  != 'false') || contains(github.event.action, 'ssh')
 
     - name: Download packages with retry
+      id: package # 增加 id，方便後續引用
       run: |
         cd openwrt
+        make defconfig # 整合上游工作流，在下載包前運行 defconfig，確保配置最新
         make download -j8
         find dl -size -1024c -exec rm -f {} \;
 
     - name: Build OpenWrt firmware
+      id: compile # 增加 id，方便後續引用編譯狀態
       run: |
         cd openwrt
         echo "Starting build process..."
+        echo -e "$(nproc) thread compile"
         make -j$(nproc) || make -j1 || make -j1 V=s
-        
         echo "Build completed, checking results..."
         
         echo "Looking for luci-app-banner package files..."
@@ -292,33 +367,83 @@ jobs:
         echo "- Total packages built: $(find bin/packages -name "*.ipk" 2>/dev/null | wc -l)"
         echo "- LuCI packages: $(find bin/packages -name "luci-*" 2>/dev/null | wc -l)"
         
+        # 整合上游工作流，在編譯步驟中生成 DEVICE_NAME 和 FILE_DATE 環境變量
         grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
         [ -s DEVICE_NAME ] && echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> $GITHUB_ENV
         echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
+        echo "status=success" >> $GITHUB_OUTPUT # 輸出編譯狀態，方便後續步驟條件判斷
 
-    - name: Prepare outputs
+    # 新增獨立步驟，檢查磁盤使用情況，無論編譯成功或失敗都會運行
+    - name: Check space usage
+      if: (!cancelled())
+      run: df -hT
+
+    # 新增 Upload bin directory 步驟，根據 UPLOAD_BIN_DIR 環境變量控制是否上傳
+    - name: Upload bin directory
+      uses: actions/upload-artifact@v7 # 更新到 v7
+      if: steps.compile.outputs.status == 'success' && env.UPLOAD_BIN_DIR == 'true'
+      with:
+        name: OpenWrt_bin${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
+        path: openwrt/bin
+
+    - name: Organize files
+      id: organize # 增加 id，方便後續引用組織狀態
+      if: steps.compile.outputs.status == 'success' && env.UPLOAD_FIRMWARE == 'true' && !cancelled()
       run: |
-        cd openwrt
-        DEVICE_NAME=$(grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' | head -1)
-        DEVICE_NAME=${DEVICE_NAME:-unknown}
-        echo "DEVICE_NAME=$DEVICE_NAME" >> $GITHUB_ENV
-        echo "FILE_DATE=$(date +'%Y%m%d-%H%M')" >> $GITHUB_ENV
-        echo "FIRMWARE_PATH=$(pwd)/bin/targets/*/*" >> $GITHUB_ENV
+        cd openwrt/bin/targets/*/*
+        rm -rf packages # 整合上游工作流，刪除 packages 目錄以減少固件大小
+        echo "FIRMWARE=$PWD" >> $GITHUB_ENV # 設置 FIRMWARE 環境變量
+        echo "status=success" >> $GITHUB_OUTPUT # 輸出組織狀態
 
     - name: Upload firmware artifact
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7 # 更新到 v7
       with:
         name: OpenWrt_${{ env.FILE_NAME }}_${{ env.DEVICE_NAME }}_${{ env.FILE_DATE }}
-        path: ${{ env.FIRMWARE_PATH }}
-        retention-days: 30
+        # 兼容兩種 FIRMWARE 路徑設置方式，優先使用新的 FIRMWARE 環境變量
+        path: ${{ env.FIRMWARE || env.FIRMWARE_PATH }}
+        retention-days: 30 # 保持原有
 
     - name: Upload build logs and config
       if: always()
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7 # 更新到 v7
       with:
         name: build-info_${{ env.FILE_DATE }}
         path: |
           openwrt/logs/
           openwrt/.config
           openwrt/bin/packages/
-        retention-days: 7
+        retention-days: 7 # 保持原有
+
+    # 新增 Upload OpenWrt Firmware to Release 步驟，根據 UPLOAD_RELEASE 環境變量控制是否發布
+    - name: Upload OpenWrt Firmware to Release
+      id: release
+      if: steps.compile.outputs.status == 'success' && env.UPLOAD_RELEASE == 'true' && !cancelled()
+      uses: ncipollo/release-action@v1
+      with:
+        name: R${{ env.DATE }} for ${{ env.FILE_NAME }}
+        allowUpdates: true
+        removeArtifacts: true
+        tag: ${{ env.FILE_NAME }}
+        commit: main
+        artifacts: ${{ env.FIRMWARE }}/*
+        body: |
+          - 默认IP：10.10.10.100 默认密码：无
+          - 当前使用版本:【编译前的最后一次[➦主源码](https://github.com/immortalwrt/immortalwrt/tree/openwrt-24.10)更新記錄】
+          ${{ env.useVersionInfo }}
+
+    # 新增 Delete workflow runs 步驟，自動清理舊的工作流運行記錄
+    - name: Delete workflow runs
+      uses: Mattraks/delete-workflow-runs@v2
+      with:
+        retain_days: 7
+        keep_minimum_runs: 10
+
+    # 新增 Remove old Releases 步驟，自動清理舊的 Release
+    - name: Remove old Releases
+      uses: dev-drprasad/delete-older-releases@v0.3.4
+      if: env.UPLOAD_RELEASE == 'true' && !cancelled()
+      with:
+        keep_latest: 3
+        delete_tags: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

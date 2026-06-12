@@ -11,7 +11,7 @@ on:
 
 env:
   REPO_URL: https://github.com/immortalwrt/immortalwrt
-  REPO_BRANCH: openwrt-24.10
+  REPO_BRANCH: openwrt-master
   FEEDS_CONF: feeds.conf.default
   CONFIG_FILE: .config
   DIY_P1_SH: diy-part1.sh
@@ -91,20 +91,14 @@ jobs:
         sudo timedatectl set-timezone "$TZ"
         sudo chown $USER:$GROUPS $GITHUB_WORKSPACE
 
-    - name: Setup Go (1.25.x)
+    - name: Setup Go
       uses: actions/setup-go@v5
       with:
-        go-version: '1.25.x'
+        check-latest: true
+        go-version: stable
 
-    - name: Verify Go version
-      run: |
-        GO_VER=$(go version | awk '{print $3}')
-        if [[ "$GO_VER" != go1.25.* ]]; then
-          echo "[ERROR] Go version mismatch. Required: go1.25.x, Found: $GO_VER"
-          exit 1
-        else
-          echo "[SUCCESS] Go version OK: $GO_VER"
-        fi
+    - name: Verify Go
+      run: go version
 
     - name: Clone source code
       working-directory: ./
@@ -213,16 +207,25 @@ jobs:
           "../$DIY_P1_SH"
         fi
 
-    - name: Add additional feeds
+    - name: Add SBWML feeds
       run: |
         cd openwrt
-        echo "src-git golang https://github.com/sbwml/packages_lang_golang;25.x" >> feeds.conf.default
 
-    - name: Update feeds
-      run: cd openwrt && ./scripts/feeds update -a
+        sed -i '/packages_lang_golang/d' feeds.conf.default
 
-    - name: Install feeds
-      run: cd openwrt && ./scripts/feeds install -a
+        echo "src-git golang https://github.com/sbwml/packages_lang_golang" >> feeds.conf.default
+
+        echo "src-git sbwml https://github.com/sbwml/openwrt_pkgs" >> feeds.conf.default
+
+    - name: Update and Install feeds
+      run: |
+        cd openwrt
+
+        ./scripts/feeds update -a
+
+        rm -rf feeds/packages/lang/golang
+
+        ./scripts/feeds install -a -f
 
     - name: Copy custom configuration
       run: |
@@ -409,7 +412,7 @@ jobs:
         artifacts: ${{ env.FIRMWARE }}/*
         body: |
           - 默认IP：10.10.10.100 默认密码：无
-          - 当前使用版本:【编译前的最后一次[➦主源码](https://github.com/immortalwrt/immortalwrt/tree/openwrt-24.10)更新記錄】
+          - 当前使用版本:【编译前的最后一次[➦主源码](https://github.com/immortalwrt/immortalwrt/tree/openwrt-master)更新記錄】
           ${{ env.useVersionInfo }}
 
     - name: Delete workflow runs

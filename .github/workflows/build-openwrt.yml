@@ -38,17 +38,14 @@ jobs:
         df -hT
         echo "=============================================================================="
 
-    # 關鍵修復：恢復並優先執行磁盤擴展步驟，確保根分區有足夠空間
-    - name: Maximize Build Space (Partition Expansion)
-      uses: easimon/maximize-build-space@v2 # 使用 v2 版本，更穩定
+    # 關鍵修復：完全恢復用戶原始工作流中 easimon/maximize-build-space@master 的配置
+    # 這是您原始工作流中唯一驗證過可行的磁盤擴展方式，僅保留 root-reserve-mb 和 swap-size-mb 兩個參數
+    - name: Maximize Build Space (Partition Expansion - Reverted to Original Stable Config)
+      uses: easimon/maximize-build-space@master
       with: 
         root-reserve-mb: 2048
         swap-size-mb: 1
-        remove-dotnet: 'true'
-        remove-android: 'true'
-        remove-haskell: 'true'
-        remove-codeql: 'true'
-        remove-docker-images: 'true'
+        # 根據用戶原始工作流，僅保留這兩個參數，避免引入無效或導致衝突的參數
 
     # 輔助清理：在分區擴展後，使用 hugoalh 進行更細緻的緩存清理
     - name: Optimize Disk Space (hugoalh/disk-space-optimizer-ghaction)
@@ -75,7 +72,7 @@ jobs:
         echo "=============================================================================="
 
     - name: Checkout repository
-      uses: actions/checkout@v4 # 確保使用穩定版 v4
+      uses: actions/checkout@v4 # 鎖定到穩定版 v4
 
     - name: Initialization environment
       env:
@@ -366,7 +363,7 @@ jobs:
       run: df -hT
 
     - name: Upload bin directory
-      uses: actions/upload-artifact@v4 # 確保使用穩定版 v4
+      uses: actions/upload-artifact@v4 # 鎖定到穩定版 v4
       if: steps.compile.outputs.status == 'success' && env.UPLOAD_BIN_DIR == 'true'
       with:
         name: OpenWrt_bin${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
@@ -382,7 +379,7 @@ jobs:
         echo "status=success" >> $GITHUB_OUTPUT
 
     - name: Upload firmware artifact
-      uses: actions/upload-artifact@v4 # 確保使用穩定版 v4
+      uses: actions/upload-artifact@v4 # 鎖定到穩定版 v4
       with:
         name: OpenWrt_${{ env.FILE_NAME }}_${{ env.DEVICE_NAME }}_${{ env.FILE_DATE }}
         path: ${{ env.FIRMWARE || env.FIRMWARE_PATH }}
@@ -390,7 +387,7 @@ jobs:
 
     - name: Upload build logs and config
       if: always()
-      uses: actions/upload-artifact@v4 # 確保使用穩定版 v4
+      uses: actions/upload-artifact@v4 # 鎖定到穩定版 v4
       with:
         name: build-info_${{ env.FILE_DATE }}
         path: |

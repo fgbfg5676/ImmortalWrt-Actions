@@ -188,13 +188,14 @@ jobs:
     - name: Generate final config and verify banner
       run: |
         cd openwrt
-        echo "=== 正在清除可能導致語法錯誤的文本污染 ==="
+        echo "=== 正在執行 Makefile 終極無死角清洗，消滅所有未知英文語句污染 ==="
         
-        # 安全清洗命令：移除所有包含 Multi-container 和 runc 混淆文本的行
-        find package/ -name "Makefile" -exec sed -i '/Multi-container/d' {} + || true
-        find package/ -name "Makefile" -exec sed -i '/runc/d' {} + || true
-        find feeds/ -name "Makefile" -exec sed -i '/Multi-container/d' {} + || true
-        find feeds/ -name "Makefile" -exec sed -i '/runc/d' {} + || true
+        # 暴力清洗：直接抹除所有第三方倉庫 Makefile 裡不小心頂格寫出來的英文垃圾介紹文本
+        find package/ feeds/ -name "Makefile" -exec sed -i '/^The /d' {} + || true
+        find package/ feeds/ -name "Makefile" -exec sed -i '/^A /d' {} + || true
+        find package/ feeds/ -name "Makefile" -exec sed -i '/^An /d' {} + || true
+        find package/ feeds/ -name "Makefile" -exec sed -i '/Multi-container/d' {} + || true
+        find package/ feeds/ -name "Makefile" -exec sed -i '/runc/d' {} + || true
         
         rm -rf tmp/
         echo "CONFIG_PACKAGE_luci-app-banner=y" >> .config

@@ -321,8 +321,13 @@ jobs:
       id: package
       run: |
         cd openwrt
-        make defconfig
-        make download -j8
+
+rm -rf tmp build_dir staging_dir feeds
+./scripts/feeds clean || true
+./scripts/feeds update -a
+./scripts/feeds install -a
+
+make defconfig
         find dl -size -1024c -exec ls -l {} \;
         find dl -size -1024c -exec rm -f {} \;
 

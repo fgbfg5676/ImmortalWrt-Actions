@@ -152,7 +152,6 @@ jobs:
     - name: Add SBWML feeds
       run: |
         cd openwrt
-        # 刪除原廠低版本 Go 源，換上 sbwml 的高版本 Go 1.26 核心源
         sed -i '/packages_lang_golang/d' feeds.conf.default
         echo "src-git golang https://github.com/sbwml/packages_lang_golang" >> feeds.conf.default
         echo "src-git sbwml https://github.com/sbwml/openwrt_pkgs" >> feeds.conf.default
@@ -162,8 +161,9 @@ jobs:
         cd openwrt
         ./scripts/feeds update -a
         
-        # 【核心破局修正】精準定點切除 sbwml 以及 packages 中帶有流氓英文描述、導致編譯崩潰的容器相關衝突包
-        # 這樣做能完美保留 Go 1.26 環境，同時徹底拔掉引發 invalid statement 的毒瘤
+        # 【走出死胡同核心修正】
+        # 直接定点删除 sbwml 核心库和 packages 库中夹带的、Makefile 语法严重写废的非必要污染包
+        # 这样既可以完美保留你需要的 Go 1.26 核心编译环境，又可以彻底根除引发 defconfig 报错的根源
         rm -rf feeds/sbwml/gowebdav
         rm -rf feeds/packages/utils/containerd
         rm -rf feeds/packages/utils/runc
@@ -171,7 +171,7 @@ jobs:
         rm -rf feeds/packages/utils/dockerd
         rm -rf feeds/packages/utils/docker-compose
         
-        # 刪除殘留，強推安裝 sbwml 的高版本 golang
+        # 剔除官方旧的 golang，强制安装 sbwml 的高版本 golang
         rm -rf feeds/packages/lang/golang
         ./scripts/feeds install -a -f
 
@@ -200,9 +200,9 @@ jobs:
     - name: Generate final config and verify banner
       run: |
         cd openwrt
-        echo "=== 正在重置並生成帶有 Go 1.26 高版本環境的配置文件 ==="
+        echo "=== 彻底重置临时索引缓存并生成最终配置 ==="
         
-        # 清理快取索引，迫使編譯器重新掃描乾淨、無衝突的 Makefile
+        # 抛弃脆弱的正则清洗，直接使用官方脚本深度重构和清理索引
         ./scripts/feeds feed clean
         rm -rf tmp/
         

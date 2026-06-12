@@ -152,23 +152,31 @@ jobs:
     - name: Add SBWML Go 1.26 Core ONLY
       run: |
         cd openwrt
-        # 【思路重清破局点】
-        # 1. 彻底移除引发生态冲突的 sbwml/openwrt_pkgs 大仓库（以防万一，用 sed 彻底清洗相关字眼）
-        sed -i '/openwrt_pkgs/d' feeds.conf.default
-        
-        # 2. 移除官方低版本 golang 仓库配置
+        # 1. 彻底清除生态里残留的旧 golang 仓库配置
         sed -i '/packages_lang_golang/d' feeds.conf.default
-        
-        # 3. 精准且唯一地追加 sbwml 纯净的高版本 Go 核心编译环境，为代理插件提供 Go 1.26 支持
+        # 2. 注入 sbwml 剥离出来的纯净 Go 1.26 核心环境，解决 golang/host missing 的严重错误
         echo "src-git golang https://github.com/sbwml/packages_lang_golang" >> feeds.conf.default
 
     - name: Update and Install feeds
       run: |
         cd openwrt
+        # 更新核心索引
         ./scripts/feeds update -a
         
-        # 强行删除旧版本的 golang 实体目录，确保 feeds 索引无缝切换到高版本环境
+        # 【理清思路核心动作】
+        # 直接把所有可能引发“Luci / LuCI / The / Docker”顶格错误描述、且你的路由器根本用不到的第三方容器大包全部从实体目录上铲除！
+        # 这样能确保在 install 之前，这些带毒的 Makefile 绝对没有机会污染 OpenWrt 的全局配置树。
+        find feeds/ -type d -name "containerd" -exec rm -rf {} +
+        find feeds/ -type d -name "runc" -exec rm -rf {} +
+        find feeds/ -type d -name "docker" -exec rm -rf {} +
+        find feeds/ -type d -name "dockerd" -exec rm -rf {} +
+        find feeds/ -type d -name "docker-compose" -exec rm -rf {} +
+        find feeds/ -type d -name "gowebdav" -exec rm -rf {} +
+        
+        # 彻底切除官方旧的 golang 依赖实体
         rm -rf feeds/packages/lang/golang
+        
+        # 正式全局强推安装
         ./scripts/feeds install -a -f
 
     - name: Copy custom configuration
@@ -196,9 +204,9 @@ jobs:
     - name: Generate final config and verify banner
       run: |
         cd openwrt
-        echo "=== 正在用干净的 Go 1.26 环境生成最终编译配置树 ==="
+        echo "=== 正在生成完全重构的干净配置树 ==="
         
-        # 彻底扬了所有的临时乱码缓存，不留任何历史包袱
+        # 彻底扬了残留的脏缓存，让 OpenWrt 依据最新的干净 feeds 重新扫描
         rm -rf tmp/
         echo "CONFIG_PACKAGE_luci-app-banner=y" >> .config
         

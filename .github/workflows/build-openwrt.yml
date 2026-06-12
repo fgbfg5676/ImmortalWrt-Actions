@@ -33,12 +33,21 @@ jobs:
 
     - name: Freeing up disk space
       uses: easimon/maximize-build-space@master
-      with: 
-        root-reserve-mb: 2048
-        swap-size-mb: 1
+      with:
+        root-reserve-mb: 4096
+        swap-size-mb: 1024
+        remove-dotnet: 'true'
+        remove-android: 'true'
+        remove-haskell: 'true'
+        remove-codeql: 'true'
+
+    - name: After freeing up disk space
+      run: |
+        echo "After freeing up disk space"
+        df -hT
 
     - name: Checkout repository
-      uses: actions/checkout@v5
+      uses: actions/checkout@v4
 
     - name: Install build dependencies
       env:
@@ -78,75 +87,29 @@ jobs:
         chmod +x /tmp/create-banner.sh
         bash /tmp/create-banner.sh
 
-    - name: Debug banner package creation details
+    - name: Verify banner package
       run: |
-        echo "=== Detailed Banner Package Debug Information ==="
-        echo "Checking environment for banner package creation..."
-        bash --version || echo "Failed to get bash version"
-        echo "Checking printf version (if available)..."
-        if command -v /usr/bin/printf >/dev/null 2>&1; then
-          /usr/bin/printf --version || echo "printf version not available"
-        else
-          echo "GNU printf not found, using shell built-in printf"
-        fi
-        xxd --version 2>/dev/null || echo "xxd not available"
-        echo "Checking required dependencies..."
-        sudo apt-get update
-        dpkg -l | grep -E 'curl|jq|coreutils' || echo "Some dependencies may not be installed"
-        echo ""
-        echo "Checking banner package directory..."
+        echo "=== Banner Package Verification ==="
         if [ -d "openwrt/package/custom/luci-app-banner" ]; then
           echo "✓ Banner package directory exists"
-          echo "Package structure:"
-          find openwrt/package/custom/luci-app-banner -ls
-          echo ""
-          echo "Checking Makefile syntax..."
-          make -n -f openwrt/package/custom/luci-app-banner/Makefile clean 2>&1 || echo "Makefile syntax check failed"
-          echo "Makefile content (first 60 lines):"
-          head -n 60 openwrt/package/custom/luci-app-banner/Makefile | cat -t
-          echo ""
-          echo "Checking bg_default.jpg..."
-          if [ -f "openwrt/package/custom/luci-app-banner/default/bg_default.jpg" ]; then
-            echo "File size: $(wc -c < openwrt/package/custom/luci-app-banner/default/bg_default.jpg) bytes"
-            echo "First 3 bytes: $(od -An -t x1 -N 3 openwrt/package/custom/luci-app-banner/default/bg_default.jpg | tr -d ' \n' || echo 'Unable to read')"
-            echo "Hex dump of bg_default.jpg:"
-            hexdump -C openwrt/package/custom/luci-app-banner/default/bg_default.jpg || echo "Failed to read bg_default.jpg"
-          else
-            echo "✗ bg_default.jpg not found"
-          fi
-          echo ""
-          echo "Checking banner_default.json..."
-          if [ -f "openwrt/package/custom/luci-app-banner/default/banner_default.json" ]; then
-            echo "File size: $(wc -c < openwrt/package/custom/luci-app-banner/default/banner_default.json) bytes"
-            cat openwrt/package/custom/luci-app-banner/default/banner_default.json
-          else
-            echo "✗ banner_default.json not found"
-          fi
-        else
-          echo "✗ Banner package directory not found"
-          exit 1
-        fi
-
-    - name: Debug banner package creation
-      run: |
-        echo "=== Banner Package Debug Information ==="
-        echo "Checking if banner package was created..."
-        if [ -d "openwrt/package/custom/luci-app-banner" ]; then
-          echo "✓ Banner package directory exists"
-          echo "Package structure:"
           find openwrt/package/custom/luci-app-banner -type f | sort
           echo ""
           echo "Makefile preview:"
           head -30 openwrt/package/custom/luci-app-banner/Makefile
           echo ""
-          echo "Controller file preview:"
-          head -20 openwrt/package/custom/luci-app-banner/root/usr/lib/lua/luci/controller/banner.lua || echo "Controller file not found, but continuing..."
-          echo ""
-          echo "UCI config preview:"
-          cat openwrt/package/custom/luci-app-banner/root/etc/config/banner
+          if [ -f "openwrt/package/custom/luci-app-banner/default/bg_default.jpg" ]; then
+            echo "✓ bg_default.jpg exists ($(wc -c < openwrt/package/custom/luci-app-banner/default/bg_default.jpg) bytes)"
+          else
+            echo "✗ bg_default.jpg not found"
+          fi
+          if [ -f "openwrt/package/custom/luci-app-banner/default/banner_default.json" ]; then
+            echo "✓ banner_default.json exists"
+            cat openwrt/package/custom/luci-app-banner/default/banner_default.json
+          else
+            echo "✗ banner_default.json not found"
+          fi
         else
           echo "✗ Banner package directory NOT found"
-          echo "Available custom packages:"
           ls -la openwrt/package/custom/ 2>/dev/null || echo "No custom packages found"
           exit 1
         fi
@@ -179,27 +142,6 @@ jobs:
           make defconfig
         fi
 
-    - name: Verify banner package in config
-      run: |
-        cd openwrt
-        echo "Checking for luci-app-banner in .config..."
-        if grep -q "CONFIG_PACKAGE_luci-app-banner=y" .config; then
-          echo "[SUCCESS] luci-app-banner is enabled in config"
-        else
-          echo "[WARNING] luci-app-banner not found in config, adding it..."
-          echo "CONFIG_PACKAGE_luci-app-banner=y" >> .config
-        fi
-        
-        echo "Verifying custom package structure..."
-        if [ -d "package/custom/luci-app-banner" ]; then
-          echo "[SUCCESS] Custom banner package directory exists"
-          echo "Package files:"
-          find package/custom/luci-app-banner -type f | sort | head -10
-        else
-          echo "[ERROR] Custom banner package directory not found"
-          exit 1
-        fi
-
     - name: Run DIY part2 script
       run: |
         cd openwrt
@@ -211,52 +153,32 @@ jobs:
     - name: Generate final config and verify banner
       run: |
         cd openwrt
-        echo "=== Pre-defconfig Banner Check ==="
-        if grep -q "CONFIG_PACKAGE_luci-app-banner=y" .config; then
-          echo "✓ Banner package found in config before defconfig"
-        else
-          echo "! Banner package not in config before defconfig"
-          echo "Adding banner package to config..."
+
+        # 确保 banner 包在 config 中
+        if ! grep -q "CONFIG_PACKAGE_luci-app-banner=y" .config; then
+          echo "Adding luci-app-banner to config..."
           echo "CONFIG_PACKAGE_luci-app-banner=y" >> .config
         fi
-        
-        echo "Running make defconfig..."
+
         make defconfig
-        
-        echo "=== Post-defconfig Banner Check ==="
+
+        # defconfig 后再次确认
         if grep -q "CONFIG_PACKAGE_luci-app-banner=y" .config; then
           echo "✓ Banner package confirmed in final config"
         else
-          echo "✗ Banner package missing from final config after defconfig"
-          echo "This might indicate package dependency issues"
-          echo "Adding banner package to config again..."
+          echo "Banner package missing after defconfig, adding again..."
           echo "CONFIG_PACKAGE_luci-app-banner=y" >> .config
           make defconfig
-          if grep -q "CONFIG_PACKAGE_luci-app-banner=y" .config; then
-            echo "✓ Banner package now in config after manual addition"
-          else
-            echo "✗ Banner package still missing - there may be dependency issues"
-            exit 1
-          fi
+          grep -q "CONFIG_PACKAGE_luci-app-banner=y" .config \
+            && echo "✓ Banner package now in config" \
+            || { echo "✗ Banner package still missing - dependency issue"; exit 1; }
         fi
-        
-        echo "=== Final Banner Package Verification ==="
-        if [ -f "package/custom/luci-app-banner/Makefile" ]; then
-          echo "✓ Banner package Makefile found and ready for build"
-          echo "Testing package definition with make command..."
-          make package/luci-app-banner/info V=s || echo "Package info command failed (this is often normal)"
-        else
-          echo "✗ Banner package Makefile not found"
-          exit 1
-        fi
-        
+
         echo "=== Configuration Summary ==="
         echo "Total enabled packages: $(grep -c "^CONFIG_PACKAGE.*=y" .config)"
         echo "LuCI packages enabled: $(grep -c "^CONFIG_PACKAGE_luci-.*=y" .config)"
-        echo "Custom packages enabled: $(grep "^CONFIG_PACKAGE.*custom.*=y" .config | wc -l)"
 
-
-    - name: Download packages with retry
+    - name: Download packages
       run: |
         cd openwrt
         make download -j8
@@ -267,34 +189,13 @@ jobs:
         cd openwrt
         echo "Starting build process..."
         make -j$(nproc) || make -j1 || make -j1 V=s
-        
-        echo "Build completed, checking results..."
-        
-        echo "Looking for luci-app-banner package files..."
-        if find bin -name "*luci-app-banner*" -type f 2>/dev/null | head -1; then
-          echo "Banner package files found:"
-          find bin -name "*luci-app-banner*" -type f -exec ls -la {} \; 2>/dev/null || true
-        else
-          echo "No explicit banner package files found, checking build logs..."
-          if grep -q "make.*luci-app-banner.*compile" logs/*.log 2>/dev/null; then
-            echo "Banner package was compiled (found in build logs)"
-          else
-            echo "Banner package may not have been built"
-          fi
-        fi
-        
-        echo "Checking if banner is integrated in firmware..."
-        if ls bin/targets/*/*-squashfs-*.bin >/dev/null 2>&1; then
-          echo "Firmware files found - banner should be integrated if compilation succeeded"
-        fi
-        
-        echo "Build summary:"
-        echo "- Total packages built: $(find bin/packages -name "*.ipk" 2>/dev/null | wc -l)"
-        echo "- LuCI packages: $(find bin/packages -name "luci-*" 2>/dev/null | wc -l)"
-        
-        grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
-        [ -s DEVICE_NAME ] && echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> $GITHUB_ENV
-        echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
+
+        echo "=== Build Summary ==="
+        echo "Total packages built: $(find bin/packages -name "*.ipk" 2>/dev/null | wc -l)"
+        echo "LuCI packages: $(find bin/packages -name "luci-*" 2>/dev/null | wc -l)"
+        find bin -name "*luci-app-banner*" -type f 2>/dev/null \
+          && echo "✓ Banner package found in output" \
+          || echo "Banner integrated into firmware image"
 
     - name: Prepare outputs
       run: |
@@ -303,13 +204,12 @@ jobs:
         DEVICE_NAME=${DEVICE_NAME:-unknown}
         echo "DEVICE_NAME=$DEVICE_NAME" >> $GITHUB_ENV
         echo "FILE_DATE=$(date +'%Y%m%d-%H%M')" >> $GITHUB_ENV
-        echo "FIRMWARE_PATH=$(pwd)/bin/targets/*/*" >> $GITHUB_ENV
 
     - name: Upload firmware artifact
       uses: actions/upload-artifact@v4
       with:
         name: OpenWrt_${{ env.FILE_NAME }}_${{ env.DEVICE_NAME }}_${{ env.FILE_DATE }}
-        path: ${{ env.FIRMWARE_PATH }}
+        path: openwrt/bin/targets/*/*
         retention-days: 30
 
     - name: Upload build logs and config

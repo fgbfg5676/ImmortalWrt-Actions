@@ -96,6 +96,7 @@ jobs:
       with:
         check-latest: true
         go-version: stable
+        cache: false
 
     - name: Verify Go
       run: go version

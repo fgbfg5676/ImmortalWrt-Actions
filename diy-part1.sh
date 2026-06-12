@@ -34,6 +34,6 @@ git submodule add https://github.com/Gzxhwq/openwrt-packages.git package/others/
 # git submodule add https://github.com/jerrykuku/luci-app-argon-config.git package/others/luci-app-argon-config
 # git submodule add https://github.com/jerrykuku/luci-theme-argon.git package/others/luci-theme-argon
 # git submodule add https://github.com/ophub/luci-app-amlogic.git package/others/luci-app-amlogic
-# git submodule add https://github.com/xiaorouji/openwrt-passwall.git package/others/luci-app-passwall
-git submodule add https://github.com/xiaorouji/openwrt-passwall2.git package/others/luci-app-passwall2
+# 移除原本的 git submodule 命令，改用普通的 git clone 并替换为全新的官方公开地址
+git clone https://github.com/Openwrt-Passwall/openwrt-passwall2.git package/others/luci-app-passwall2
 

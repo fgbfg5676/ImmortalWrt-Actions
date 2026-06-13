@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-# -------------------- 日志函数 --------------------
+# -------------------- 统一日志函数 --------------------
 log_success() { echo -e "\033[32m[SUCCESS] $*\033[0m"; }
 log_error()   { echo -e "\033[31m[ERROR] $*\033[0m"; exit 1; }
 log_info()    { echo -e "\033[34m[INFO] $*\033[0m"; }
@@ -89,7 +89,9 @@ else
     log_error "config_generate file not found, cannot modify default LAN IP"
 fi
 
-# -------------------- 插件處理 (安全升級版) --------------------
+# =================================================================
+# 1. 插件處理 (安全升級版)
+# =================================================================
 PLUGIN_LIST=("luci-app-partexp")
 PLUGIN_REPOS=("https://github.com/sirpdboy/luci-app-partexp.git")
 
@@ -113,6 +115,22 @@ for i in "${!PLUGIN_LIST[@]}"; do
     log_success "Plugin $PLUGIN_NAME cloned successfully"
 done
 
-# 徹底清除 openwrt 內部的臨時快取目錄，強迫 make defconfig 重新掃描乾淨的目錄
+# 徹底清除 openwrt 內部的臨時快取目錄，強迫隨後的 make defconfig 重新掃描
 rm -rf tmp/
 log_success "Build temp cache cleaned up."
+
+
+# =================================================================
+# 2. 核心功能強制開啟（確保絕對編譯進固件）
+# =================================================================
+log_info "正在強行寫入 .config 配置文件..."
+
+# 2.1 強行開啟全新的 PassWall 2 及其大核心组件
+echo "CONFIG_PACKAGE_luci-app-passwall2=y" >> .config
+echo "CONFIG_PACKAGE_sing-box=y" >> .config
+echo "CONFIG_PACKAGE_xray-core=y" >> .config
+
+# 2.2 強行開啟剛才下載的分區擴展插件（luci-app-partexp）
+echo "CONFIG_PACKAGE_luci-app-partexp=y" >> .config
+
+log_success "所有核心插件與依賴已成功在 .config 中強制激活！"

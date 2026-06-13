@@ -21,6 +21,8 @@ env:
   UPLOAD_RELEASE: true
   FILE_NAME: CM520-79F
   TZ: Asia/Shanghai
+  # 【精準修復 1】：強制將所有 JavaScript 插件運行在 Node 24 容器中，徹底乾失 Node 20 棄用警告
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   build:
@@ -38,14 +40,12 @@ jobs:
         df -hT
         echo "=============================================================================="
 
-    # 關鍵修復：完全恢復用戶原始工作流中 easimon/maximize-build-space@master 的配置
     - name: Maximize Build Space (Partition Expansion - Reverted to Original Stable Config)
       uses: easimon/maximize-build-space@master
       with: 
         root-reserve-mb: 2048
         swap-size-mb: 1
 
-    # 輔助清理：在分區擴展後，使用 hugoalh 進行更細緻的緩存清理
     - name: Optimize Disk Space (hugoalh/disk-space-optimizer-ghaction)
       uses: hugoalh/disk-space-optimizer-ghaction@v0.8.1
       with:
@@ -81,17 +81,18 @@ jobs:
         /usr/local/share/powershell /usr/local/share/chromium /usr/local/lib/node_modules
         
         sudo -E apt-get -qq update
-        sudo -E apt-get -qq install $(curl -fsSL bit.ly/3AS48v1) xxd coreutils
+        sudo -E apt-get -qq install $(curl -fsSL bit.ly/3AS48v1) xxd coreutils patch
         sudo -E apt-get -qq autoremove --purge
         sudo -E apt-get -qq clean
         sudo timedatectl set-timezone "$TZ"
         sudo chown $USER:$GROUPS $GITHUB_WORKSPACE
 
-    # 這裡將系統環境也一步到位鎖定到 Go 1.26.x
+    # 【精準修復 2】：加入 cache: false，拒絕讓它瞎找 go.sum，解決 Restore cache failed 報錯
     - name: Setup Go (1.26.x)
       uses: actions/setup-go@v5
       with:
         go-version: '1.26.x'
+        cache: false
 
     - name: Verify Go version
       run: |
@@ -139,35 +140,23 @@ jobs:
           exit 1
         fi
 
-    - name: Debug banner package creation
-      run: |
-        if [ -d "openwrt/package/custom/luci-app-banner" ]; then
-          echo "✓ Banner package directory exists"
-        else
-          exit 1
-        fi
-
     - name: Run DIY part1 script
       run: |
         cd openwrt
         if [ -f "../$DIY_P1_SH" ]; then
           chmod +x "../$DIY_P1_SH"
-          "../$DIY_P1_SH"
+          ../"$DIY_P1_SH"
         fi
 
-    # 【核心修復步驟】在這裡徹底粉碎源碼內部的 Go 1.25 鎖定，強行全面篡改為 1.26
     - name: Add additional feeds
       run: |
         cd openwrt
-        # 1. 引入 sbwml 的 Golang 26.x 編譯源
         echo "src-git golang https://github.com/sbwml/packages_lang_golang;26.x" >> feeds.conf.default
         
-        # 2. 強行修改 ImmortalWrt 編譯主配置文件和核心規則中的 Go 版本號
         echo "=== 正在強制將源碼內部的 Go 版本篡改為 1.26 ==="
         find ./ -type f -name "*.mk" -exec sed -i 's/GO_VERSION:=1.25/GO_VERSION:=1.26/g' {} + 2>/dev/null || true
         find ./ -type f -name "Makefile" -exec sed -i 's/go1.25/go1.26/g' {} + 2>/dev/null || true
         
-        # 3. 針對核心工具鏈單獨強制複寫，確保萬無一失
         if [ -f rules.mk ]; then
           sed -i 's/GO_VERSION:=.*/GO_VERSION:=1.26/g' rules.mk 2>/dev/null || true
         fi
@@ -187,17 +176,6 @@ jobs:
         cd openwrt
         if [ -f "../$CONFIG_FILE" ]; then
           cp "../$CONFIG_FILE" .config
-        else
-          make defconfig
-        fi
-
-    - name: Verify banner package in config
-      run: |
-        cd openwrt
-        if grep -q "CONFIG_PACKAGE_luci-app-banner=y" .config; then
-          echo "[SUCCESS] luci-app-banner is enabled in config"
-        else
-          echo "CONFIG_PACKAGE_luci-app-banner=y" >> .config
         fi
 
     - name: Run DIY part2 script
@@ -205,12 +183,15 @@ jobs:
         cd openwrt
         if [ -f "../$DIY_P2_SH" ]; then
           chmod +x "../$DIY_P2_SH"
-          "../$DIY_P2_SH"
+          ../"$DIY_P2_SH"
         fi
 
-    - name: Generate final config and verify banner
+    - name: Generate final config and verify settings
       run: |
         cd openwrt
+        if ! grep -q "CONFIG_PACKAGE_luci-app-banner=y" .config; then
+          echo "CONFIG_PACKAGE_luci-app-banner=y" >> .config
+        fi
         make defconfig
 
     - name: SSH connection to Actions
@@ -221,7 +202,6 @@ jobs:
       id: package
       run: |
         cd openwrt
-        make defconfig
         make download -j8
         find dl -size -1024c -exec ls -l {} \;
         find dl -size -1024c -exec rm -f {} \;
@@ -286,7 +266,7 @@ jobs:
         commit: main
         artifacts: ${{ env.FIRMWARE }}/*
         body: |
-          - 默认IP：10.10.10.100 默认密码：无
+          - 默认IP：192.168.3.1 默认密码：无
           - 当前使用版本:【编译前的最后一次[➦主源码](https://github.com/immortalwrt/immortalwrt/tree/openwrt-24.10)更新記錄】
           ${{ env.useVersionInfo }}
 

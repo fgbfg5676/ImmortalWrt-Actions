@@ -1,38 +1,28 @@
 #!/bin/bash
 set -e
 
-# -------------------- 统一日志函数 --------------------
-log_success() { echo -e "\033[32m[SUCCESS] $*\033[0m"; }
-log_error()   { echo -e "\033[31m[ERROR] $*\033[0m"; exit 1; }
-log_info()    { echo -e "\033[34m[INFO] $*\033[0m"; }
-
-# -------------------- 基础变量 --------------------
+# -------------------- 基礎變量 --------------------
 WGET_OPTS="-q --timeout=30 --tries=3 --retry-connrefused --connect-timeout 10"
 ARCH="armv7"
 DTS_DIR="target/linux/ipq40xx/files/arch/arm/boot/dts"
 GENERIC_MK="target/linux/ipq40xx/image/generic.mk"
-BOARD_DIR="target/linux/ipq40xx/base-files/etc/board.d"
-mkdir -p "$DTS_DIR" "$BOARD_DIR"
+BOARD_DIR="$PWD/board"
+CUSTOM_PLUGINS_DIR="$PWD/package/custom"
+mkdir -p "$DTS_DIR" "$BOARD_DIR" "$CUSTOM_PLUGINS_DIR"
 
-# -------------------- DTS补丁 --------------------
+# -------------------- DTS補丁 --------------------
 DTS_PATCH_URL="https://git.ix.gs/mptcp/openmptcprouter/commit/a66353a01576c5146ae0d72ee1f8b24ba33cb88e.patch"
 DTS_PATCH_FILE="$DTS_DIR/qcom-ipq4019-cm520-79f.dts.patch"
 TARGET_DTS="$DTS_DIR/qcom-ipq4019-cm520-79f.dts"
 
-log_info "Downloading DTS patch..."
-wget $WGET_OPTS -O "$DTS_PATCH_FILE" "$DTS_PATCH_URL" || log_error "Failed to download DTS patch"
+wget $WGET_OPTS -O "$DTS_PATCH_FILE" "$DTS_PATCH_URL"
 
 if [ ! -f "$TARGET_DTS" ]; then
-    log_info "Applying DTS patch..."
-    patch -p1 < "$DTS_PATCH_FILE" || log_error "Failed to apply DTS patch"
-    log_success "DTS patch applied successfully"
-else
-    log_info "Target DTS already exists, skipping patch"
+    patch -p1 < "$DTS_PATCH_FILE"
 fi
 
-# -------------------- 设备规则 --------------------
+# -------------------- 設備規則 --------------------
 if ! grep -q "define Device/mobipromo_cm520-79f" "$GENERIC_MK"; then
-    log_info "Adding CM520-79F device rule..."
     cat <<EOF >> "$GENERIC_MK"
 
 define Device/mobipromo_cm520-79f
@@ -53,12 +43,9 @@ define Device/mobipromo_cm520-79f
 endef
 TARGET_DEVICES += mobipromo_cm520-79f
 EOF
-    log_success "Device rule added successfully"
-else
-    log_info "Device rule already exists, skipping"
 fi
 
-# -------------------- 网络配置 --------------------
+# -------------------- 網絡配置 --------------------
 NETWORK_FILE="$BOARD_DIR/02_network"
 cat > "$NETWORK_FILE" <<'EOF'
 #!/bin/sh
@@ -75,62 +62,37 @@ ipq40xx_board_detect() {
 boot_hook_add preinit_main ipq40xx_board_detect
 EOF
 chmod +x "$NETWORK_FILE"
-log_success "Network configuration file created"
 
-# -------------------- 修改默认 LAN IP --------------------
+# -------------------- 修改默認 LAN IP --------------------
 NEW_LAN_IP="192.168.3.1"
 CONFIG_GENERATE_FILE="package/base-files/files/bin/config_generate"
 
 if [ -f "$CONFIG_GENERATE_FILE" ]; then
-    log_info "Modifying default LAN IP to $NEW_LAN_IP..."
     sed -i "s/192\.168\.1\.1/$NEW_LAN_IP/g" "$CONFIG_GENERATE_FILE"
-    log_success "Default LAN IP set to $NEW_LAN_IP"
-else
-    log_error "config_generate file not found, cannot modify default LAN IP"
 fi
 
-# =================================================================
-# 1. 插件處理 (安全升級版)
-# =================================================================
+# -------------------- 外圍應用處理 --------------------
 PLUGIN_LIST=("luci-app-partexp")
 PLUGIN_REPOS=("https://github.com/sirpdboy/luci-app-partexp.git")
-
-# 創建一個獨立的自訂插件目錄，避免污染官方 package 根目錄
-mkdir -p package/custom
 
 for i in "${!PLUGIN_LIST[@]}"; do
     PLUGIN_NAME="${PLUGIN_LIST[$i]}"
     PLUGIN_URL="${PLUGIN_REPOS[$i]}"
-    # 關鍵修改：將路徑指定到 package/custom/ 下
-    PLUGIN_PATH="package/custom/$PLUGIN_NAME"
+    PLUGIN_PATH="$CUSTOM_PLUGINS_DIR/$PLUGIN_NAME"
 
-    # 強制清理舊的殘留目錄，防止垃圾文件或舊快取導致 defconfig 語法報錯
     if [ -d "$PLUGIN_PATH" ]; then
-        log_info "Cleaning old $PLUGIN_NAME..."
         rm -rf "$PLUGIN_PATH"
     fi
 
-    log_info "Cloning $PLUGIN_NAME into package/custom/..."
-    git clone --depth 1 "$PLUGIN_URL" "$PLUGIN_PATH" || log_error "Failed to clone $PLUGIN_NAME"
-    log_success "Plugin $PLUGIN_NAME cloned successfully"
+    git clone --depth 1 "$PLUGIN_URL" "$PLUGIN_PATH"
+
+    if [ ! -d "package/$PLUGIN_NAME" ]; then
+        cp -r "$PLUGIN_PATH" package/
+    fi
 done
 
-# 徹底清除 openwrt 內部的臨時快取目錄，強迫隨後的 make defconfig 重新掃描
 rm -rf tmp/
-log_success "Build temp cache cleaned up."
 
-
-# =================================================================
-# 2. 核心功能強制開啟（確保絕對編譯進固件）
-# =================================================================
-log_info "正在強行寫入 .config 配置文件..."
-
-# 2.1 強行開啟全新的 PassWall 2 及其大核心组件
-echo "CONFIG_PACKAGE_luci-app-passwall2=y" >> .config
-echo "CONFIG_PACKAGE_sing-box=y" >> .config
-echo "CONFIG_PACKAGE_xray-core=y" >> .config
-
-# 2.2 強行開啟剛才下載的分區擴展插件（luci-app-partexp）
+# -------------------- 配置寫入 --------------------
 echo "CONFIG_PACKAGE_luci-app-partexp=y" >> .config
-
-log_success "所有核心插件與依賴已成功在 .config 中強制激活！"
+echo "CONFIG_PACKAGE_luci-app-passwall2=y" >> .config

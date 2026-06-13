@@ -62,7 +62,6 @@ jobs:
         /usr/local/share/powershell /usr/local/share/chromium /usr/local/lib/node_modules
 
         sudo -E apt-get -qq update
-        # 🌟 确保安装 psmisc（自带 pstree），以便看门狗精确吐出进程树
         sudo -E apt-get -qq install $(curl -fsSL bit.ly/3AS48v1) xxd coreutils patch psmisc
         sudo -E apt-get -qq autoremove --purge
         sudo -E apt-get -qq clean
@@ -114,13 +113,6 @@ jobs:
         ccache: 'true'
         prefix: ${{ github.workspace }}/openwrt
         mixkey: 'CM520-79F-go126-v2'
-
-    - name: Cache ath10k-ct firmware downloads
-      uses: actions/cache@v4
-      id: cache-ath10k
-      with:
-        path: openwrt/dl/ath10k-ct-firmware-*
-        key: ath10k-ct-firmware-ipq4019-${{ hashFiles('openwrt/package/firmware/ath10k-ct-firmware/Makefile') }}
 
     - name: Download and run create-banner.sh
       run: |
@@ -187,23 +179,17 @@ jobs:
       uses: mxschmitt/action-tmate@v3
       if: (github.event.inputs.ssh == 'true' && github.event.inputs.ssh  != 'false') || contains(github.event.action, 'ssh')
 
-    - name: Download packages with retry
-      id: package
+    # 🌟 唯一保留的高速全量並行下載（所有依賴包和 ath10k 固件在此全量秒下齊）
+    - name: Download packages
       run: |
         cd openwrt
         make defconfig
-        if [ "${{ steps.cache-ath10k.outputs.cache-hit }}" != "true" ]; then
-          echo "=== ath10k-ct-firmware 緩存未命中，從 candelatech.com 拉取（首次較慢，請耐心）==="
-          make package/firmware/ath10k-ct-firmware/download -j1 V=s || true
-        else
-          echo "=== ath10k-ct-firmware 緩存命中，直接跳過下載，節省約 1 小時 ==="
-        fi
-        echo "=== 主包下載 ==="
+        echo "=== 啟動全量高速並行下載 ==="
         make download -j8
         find dl -size -1024c -exec ls -l {} \;
         find dl -size -1024c -exec rm -f {} \;
 
-    # 🌟【大編譯終章：進程樹全透明追踪版】
+    # 大編譯：進程樹全透明追踪版
     - name: Build OpenWrt firmware (Dynamic Transparent Tracking)
       id: compile
       run: |
@@ -228,36 +214,36 @@ jobs:
             if [ "$CURRENT_MD5" = "$LAST_MD5" ] && [ -n "$CURRENT_MD5" ]; then
               STUCK_COUNT=$((STUCK_COUNT + 1))
 
-              # ⏱️ 停滯 10~29 分鐘：打印系統負載探针，每分鐘一次
+              # ⏱️ 停滯 10~29 分鐘：打印系統負載探针
               if [ "$STUCK_COUNT" -ge 10 ] && [ "$STUCK_COUNT" -lt 30 ]; then
                 echo "========================================================"
                 echo "⚠️  [警告] 編譯日誌已停滯 $STUCK_COUNT 分鐘未發生過渡"
                 echo "📊 負載(Load Avg): $(cat /proc/loadavg | awk '{print $1,$2,$3}')"
                 echo "💽 磁碟剩餘: $(df -h / | awk 'NR==2 {print $4}')"
-                echo "💡 負載不為 0.00 說明仍在編譯，請耐心等待"
+                echo "💡 說明底層仍在處理或打包，請耐心等待..."
                 echo "========================================================"
               fi
 
-              # 🚨 🌟【核心重構：停滯滿 30 分鐘，不跳 SSH，只噴出最硬核的 make 進程樹詳情】
+              # 🚨 停滯滿 30 分鐘：不跳 SSH，直接打印當前本地處理/打包的具體進程樹
               if [ "$STUCK_COUNT" -ge 30 ]; then
                 echo "========================================================"
                 echo "🚨 [核心警告] 編譯日誌已絕對靜止滿 30 分鐘未發生過渡！"
-                echo "📊 正在強行剝離底層進程外殼，捕獲當前 make 進程樹詳情..."
+                echo "📊 正在強行剝離底層進程外殼，捕獲當前處理進程樹詳情..."
                 echo "========================================================"
                 echo "⏱️  當前時間: $(date '+%Y-%m-%d %H:%M:%S')"
                 echo "📊 系統負載: $(cat /proc/loadavg | awk '{print $1,$2,$3}')"
                 
-                echo -e "\n🌳 [進程樹拓撲]（顯示當前卡死的具體編譯鏈）："
+                echo -e "\n🌳 [進程樹拓撲]（顯示當前死磕的具體打包/編譯鏈）："
                 if command -v pstree >/dev/null 2>&1; then
                   pstree -a -p $MAIN_PID
                 else
                   ps -ef --forest | grep -E "$MAIN_PID|make" | grep -v grep
                 fi
                 
-                echo -e "\n🔍 [詳細行為審計]（查看正在啃什麼大包）："
-                ps -ef | grep -E "make|gcc|g++|clang" | grep -v grep | awk '{print "👉 PID:",$2,"| 狀態:",$8,"| 執行命令:",$0}' | cut -c1-200
+                echo -e "\n🔍 [詳細行為審計]（查看正在啃什麼細碎文件包）："
+                ps -ef | grep -E "make|gcc|g++|clang" | grep -v grep | awk '{print "👉 PID:",$2,"| 狀態:",$8,"| 执行命令:",$0}' | cut -c1-200
                 echo "========================================================"
-                echo "💡 提示：進程詳情已保留，監視器已重置。主編譯繼續，請保持耐心..."
+                echo "💡 提示：進程詳情已保留，監視器已重置。主進程繼續，請保持耐心..."
                 echo "========================================================"
                 STUCK_COUNT=0
               fi
@@ -291,11 +277,9 @@ jobs:
           fi
         fi
 
-        # 最終全局回收安全網
         kill $MONITOR_PID 2>/dev/null || true
         rm -f "$COMPILE_LOG"
 
-        # 嚴密狀態斷言
         if [ "$COMPILE_OK" = "true" ]; then
           grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
           [ -s DEVICE_NAME ] && echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> $GITHUB_ENV
@@ -306,7 +290,7 @@ jobs:
           exit 1
         fi
 
-    # 🌟【唯一合法的 SSH 攔截點】：只有當多線程、單線程救磚全部徹底完蛋時觸發。30 分鐘超時防呆。
+    # 唯一合法 SSH 攔截點：只有當多線程、單線程救磚全部徹底完蛋時觸發。30 分鐘超時防呆。
     - name: Automatically Trigger SSH on Compilation Failure
       uses: mxschmitt/action-tmate@v3
       if: failure()

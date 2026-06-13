@@ -39,10 +39,19 @@ jobs:
         df -hT
         echo "=============================================================================="
 
+    - name: Maximize Build Space
+      uses: easimon/maximize-build-space@master
+      with:
+        root-reserve-mb: 2048
+        swap-size-mb: 1
+        remove-dotnet: 'true'
+        remove-android: 'true'
+        remove-haskell: 'true'
+        remove-codeql: 'true'
+
     - name: Checkout repository
       uses: actions/checkout@v4
 
-    # 采用原版安全的手工精准大清理，腾出 40GB+ 空间，且绝对不产生文件系统句柄死锁
     - name: Initialization environment & Free Space
       env:
         DEBIAN_FRONTEND: noninteractive
@@ -51,9 +60,10 @@ jobs:
         sudo rm -rf /var/lib/apt/lists/*
         sudo rm -rf /etc/apt/sources.list.d/* /usr/local/lib/android /opt/ghc /usr/share/dotnet /usr/local/graalvm /usr/local/.ghcup \
         /usr/local/share/powershell /usr/local/share/chromium /usr/local/lib/node_modules
-        
+
         sudo -E apt-get -qq update
-        sudo -E apt-get -qq install $(curl -fsSL bit.ly/3AS48v1) xxd coreutils patch
+        # 🌟 确保安装 psmisc（自带 pstree），以便看门狗精确吐出进程树
+        sudo -E apt-get -qq install $(curl -fsSL bit.ly/3AS48v1) xxd coreutils patch psmisc
         sudo -E apt-get -qq autoremove --purge
         sudo -E apt-get -qq clean
         sudo timedatectl set-timezone "$TZ"
@@ -66,7 +76,6 @@ jobs:
         df -hT
         echo "=============================================================================="
 
-    # 锁定系统环境 Go 1.26.x，关闭缓存干扰
     - name: Setup Go (1.26.x)
       uses: actions/setup-go@v5
       with:
@@ -86,22 +95,32 @@ jobs:
     - name: Clone source code
       working-directory: ./
       run: |
+        df -hT $PWD
         if [ -d openwrt ]; then rm -rf openwrt; fi
         git clone --depth=1 $REPO_URL -b $REPO_BRANCH openwrt
         cd openwrt
         echo "Current commit: $(git rev-parse HEAD)"
-        useVersionInfo=$(git show -s --date=short --format="Author: %an<br/>date: %cd<br/>commit: %s<br/>commit hash: %H")
-        echo "useVersionInfo=$useVersionInfo" >> $GITHUB_ENV
+        
+        echo "useVersionInfo<<EOF" >> $GITHUB_ENV
+        git show -s --date=short --format="作者: %an<br/>日期: %cd<br/>提交分支: %s<br/>哈希校驗: %H" >> $GITHUB_ENV
+        echo "EOF" >> $GITHUB_ENV
+        
         echo "DATE=$(date "+%Y-%m-%d %H:%M:%S")" >> $GITHUB_ENV
         echo "DATE1=$(date "+%Y-%m-%d")" >> $GITHUB_ENV
 
-    # 【重要修复】更换全新的缓存 Key，彻底斩断旧配置残留对全新 PassWall 2 的编译污染
-    - name: Cache
+    - name: Cache build (ccache)
       uses: stupidloud/cachewrtbuild@main
       with:
         ccache: 'true'
         prefix: ${{ github.workspace }}/openwrt
         mixkey: 'CM520-79F-go126-v2'
+
+    - name: Cache ath10k-ct firmware downloads
+      uses: actions/cache@v4
+      id: cache-ath10k
+      with:
+        path: openwrt/dl/ath10k-ct-firmware-*
+        key: ath10k-ct-firmware-ipq4019-${{ hashFiles('openwrt/package/firmware/ath10k-ct-firmware/Makefile') }}
 
     - name: Download and run create-banner.sh
       run: |
@@ -114,6 +133,7 @@ jobs:
         if [ -d "openwrt/package/custom/luci-app-banner" ]; then
           echo "✓ Banner package directory exists"
         else
+          echo "✗ Banner package directory not found"
           exit 1
         fi
 
@@ -125,8 +145,6 @@ jobs:
           ../"$DIY_P1_SH"
         fi
 
-    # 【精准修复】仅拉取 Go 1.26 语言源码源，供 Hysteria / PassWall 2 自动识别调用
-    # 彻底废除全盘 find -exec sed，确保系统级 C 组件（如 ucode/netifd）不会被改烂
     - name: Add additional feeds
       run: |
         cd openwrt
@@ -174,20 +192,127 @@ jobs:
       run: |
         cd openwrt
         make defconfig
+        if [ "${{ steps.cache-ath10k.outputs.cache-hit }}" != "true" ]; then
+          echo "=== ath10k-ct-firmware 緩存未命中，從 candelatech.com 拉取（首次較慢，請耐心）==="
+          make package/firmware/ath10k-ct-firmware/download -j1 V=s || true
+        else
+          echo "=== ath10k-ct-firmware 緩存命中，直接跳過下載，節省約 1 小時 ==="
+        fi
+        echo "=== 主包下載 ==="
         make download -j8
         find dl -size -1024c -exec ls -l {} \;
         find dl -size -1024c -exec rm -f {} \;
 
-    # 核心编译步骤：如果多线程意外挂掉，自动切单线程并打印出绝对详细的错误报告
-    - name: Build OpenWrt firmware
+    # 🌟【大編譯終章：進程樹全透明追踪版】
+    - name: Build OpenWrt firmware (Dynamic Transparent Tracking)
       id: compile
       run: |
         cd openwrt
-        make -j$(nproc) || make -j1 V=s
-        grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
-        [ -s DEVICE_NAME ] && echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> $GITHUB_ENV
-        echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
-        echo "status=success" >> $GITHUB_OUTPUT
+
+        COMPILE_LOG="$(pwd)/compile_raw.log"
+        touch "$COMPILE_LOG"
+        MAIN_PID=$$
+        COMPILE_OK=false
+
+        # 後台指紋監視器（僅在第一階段多線程有效）
+        (
+          echo "=== 動態指紋監視器已啟動 ==="
+          LAST_MD5=""
+          STUCK_COUNT=0
+
+          while kill -0 $MAIN_PID 2>/dev/null; do
+            sleep 60
+
+            CURRENT_MD5=$(tail -n 20 "$COMPILE_LOG" 2>/dev/null | md5sum | awk '{print $1}')
+
+            if [ "$CURRENT_MD5" = "$LAST_MD5" ] && [ -n "$CURRENT_MD5" ]; then
+              STUCK_COUNT=$((STUCK_COUNT + 1))
+
+              # ⏱️ 停滯 10~29 分鐘：打印系統負載探针，每分鐘一次
+              if [ "$STUCK_COUNT" -ge 10 ] && [ "$STUCK_COUNT" -lt 30 ]; then
+                echo "========================================================"
+                echo "⚠️  [警告] 編譯日誌已停滯 $STUCK_COUNT 分鐘未發生過渡"
+                echo "📊 負載(Load Avg): $(cat /proc/loadavg | awk '{print $1,$2,$3}')"
+                echo "💽 磁碟剩餘: $(df -h / | awk 'NR==2 {print $4}')"
+                echo "💡 負載不為 0.00 說明仍在編譯，請耐心等待"
+                echo "========================================================"
+              fi
+
+              # 🚨 🌟【核心重構：停滯滿 30 分鐘，不跳 SSH，只噴出最硬核的 make 進程樹詳情】
+              if [ "$STUCK_COUNT" -ge 30 ]; then
+                echo "========================================================"
+                echo "🚨 [核心警告] 編譯日誌已絕對靜止滿 30 分鐘未發生過渡！"
+                echo "📊 正在強行剝離底層進程外殼，捕獲當前 make 進程樹詳情..."
+                echo "========================================================"
+                echo "⏱️  當前時間: $(date '+%Y-%m-%d %H:%M:%S')"
+                echo "📊 系統負載: $(cat /proc/loadavg | awk '{print $1,$2,$3}')"
+                
+                echo -e "\n🌳 [進程樹拓撲]（顯示當前卡死的具體編譯鏈）："
+                if command -v pstree >/dev/null 2>&1; then
+                  pstree -a -p $MAIN_PID
+                else
+                  ps -ef --forest | grep -E "$MAIN_PID|make" | grep -v grep
+                fi
+                
+                echo -e "\n🔍 [詳細行為審計]（查看正在啃什麼大包）："
+                ps -ef | grep -E "make|gcc|g++|clang" | grep -v grep | awk '{print "👉 PID:",$2,"| 狀態:",$8,"| 執行命令:",$0}' | cut -c1-200
+                echo "========================================================"
+                echo "💡 提示：進程詳情已保留，監視器已重置。主編譯繼續，請保持耐心..."
+                echo "========================================================"
+                STUCK_COUNT=0
+              fi
+            else
+              STUCK_COUNT=0
+              LAST_MD5="$CURRENT_MD5"
+            fi
+          done
+          echo "=== 多線程階段結束，監視器安全退出 ==="
+        ) &
+        MONITOR_PID=$!
+
+        echo "========================================================"
+        echo "🚀 第一階段：多線程並行編譯啟動（動態指紋監控中）"
+        echo "========================================================"
+
+        if make -j$(nproc) 2>&1 | tee "$COMPILE_LOG"; then
+          COMPILE_OK=true
+        else
+          echo "========================================================"
+          echo "⚠️  多線程編譯失敗，正在清理監視器與臨時日誌，準備降級..."
+          echo "========================================================"
+          kill $MONITOR_PID 2>/dev/null || true
+          rm -f "$COMPILE_LOG"
+
+          echo "🔧 第二階段：單線程救磚模式 (make -j1 V=s)"
+          if make -j1 V=s; then
+            COMPILE_OK=true
+          else
+            COMPILE_OK=false
+          fi
+        fi
+
+        # 最終全局回收安全網
+        kill $MONITOR_PID 2>/dev/null || true
+        rm -f "$COMPILE_LOG"
+
+        # 嚴密狀態斷言
+        if [ "$COMPILE_OK" = "true" ]; then
+          grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
+          [ -s DEVICE_NAME ] && echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> $GITHUB_ENV
+          echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
+          echo "status=success" >> $GITHUB_OUTPUT
+        else
+          echo "status=failure" >> $GITHUB_OUTPUT
+          exit 1
+        fi
+
+    # 🌟【唯一合法的 SSH 攔截點】：只有當多線程、單線程救磚全部徹底完蛋時觸發。30 分鐘超時防呆。
+    - name: Automatically Trigger SSH on Compilation Failure
+      uses: mxschmitt/action-tmate@v3
+      if: failure()
+      timeout-minutes: 30
+      with:
+        limit-access-to-actor: true
 
     - name: Check space usage
       if: (!cancelled())
@@ -204,9 +329,10 @@ jobs:
 
     - name: Upload firmware artifact
       uses: actions/upload-artifact@v4
+      if: steps.compile.outputs.status == 'success' && !cancelled()
       with:
         name: OpenWrt_${{ env.FILE_NAME }}_${{ env.DEVICE_NAME }}_${{ env.FILE_DATE }}
-        path: ${{ env.FIRMWARE || env.FIRMWARE_PATH }}
+        path: ${{ env.FIRMWARE }}
         retention-days: 30
 
     - name: Upload build logs and config

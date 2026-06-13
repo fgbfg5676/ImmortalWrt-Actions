@@ -120,6 +120,7 @@ jobs:
         chmod +x /tmp/create-banner.sh
         bash /tmp/create-banner.sh
 
+    # 🌟 成功加回：防禦性 Fail-Fast 熔斷斷言步驟
     - name: Debug banner package creation details
       run: |
         if [ -d "openwrt/package/custom/luci-app-banner" ]; then
@@ -179,7 +180,6 @@ jobs:
       uses: mxschmitt/action-tmate@v3
       if: (github.event.inputs.ssh == 'true' && github.event.inputs.ssh  != 'false') || contains(github.event.action, 'ssh')
 
-    # 🌟 唯一保留的高速全量並行下載（所有依賴包和 ath10k 固件在此全量秒下齊）
     - name: Download packages
       run: |
         cd openwrt
@@ -189,85 +189,87 @@ jobs:
         find dl -size -1024c -exec ls -l {} \;
         find dl -size -1024c -exec rm -f {} \;
 
-    # 大編譯：進程樹全透明追踪版
-    - name: Build OpenWrt firmware (Dynamic Transparent Tracking)
+    # 滿血編譯：深度增量 I/O 探針完全體
+    - name: Build OpenWrt firmware (Full-Speed File Tracking)
       id: compile
       run: |
         cd openwrt
 
-        COMPILE_LOG="$(pwd)/compile_raw.log"
-        touch "$COMPILE_LOG"
         MAIN_PID=$$
         COMPILE_OK=false
+        
+        # 提前創建必要的目錄與初始化時間戳防呆，確保時序絕對安全
+        mkdir -p build_dir
+        touch /tmp/watchdog_last
 
-        # 後台指紋監視器（僅在第一階段多線程有效）
+        # 後台【深度增量文件計數監視器】
         (
-          echo "=== 動態指紋監視器已啟動 ==="
-          LAST_MD5=""
+          echo "=== 4層深度增量文件監視器已啟動 ==="
           STUCK_COUNT=0
 
           while kill -0 $MAIN_PID 2>/dev/null; do
             sleep 60
 
-            CURRENT_MD5=$(tail -n 20 "$COMPILE_LOG" 2>/dev/null | md5sum | awk '{print $1}')
+            # 探針核心：統計過去一分鐘內，4層嵌套目錄下有多少新生成/被修改的文件
+            NEW_FILES_COUNT=$(find build_dir -maxdepth 4 -newer /tmp/watchdog_last 2>/dev/null | wc -l)
+            
+            # 拍照存根，刷新下一分鐘的比對基準
+            touch /tmp/watchdog_last
 
-            if [ "$CURRENT_MD5" = "$LAST_MD5" ] && [ -n "$CURRENT_MD5" ]; then
+            if [ "$NEW_FILES_COUNT" -eq 0 ]; then
               STUCK_COUNT=$((STUCK_COUNT + 1))
 
-              # ⏱️ 停滯 10~29 分鐘：打印系統負載探针
+              # ⏱️ 停滯 10~29 分鐘：打印負載
               if [ "$STUCK_COUNT" -ge 10 ] && [ "$STUCK_COUNT" -lt 30 ]; then
                 echo "========================================================"
-                echo "⚠️  [警告] 編譯日誌已停滯 $STUCK_COUNT 分鐘未發生過渡"
+                echo "⚠️  [警告] 4層深度磁碟寫入已連續 $STUCK_COUNT 分鐘無增量！"
                 echo "📊 負載(Load Avg): $(cat /proc/loadavg | awk '{print $1,$2,$3}')"
-                echo "💽 磁碟剩餘: $(df -h / | awk 'NR==2 {print $4}')"
-                echo "💡 說明底層仍在處理或打包，請耐心等待..."
+                echo "💡 提示：若負載仍高，可能是在進行超大單核內存運算，請保持耐心..."
                 echo "========================================================"
               fi
 
-              # 🚨 停滯滿 30 分鐘：不跳 SSH，直接打印當前本地處理/打包的具體進程樹
+              # 🚨 停滯滿 30 分鐘：無增量且滿半小時，打印進程樹詳情
               if [ "$STUCK_COUNT" -ge 30 ]; then
                 echo "========================================================"
-                echo "🚨 [核心警告] 編譯日誌已絕對靜止滿 30 分鐘未發生過渡！"
+                echo "🚨 [核心警告] 4層內未監測到任何文件增量，已死鎖滿 30 分鐘！"
                 echo "📊 正在強行剝離底層進程外殼，捕獲當前處理進程樹詳情..."
                 echo "========================================================"
                 echo "⏱️  當前時間: $(date '+%Y-%m-%d %H:%M:%S')"
                 echo "📊 系統負載: $(cat /proc/loadavg | awk '{print $1,$2,$3}')"
                 
-                echo -e "\n🌳 [進程樹拓撲]（顯示當前死磕的具體打包/編譯鏈）："
+                echo -e "\n🌳 [進程樹拓撲]（精確定位卡死的具體編譯鏈）："
                 if command -v pstree >/dev/null 2>&1; then
                   pstree -a -p $MAIN_PID
                 else
                   ps -ef --forest | grep -E "$MAIN_PID|make" | grep -v grep
                 fi
                 
-                echo -e "\n🔍 [詳細行為審計]（查看正在啃什麼細碎文件包）："
+                echo -e "\n🔍 [詳細行為審計]："
                 ps -ef | grep -E "make|gcc|g++|clang" | grep -v grep | awk '{print "👉 PID:",$2,"| 狀態:",$8,"| 执行命令:",$0}' | cut -c1-200
-                echo "========================================================"
-                echo "💡 提示：進程詳情已保留，監視器已重置。主進程繼續，請保持耐心..."
                 echo "========================================================"
                 STUCK_COUNT=0
               fi
             else
+              # 只要有一行文件增量，證明編譯高度活躍，立刻清零計數器
               STUCK_COUNT=0
-              LAST_MD5="$CURRENT_MD5"
             fi
           done
-          echo "=== 多線程階段結束，監視器安全退出 ==="
+          echo "=== 監視器安全退出 ==="
         ) &
         MONITOR_PID=$!
 
         echo "========================================================"
-        echo "🚀 第一階段：多線程並行編譯啟動（動態指紋監控中）"
+        echo "🚀 滿血編譯啟動：直刷控制台（無管道阻塞、4層增量探針監控中）"
         echo "========================================================"
 
-        if make -j$(nproc) 2>&1 | tee "$COMPILE_LOG"; then
+        # 回歸 v1 的純粹三段式抗干擾編譯與單線程救磚
+        if make -j$(nproc); then
           COMPILE_OK=true
         else
           echo "========================================================"
-          echo "⚠️  多線程編譯失敗，正在清理監視器與臨時日誌，準備降級..."
+          echo "⚠️  多線程編譯失敗，正在清理監視器，準備單線程降級救磚..."
           echo "========================================================"
           kill $MONITOR_PID 2>/dev/null || true
-          rm -f "$COMPILE_LOG"
 
           echo "🔧 第二階段：單線程救磚模式 (make -j1 V=s)"
           if make -j1 V=s; then
@@ -278,7 +280,6 @@ jobs:
         fi
 
         kill $MONITOR_PID 2>/dev/null || true
-        rm -f "$COMPILE_LOG"
 
         if [ "$COMPILE_OK" = "true" ]; then
           grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
@@ -290,7 +291,7 @@ jobs:
           exit 1
         fi
 
-    # 唯一合法 SSH 攔截點：只有當多線程、單線程救磚全部徹底完蛋時觸發。30 分鐘超時防呆。
+    # 唯一合法 SSH 攔截點
     - name: Automatically Trigger SSH on Compilation Failure
       uses: mxschmitt/action-tmate@v3
       if: failure()

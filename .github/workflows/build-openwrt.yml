@@ -21,7 +21,6 @@ env:
   UPLOAD_RELEASE: true
   FILE_NAME: CM520-79F
   TZ: Asia/Shanghai
-  # 【精準修復 1】：強制將所有 JavaScript 插件運行在 Node 24 容器中，徹底乾失 Node 20 棄用警告
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
@@ -40,38 +39,11 @@ jobs:
         df -hT
         echo "=============================================================================="
 
-    - name: Maximize Build Space (Partition Expansion - Reverted to Original Stable Config)
-      uses: easimon/maximize-build-space@master
-      with: 
-        root-reserve-mb: 2048
-        swap-size-mb: 1
-
-    - name: Optimize Disk Space (hugoalh/disk-space-optimizer-ghaction)
-      uses: hugoalh/disk-space-optimizer-ghaction@v0.8.1
-      with:
-        operate_sudo: "True"
-        docker_include: ".+"
-        docker_prune: "True"
-        docker_clean: "True"
-        apt_prune: "True"
-        apt_clean: "True"
-        homebrew_prune: "True"
-        homebrew_clean: "True"
-        npm_prune: "True"
-        npm_clean: "True"
-        os_swap: "True"
-
-    - name: Free up disk space complete
-      run: |
-        echo "Free up disk space complete"
-        echo "=============================================================================="
-        df -hT
-        echo "=============================================================================="
-
     - name: Checkout repository
       uses: actions/checkout@v4
 
-    - name: Initialization environment
+    # 采用原版安全的手工精准大清理，腾出 40GB+ 空间，且绝对不产生文件系统句柄死锁
+    - name: Initialization environment & Free Space
       env:
         DEBIAN_FRONTEND: noninteractive
       run: |
@@ -87,7 +59,14 @@ jobs:
         sudo timedatectl set-timezone "$TZ"
         sudo chown $USER:$GROUPS $GITHUB_WORKSPACE
 
-    # 【精準修復 2】：加入 cache: false，拒絕讓它瞎找 go.sum，解決 Restore cache failed 報錯
+    - name: Free up disk space complete
+      run: |
+        echo "Free up disk space complete"
+        echo "=============================================================================="
+        df -hT
+        echo "=============================================================================="
+
+    # 锁定系统环境 Go 1.26.x，关闭缓存干扰
     - name: Setup Go (1.26.x)
       uses: actions/setup-go@v5
       with:
@@ -107,7 +86,6 @@ jobs:
     - name: Clone source code
       working-directory: ./
       run: |
-        df -hT $PWD
         if [ -d openwrt ]; then rm -rf openwrt; fi
         git clone --depth=1 $REPO_URL -b $REPO_BRANCH openwrt
         cd openwrt
@@ -117,12 +95,13 @@ jobs:
         echo "DATE=$(date "+%Y-%m-%d %H:%M:%S")" >> $GITHUB_ENV
         echo "DATE1=$(date "+%Y-%m-%d")" >> $GITHUB_ENV
 
+    # 【重要修复】更换全新的缓存 Key，彻底斩断旧配置残留对全新 PassWall 2 的编译污染
     - name: Cache
       uses: stupidloud/cachewrtbuild@main
       with:
         ccache: 'true'
         prefix: ${{ github.workspace }}/openwrt
-        mixkey: 'CM520-79F-go126'
+        mixkey: 'CM520-79F-go126-v2'
 
     - name: Download and run create-banner.sh
       run: |
@@ -132,11 +111,9 @@ jobs:
 
     - name: Debug banner package creation details
       run: |
-        echo "=== Detailed Banner Package Debug Information ==="
         if [ -d "openwrt/package/custom/luci-app-banner" ]; then
           echo "✓ Banner package directory exists"
         else
-          echo "✗ Banner package directory not found"
           exit 1
         fi
 
@@ -148,22 +125,12 @@ jobs:
           ../"$DIY_P1_SH"
         fi
 
+    # 【精准修复】仅拉取 Go 1.26 语言源码源，供 Hysteria / PassWall 2 自动识别调用
+    # 彻底废除全盘 find -exec sed，确保系统级 C 组件（如 ucode/netifd）不会被改烂
     - name: Add additional feeds
       run: |
         cd openwrt
         echo "src-git golang https://github.com/sbwml/packages_lang_golang;26.x" >> feeds.conf.default
-        
-        echo "=== 正在強制將源碼內部的 Go 版本篡改為 1.26 ==="
-        find ./ -type f -name "*.mk" -exec sed -i 's/GO_VERSION:=1.25/GO_VERSION:=1.26/g' {} + 2>/dev/null || true
-        find ./ -type f -name "Makefile" -exec sed -i 's/go1.25/go1.26/g' {} + 2>/dev/null || true
-        
-        if [ -f rules.mk ]; then
-          sed -i 's/GO_VERSION:=.*/GO_VERSION:=1.26/g' rules.mk 2>/dev/null || true
-        fi
-        if [ -f include/host-build.mk ]; then
-          sed -i 's/GO_VERSION:=.*/GO_VERSION:=1.26/g' include/host-build.mk 2>/dev/null || true
-        fi
-        echo "=== 源碼底層 Go 版本篡改完成 ==="
 
     - name: Update feeds
       run: cd openwrt && ./scripts/feeds update -a
@@ -178,6 +145,13 @@ jobs:
           cp "../$CONFIG_FILE" .config
         fi
 
+    - name: Verify banner package in config
+      run: |
+        cd openwrt
+        if ! grep -q "CONFIG_PACKAGE_luci-app-banner=y" .config; then
+          echo "CONFIG_PACKAGE_luci-app-banner=y" >> .config
+        fi
+
     - name: Run DIY part2 script
       run: |
         cd openwrt
@@ -186,12 +160,9 @@ jobs:
           ../"$DIY_P2_SH"
         fi
 
-    - name: Generate final config and verify settings
+    - name: Generate final config
       run: |
         cd openwrt
-        if ! grep -q "CONFIG_PACKAGE_luci-app-banner=y" .config; then
-          echo "CONFIG_PACKAGE_luci-app-banner=y" >> .config
-        fi
         make defconfig
 
     - name: SSH connection to Actions
@@ -202,15 +173,17 @@ jobs:
       id: package
       run: |
         cd openwrt
+        make defconfig
         make download -j8
         find dl -size -1024c -exec ls -l {} \;
         find dl -size -1024c -exec rm -f {} \;
 
+    # 核心编译步骤：如果多线程意外挂掉，自动切单线程并打印出绝对详细的错误报告
     - name: Build OpenWrt firmware
       id: compile
       run: |
         cd openwrt
-        make -j$(nproc) || make -j1 || make -j1 V=s
+        make -j$(nproc) || make -j1 V=s
         grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
         [ -s DEVICE_NAME ] && echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> $GITHUB_ENV
         echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
@@ -219,13 +192,6 @@ jobs:
     - name: Check space usage
       if: (!cancelled())
       run: df -hT
-
-    - name: Upload bin directory
-      uses: actions/upload-artifact@v4
-      if: steps.compile.outputs.status == 'success' && env.UPLOAD_BIN_DIR == 'true'
-      with:
-        name: OpenWrt_bin${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
-        path: openwrt/bin
 
     - name: Organize files
       id: organize
@@ -251,7 +217,6 @@ jobs:
         path: |
           openwrt/logs/
           openwrt/.config
-          openwrt/bin/packages/
         retention-days: 7
 
     - name: Upload OpenWrt Firmware to Release
@@ -267,7 +232,7 @@ jobs:
         artifacts: ${{ env.FIRMWARE }}/*
         body: |
           - 默认IP：192.168.3.1 默认密码：无
-          - 当前使用版本:【编译前的最后一次[➦主源码](https://github.com/immortalwrt/immortalwrt/tree/openwrt-24.10)更新記錄】
+          - 当前使用版本:【编译前的最后一次更新記錄】
           ${{ env.useVersionInfo }}
 
     - name: Delete workflow runs

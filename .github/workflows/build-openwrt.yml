@@ -39,30 +39,26 @@ jobs:
         df -hT
         echo "=============================================================================="
 
-    - name: Maximize Build Space
+    - name: Maximize Build Space (Partition Expansion - Original Stable Config)
       uses: easimon/maximize-build-space@master
-      with:
+      with: 
         root-reserve-mb: 2048
         swap-size-mb: 1
-        remove-dotnet: 'true'
-        remove-android: 'true'
-        remove-haskell: 'true'
-        remove-codeql: 'true'
 
-    - name: Checkout repository
-      uses: actions/checkout@v4
-
-    - name: Initialization environment & Free Space
-      env:
-        DEBIAN_FRONTEND: noninteractive
-      run: |
-        sudo apt-get clean
-        sudo -E apt-get -qq update
-        sudo -E apt-get -qq install $(curl -fsSL bit.ly/3AS48v1) xxd coreutils patch psmisc
-        sudo -E apt-get -qq autoremove --purge
-        sudo -E apt-get -qq clean
-        sudo timedatectl set-timezone "$TZ"
-        sudo chown $USER:$GROUPS $GITHUB_WORKSPACE
+    - name: Optimize Disk Space (hugoalh/disk-space-optimizer-ghaction)
+      uses: hugoalh/disk-space-optimizer-ghaction@v0.8.1
+      with:
+        operate_sudo: "True"
+        docker_include: ".+"
+        docker_prune: "True"
+        docker_clean: "True"
+        apt_prune: "True"
+        apt_clean: "True"
+        homebrew_prune: "True"
+        homebrew_clean: "True"
+        npm_prune: "True"
+        npm_clean: "True"
+        os_swap: "True"
 
     - name: Free up disk space complete
       run: |
@@ -70,6 +66,27 @@ jobs:
         echo "=============================================================================="
         df -hT
         echo "=============================================================================="
+
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Initialization environment
+      env:
+        DEBIAN_FRONTEND: noninteractive
+      run: |
+        sudo apt-get clean
+        # 🌟 核心修復：帶回你原版的核心清理命令，徹底乾失第三方源引起的 update 卡死
+        sudo rm -rf /var/lib/apt/lists/*
+        sudo rm -rf /etc/apt/sources.list.d/* /usr/local/lib/android /opt/ghc /usr/share/dotnet /usr/local/graalvm /usr/local/.ghcup \
+        /usr/local/share/powershell /usr/local/share/chromium /usr/local/lib/node_modules
+        
+        sudo -E apt-get -qq update
+        # 🌟 順手補上監控器必備的 psmisc 包
+        sudo -E apt-get -qq install $(curl -fsSL bit.ly/3AS48v1) xxd coreutils patch psmisc
+        sudo -E apt-get -qq autoremove --purge
+        sudo -E apt-get -qq clean
+        sudo timedatectl set-timezone "$TZ"
+        sudo chown $USER:$GROUPS $GITHUB_WORKSPACE
 
     - name: Setup Go (1.26.x)
       uses: actions/setup-go@v5
@@ -85,11 +102,8 @@ jobs:
         git clone --depth=1 $REPO_URL -b $REPO_BRANCH openwrt
         cd openwrt
         echo "Current commit: $(git rev-parse HEAD)"
-        
-        echo "useVersionInfo<<EOF" >> $GITHUB_ENV
-        git show -s --date=short --format="作者: %an<br/>日期: %cd<br/>提交分支: %s<br/>哈希校驗: %H" >> $GITHUB_ENV
-        echo "EOF" >> $GITHUB_ENV
-        
+        useVersionInfo=$(git show -s --date=short --format="Author: %an<br/>date: %cd<br/>commit: %s<br/>commit hash: %H")
+        echo "useVersionInfo=$useVersionInfo" >> $GITHUB_ENV
         echo "DATE=$(date "+%Y-%m-%d %H:%M:%S")" >> $GITHUB_ENV
         echo "DATE1=$(date "+%Y-%m-%d")" >> $GITHUB_ENV
 
@@ -108,6 +122,7 @@ jobs:
 
     - name: Debug banner package creation details
       run: |
+        echo "=== Detailed Banner Package Debug Information ==="
         if [ -d "openwrt/package/custom/luci-app-banner" ]; then
           echo "✓ Banner package directory exists"
         else
@@ -127,6 +142,18 @@ jobs:
       run: |
         cd openwrt
         echo "src-git golang https://github.com/sbwml/packages_lang_golang;26.x" >> feeds.conf.default
+        
+        echo "=== 正在強制將源碼內部的 Go 版本篡改為 1.26 ==="
+        find ./ -type f -name "*.mk" -exec sed -i 's/GO_VERSION:=1.25/GO_VERSION:=1.26/g' {} + 2>/dev/null || true
+        find ./ -type f -name "Makefile" -exec sed -i 's/go1.25/go1.26/g' {} + 2>/dev/null || true
+        
+        if [ -f rules.mk ]; then
+          sed -i 's/GO_VERSION:=.*/GO_VERSION:=1.26/g' rules.mk 2>/dev/null || true
+        fi
+        if [ -f include/host-build.mk ]; then
+          sed -i 's/GO_VERSION:=.*/GO_VERSION:=1.26/g' include/host-build.mk 2>/dev/null || true
+        fi
+        echo "=== 源碼底層 Go 版本篡改完成 ==="
 
     - name: Update feeds
       run: cd openwrt && ./scripts/feeds update -a
@@ -141,13 +168,6 @@ jobs:
           cp "../$CONFIG_FILE" .config
         fi
 
-    - name: Verify banner package in config
-      run: |
-        cd openwrt
-        if ! grep -q "CONFIG_PACKAGE_luci-app-banner=y" .config; then
-          echo "CONFIG_PACKAGE_luci-app-banner=y" >> .config
-        fi
-
     - name: Run DIY part2 script
       run: |
         cd openwrt
@@ -156,16 +176,20 @@ jobs:
           ../"$DIY_P2_SH"
         fi
 
-    - name: Generate final config
+    - name: Generate final config and verify settings
       run: |
         cd openwrt
+        if ! grep -q "CONFIG_PACKAGE_luci-app-banner=y" .config; then
+          echo "CONFIG_PACKAGE_luci-app-banner=y" >> .config
+        fi
         make defconfig
 
     - name: SSH connection to Actions
       uses: mxschmitt/action-tmate@v3
       if: (github.event.inputs.ssh == 'true' && github.event.inputs.ssh  != 'false') || contains(github.event.action, 'ssh')
 
-    - name: Download packages
+    - name: Download packages with retry
+      id: package
       run: |
         cd openwrt
         echo "=== 啟動全量高速並行下載 ==="
@@ -181,35 +205,32 @@ jobs:
         MAIN_PID=$$
         COMPILE_OK=false
         
-        # 🌟 擴大探針範圍：同時監控三個核心 I/O 目錄，徹底消除工具鏈和固件打包階段的監控盲區
         mkdir -p build_dir staging_dir tmp
         touch /tmp/watchdog_last
 
         (
-          echo "=== 100分終極雙重監視器已啟動 ==="
+          echo "=== 終極雙重監視器已啟動 ==="
           STUCK_COUNT=0
 
           while kill -0 $MAIN_PID 2>/dev/null; do
             sleep 60
 
-            # 🌟 核心增強：全路徑覆蓋監測
+            # 監控三個核心 I/O 目錄
             NEW_FILES_COUNT=$(find build_dir staging_dir tmp -maxdepth 4 -newer /tmp/watchdog_last 2>/dev/null | wc -l)
             touch /tmp/watchdog_last
 
             if [ "$NEW_FILES_COUNT" -eq 0 ]; then
               STUCK_COUNT=$((STUCK_COUNT + 1))
               
-              # 內存直讀負載
               LOAD1=$(awk '{print $1}' /proc/loadavg)
 
-              # 🌟 終極決策平衡：閾值修正為完美的 0.25，精確過濾 Actions 背景噪音
+              # 0.25 完美平衡線
               if awk "BEGIN{exit !($LOAD1 > 0.25)}"; then
                 echo "🔥 [提示] 當前無文件增量，但 LoadAvg ($LOAD1 > 0.25) 顯示 CPU 活躍，編譯鏈仍在高效運轉..."
                 [ "$STUCK_COUNT" -gt 5 ] && STUCK_COUNT=5
               else
                 echo "⚠️ [警告] 當前監控目錄無增量且 LoadAvg ($LOAD1 < 0.25) 顯示系統空閒！"
                 
-                # 30分鐘疑似卡死
                 if [ "$STUCK_COUNT" -ge 30 ] && [ "$STUCK_COUNT" -lt 60 ]; then
                   echo "========================================================"
                   echo "🚨 [疑似卡死] 連續 30 分鐘無磁碟寫入且 CPU 負載低於安全線！"
@@ -217,7 +238,6 @@ jobs:
                   echo "========================================================"
                 fi
 
-                # 60分鐘絕對熔斷
                 if [ "$STUCK_COUNT" -ge 60 ]; then
                   echo "========================================================"
                   echo "❌ [死鎖確診] 滿 60 分鐘無增量且 CPU 處於絕對死寂狀態 ($LOAD1)！"
@@ -323,9 +343,8 @@ jobs:
         artifacts: ${{ env.FIRMWARE }}/*
         body: |
           - 默认IP：192.168.3.1 默认密码：无
-          - 当前源码版本更新记录：
-
-          ${{ env.GITHUB_ENV.useVersionInfo || env.useVersionInfo }}
+          - 当前使用版本:【编译前的最后一次[➦主源码](https://github.com/immortalwrt/immortalwrt/tree/openwrt-24.10)更新記錄】
+          ${{ env.useVersionInfo }}
 
     - name: Delete workflow runs
       uses: Mattraks/delete-workflow-runs@v2

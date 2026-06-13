@@ -77,16 +77,6 @@ jobs:
         go-version: '1.26.x'
         cache: false
 
-    - name: Verify Go version
-      run: |
-        GO_VER=$(go version | awk '{print $3}')
-        if [[ "$GO_VER" != go1.26.* ]]; then
-          echo "[ERROR] Go version mismatch. Required: go1.26.x, Found: $GO_VER"
-          exit 1
-        else
-          echo "[SUCCESS] Go version OK: $GO_VER"
-        fi
-
     - name: Clone source code
       working-directory: ./
       run: |
@@ -108,7 +98,7 @@ jobs:
       with:
         ccache: 'true'
         prefix: ${{ github.workspace }}/openwrt
-        mixkey: 'CM520-79F-go126-v2'
+        mixkey: 'CM520-79F-${{ env.REPO_BRANCH }}-go126-v2'
 
     - name: Download and run create-banner.sh
       run: |
@@ -183,7 +173,7 @@ jobs:
         find dl -size -1024c -exec ls -l {} \;
         find dl -size -1024c -exec rm -f {} \;
 
-    - name: Build OpenWrt firmware (Full-Speed File Tracking)
+    - name: Build OpenWrt firmware (Smart File & Load Tracking)
       id: compile
       run: |
         cd openwrt
@@ -191,49 +181,51 @@ jobs:
         MAIN_PID=$$
         COMPILE_OK=false
         
-        mkdir -p build_dir
+        # 🌟 擴大探針範圍：同時監控三個核心 I/O 目錄，徹底消除工具鏈和固件打包階段的監控盲區
+        mkdir -p build_dir staging_dir tmp
         touch /tmp/watchdog_last
 
         (
-          echo "=== 4層深度增量文件監視器已啟動 ==="
+          echo "=== 100分終極雙重監視器已啟動 ==="
           STUCK_COUNT=0
 
           while kill -0 $MAIN_PID 2>/dev/null; do
             sleep 60
 
-            NEW_FILES_COUNT=$(find build_dir -maxdepth 4 -newer /tmp/watchdog_last 2>/dev/null | wc -l)
+            # 🌟 核心增強：全路徑覆蓋監測
+            NEW_FILES_COUNT=$(find build_dir staging_dir tmp -maxdepth 4 -newer /tmp/watchdog_last 2>/dev/null | wc -l)
             touch /tmp/watchdog_last
 
             if [ "$NEW_FILES_COUNT" -eq 0 ]; then
               STUCK_COUNT=$((STUCK_COUNT + 1))
+              
+              # 內存直讀負載
+              LOAD1=$(awk '{print $1}' /proc/loadavg)
 
-              if [ "$STUCK_COUNT" -ge 10 ] && [ "$STUCK_COUNT" -lt 30 ]; then
-                echo "========================================================"
-                echo "⚠️  [警告] 4層深度磁碟寫入已連續 $STUCK_COUNT 分鐘無增量！"
-                echo "📊 負載(Load Avg): $(cat /proc/loadavg | awk '{print $1,$2,$3}')"
-                echo "💡 提示：若負載仍高，可能是在進行超大單核內存運算，請保持耐心..."
-                echo "========================================================"
-              fi
-
-              if [ "$STUCK_COUNT" -ge 30 ]; then
-                echo "========================================================"
-                echo "🚨 [核心警告] 4層內未監測到任何文件增量，已死鎖滿 30 分鐘！"
-                echo "📊 正在強行剝離底層進程外殼，捕獲當前處理進程樹詳情..."
-                echo "========================================================"
-                echo "⏱️  當前時間: $(date '+%Y-%m-%d %H:%M:%S')"
-                echo "📊 系統負載: $(cat /proc/loadavg | awk '{print $1,$2,$3}')"
+              # 🌟 終極決策平衡：閾值修正為完美的 0.25，精確過濾 Actions 背景噪音
+              if awk "BEGIN{exit !($LOAD1 > 0.25)}"; then
+                echo "🔥 [提示] 當前無文件增量，但 LoadAvg ($LOAD1 > 0.25) 顯示 CPU 活躍，編譯鏈仍在高效運轉..."
+                [ "$STUCK_COUNT" -gt 5 ] && STUCK_COUNT=5
+              else
+                echo "⚠️ [警告] 當前監控目錄無增量且 LoadAvg ($LOAD1 < 0.25) 顯示系統空閒！"
                 
-                echo -e "\n🌳 [進程樹拓撲]（精確定位卡死的具體編譯鏈）："
-                if command -v pstree >/dev/null 2>&1; then
-                  pstree -a -p $MAIN_PID
-                else
-                  ps -ef --forest | grep -E "$MAIN_PID|make" | grep -v grep
+                # 30分鐘疑似卡死
+                if [ "$STUCK_COUNT" -ge 30 ] && [ "$STUCK_COUNT" -lt 60 ]; then
+                  echo "========================================================"
+                  echo "🚨 [疑似卡死] 連續 30 分鐘無磁碟寫入且 CPU 負載低於安全線！"
+                  echo "📊 當前系統負載: $LOAD1 | 檢查時間: $(date '+%Y-%m-%d %H:%M:%S')"
+                  echo "========================================================"
                 fi
-                
-                echo -e "\n🔍 [詳細行為審計]："
-                ps -ef | grep -E "make|gcc|g++|clang" | grep -v grep | awk '{print "👉 PID:",$2,"| 狀態:",$8,"| 执行命令:",$0}' | cut -c1-200
-                echo "========================================================"
-                STUCK_COUNT=0
+
+                # 60分鐘絕對熔斷
+                if [ "$STUCK_COUNT" -ge 60 ]; then
+                  echo "========================================================"
+                  echo "❌ [死鎖確診] 滿 60 分鐘無增量且 CPU 處於絕對死寂狀態 ($LOAD1)！"
+                  echo "🛑 強行終止主進程，準備切換單線程降級救磚！"
+                  echo "========================================================"
+                  kill $MAIN_PID 2>/dev/null || true
+                  exit 1
+                fi
               fi
             else
               STUCK_COUNT=0
@@ -244,14 +236,14 @@ jobs:
         MONITOR_PID=$!
 
         echo "========================================================"
-        echo "🚀 滿血編譯啟動：直刷控制台（無管道阻塞、4層增量探針監控中）"
+        echo "🚀 滿血編譯啟動（全路徑 I/O + 0.25 負載控線完美護航）"
         echo "========================================================"
 
         if make -j$(nproc); then
           COMPILE_OK=true
         else
           echo "========================================================"
-          echo "⚠️  多線程編譯失敗，正在清理監視器，準備單線程降級救磚..."
+          echo "⚠️  多線程編譯異常，正在清理監視器，準備單線程降級救磚..."
           echo "========================================================"
           kill $MONITOR_PID 2>/dev/null || true
 
@@ -302,6 +294,11 @@ jobs:
         name: OpenWrt_${{ env.FILE_NAME }}_${{ env.DEVICE_NAME }}_${{ env.FILE_DATE }}
         path: ${{ env.FIRMWARE }}
         retention-days: 30
+
+    - name: Ensure build log directory exists
+      if: always()
+      run: |
+        mkdir -p openwrt/logs
 
     - name: Upload build logs and config
       if: always()

@@ -57,10 +57,6 @@ jobs:
         DEBIAN_FRONTEND: noninteractive
       run: |
         sudo apt-get clean
-        sudo rm -rf /var/lib/apt/lists/*
-        sudo rm -rf /etc/apt/sources.list.d/* /usr/local/lib/android /opt/ghc /usr/share/dotnet /usr/local/graalvm /usr/local/.ghcup \
-        /usr/local/share/powershell /usr/local/share/chromium /usr/local/lib/node_modules
-
         sudo -E apt-get -qq update
         sudo -E apt-get -qq install $(curl -fsSL bit.ly/3AS48v1) xxd coreutils patch psmisc
         sudo -E apt-get -qq autoremove --purge
@@ -120,7 +116,6 @@ jobs:
         chmod +x /tmp/create-banner.sh
         bash /tmp/create-banner.sh
 
-    # 🌟 成功加回：防禦性 Fail-Fast 熔斷斷言步驟
     - name: Debug banner package creation details
       run: |
         if [ -d "openwrt/package/custom/luci-app-banner" ]; then
@@ -183,13 +178,11 @@ jobs:
     - name: Download packages
       run: |
         cd openwrt
-        make defconfig
         echo "=== 啟動全量高速並行下載 ==="
         make download -j8
         find dl -size -1024c -exec ls -l {} \;
         find dl -size -1024c -exec rm -f {} \;
 
-    # 滿血編譯：深度增量 I/O 探針完全體
     - name: Build OpenWrt firmware (Full-Speed File Tracking)
       id: compile
       run: |
@@ -198,11 +191,9 @@ jobs:
         MAIN_PID=$$
         COMPILE_OK=false
         
-        # 提前創建必要的目錄與初始化時間戳防呆，確保時序絕對安全
         mkdir -p build_dir
         touch /tmp/watchdog_last
 
-        # 後台【深度增量文件計數監視器】
         (
           echo "=== 4層深度增量文件監視器已啟動 ==="
           STUCK_COUNT=0
@@ -210,16 +201,12 @@ jobs:
           while kill -0 $MAIN_PID 2>/dev/null; do
             sleep 60
 
-            # 探針核心：統計過去一分鐘內，4層嵌套目錄下有多少新生成/被修改的文件
             NEW_FILES_COUNT=$(find build_dir -maxdepth 4 -newer /tmp/watchdog_last 2>/dev/null | wc -l)
-            
-            # 拍照存根，刷新下一分鐘的比對基準
             touch /tmp/watchdog_last
 
             if [ "$NEW_FILES_COUNT" -eq 0 ]; then
               STUCK_COUNT=$((STUCK_COUNT + 1))
 
-              # ⏱️ 停滯 10~29 分鐘：打印負載
               if [ "$STUCK_COUNT" -ge 10 ] && [ "$STUCK_COUNT" -lt 30 ]; then
                 echo "========================================================"
                 echo "⚠️  [警告] 4層深度磁碟寫入已連續 $STUCK_COUNT 分鐘無增量！"
@@ -228,7 +215,6 @@ jobs:
                 echo "========================================================"
               fi
 
-              # 🚨 停滯滿 30 分鐘：無增量且滿半小時，打印進程樹詳情
               if [ "$STUCK_COUNT" -ge 30 ]; then
                 echo "========================================================"
                 echo "🚨 [核心警告] 4層內未監測到任何文件增量，已死鎖滿 30 分鐘！"
@@ -250,7 +236,6 @@ jobs:
                 STUCK_COUNT=0
               fi
             else
-              # 只要有一行文件增量，證明編譯高度活躍，立刻清零計數器
               STUCK_COUNT=0
             fi
           done
@@ -262,7 +247,6 @@ jobs:
         echo "🚀 滿血編譯啟動：直刷控制台（無管道阻塞、4層增量探針監控中）"
         echo "========================================================"
 
-        # 回歸 v1 的純粹三段式抗干擾編譯與單線程救磚
         if make -j$(nproc); then
           COMPILE_OK=true
         else
@@ -291,7 +275,6 @@ jobs:
           exit 1
         fi
 
-    # 唯一合法 SSH 攔截點
     - name: Automatically Trigger SSH on Compilation Failure
       uses: mxschmitt/action-tmate@v3
       if: failure()
@@ -343,8 +326,9 @@ jobs:
         artifacts: ${{ env.FIRMWARE }}/*
         body: |
           - 默认IP：192.168.3.1 默认密码：无
-          - 当前使用版本:【编译前的最后一次更新記錄】
-          ${{ env.useVersionInfo }}
+          - 当前源码版本更新记录：
+
+          ${{ env.GITHUB_ENV.useVersionInfo || env.useVersionInfo }}
 
     - name: Delete workflow runs
       uses: Mattraks/delete-workflow-runs@v2

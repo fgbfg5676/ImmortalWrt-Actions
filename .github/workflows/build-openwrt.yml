@@ -3,11 +3,6 @@ name: Build OpenWrt for CM520-79F
 on:
   repository_dispatch:
   workflow_dispatch:
-    inputs:
-      ssh:
-        description: 'SSH connection to Actions'
-        required: false
-        default: 'false'
 
 env:
   REPO_URL: https://github.com/immortalwrt/immortalwrt
@@ -39,7 +34,7 @@ jobs:
         df -hT
         echo "=============================================================================="
 
-    - name: Maximize Build Space (Partition Expansion - Original Stable Config)
+    - name: Maximize Build Space (Partition Expansion)
       uses: easimon/maximize-build-space@master
       with: 
         root-reserve-mb: 2048
@@ -70,29 +65,39 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v4
 
+    # ✅ 融合外圍清理：防禦 apt 更新卡死，不影響任何編譯鏈
     - name: Initialization environment
       env:
         DEBIAN_FRONTEND: noninteractive
       run: |
         sudo apt-get clean
-        # 🌟 核心修復：帶回你原版的核心清理命令，徹底乾失第三方源引起的 update 卡死
         sudo rm -rf /var/lib/apt/lists/*
         sudo rm -rf /etc/apt/sources.list.d/* /usr/local/lib/android /opt/ghc /usr/share/dotnet /usr/local/graalvm /usr/local/.ghcup \
         /usr/local/share/powershell /usr/local/share/chromium /usr/local/lib/node_modules
         
         sudo -E apt-get -qq update
-        # 🌟 順手補上監控器必備的 psmisc 包
-        sudo -E apt-get -qq install $(curl -fsSL bit.ly/3AS48v1) xxd coreutils patch psmisc
+        sudo -E apt-get -qq install $(curl -fsSL bit.ly/3AS48v1) xxd coreutils patch
         sudo -E apt-get -qq autoremove --purge
         sudo -E apt-get -qq clean
         sudo timedatectl set-timezone "$TZ"
         sudo chown $USER:$GROUPS $GITHUB_WORKSPACE
 
+    # ✅ 原版借鑑：精準對齊 Go 1.26
     - name: Setup Go (1.26.x)
       uses: actions/setup-go@v5
       with:
         go-version: '1.26.x'
         cache: false
+
+    - name: Verify Go version
+      run: |
+        GO_VER=$(go version | awk '{print $3}')
+        if [[ "$GO_VER" != go1.26.* ]]; then
+          echo "[ERROR] Go version mismatch. Required: go1.26.x, Found: $GO_VER"
+          exit 1
+        else
+          echo "[SUCCESS] Go version OK: $GO_VER"
+        fi
 
     - name: Clone source code
       working-directory: ./
@@ -107,12 +112,13 @@ jobs:
         echo "DATE=$(date "+%Y-%m-%d %H:%M:%S")" >> $GITHUB_ENV
         echo "DATE1=$(date "+%Y-%m-%d")" >> $GITHUB_ENV
 
-    - name: Cache build (ccache)
+    # ✅ 保留大版本綁定：緩存防污染精髓
+    - name: Cache
       uses: stupidloud/cachewrtbuild@main
       with:
         ccache: 'true'
         prefix: ${{ github.workspace }}/openwrt
-        mixkey: 'CM520-79F-${{ env.REPO_BRANCH }}-go126-v2'
+        mixkey: 'CM520-79F-go126'
 
     - name: Download and run create-banner.sh
       run: |
@@ -138,6 +144,7 @@ jobs:
           ../"$DIY_P1_SH"
         fi
 
+    # ✅ 原版借鑑：四行強硬篡改命令，專為主力代理插件護航
     - name: Add additional feeds
       run: |
         cd openwrt
@@ -184,119 +191,37 @@ jobs:
         fi
         make defconfig
 
-    - name: SSH connection to Actions
-      uses: mxschmitt/action-tmate@v3
-      if: (github.event.inputs.ssh == 'true' && github.event.inputs.ssh  != 'false') || contains(github.event.action, 'ssh')
+    # ❌ 徹底拔除原本放在這裡、在國內極其雞肋的 tmate SSH 步驟
 
     - name: Download packages with retry
       id: package
       run: |
         cd openwrt
-        echo "=== 啟動全量高速並行下載 ==="
         make download -j8
         find dl -size -1024c -exec ls -l {} \;
         find dl -size -1024c -exec rm -f {} \;
 
-    - name: Build OpenWrt firmware (Smart File & Load Tracking)
+    # ✅ 原版借鑑：徹底扔掉監控垃圾代碼，恢復你最純淨、原裝的經典防撞牆編譯命令
+    - name: Build OpenWrt firmware
       id: compile
       run: |
         cd openwrt
-
-        MAIN_PID=$$
-        COMPILE_OK=false
-        
-        mkdir -p build_dir staging_dir tmp
-        touch /tmp/watchdog_last
-
-        (
-          echo "=== 終極雙重監視器已啟動 ==="
-          STUCK_COUNT=0
-
-          while kill -0 $MAIN_PID 2>/dev/null; do
-            sleep 60
-
-            # 監控三個核心 I/O 目錄
-            NEW_FILES_COUNT=$(find build_dir staging_dir tmp -maxdepth 4 -newer /tmp/watchdog_last 2>/dev/null | wc -l)
-            touch /tmp/watchdog_last
-
-            if [ "$NEW_FILES_COUNT" -eq 0 ]; then
-              STUCK_COUNT=$((STUCK_COUNT + 1))
-              
-              LOAD1=$(awk '{print $1}' /proc/loadavg)
-
-              # 0.25 完美平衡線
-              if awk "BEGIN{exit !($LOAD1 > 0.25)}"; then
-                echo "🔥 [提示] 當前無文件增量，但 LoadAvg ($LOAD1 > 0.25) 顯示 CPU 活躍，編譯鏈仍在高效運轉..."
-                [ "$STUCK_COUNT" -gt 5 ] && STUCK_COUNT=5
-              else
-                echo "⚠️ [警告] 當前監控目錄無增量且 LoadAvg ($LOAD1 < 0.25) 顯示系統空閒！"
-                
-                if [ "$STUCK_COUNT" -ge 30 ] && [ "$STUCK_COUNT" -lt 60 ]; then
-                  echo "========================================================"
-                  echo "🚨 [疑似卡死] 連續 30 分鐘無磁碟寫入且 CPU 負載低於安全線！"
-                  echo "📊 當前系統負載: $LOAD1 | 檢查時間: $(date '+%Y-%m-%d %H:%M:%S')"
-                  echo "========================================================"
-                fi
-
-                if [ "$STUCK_COUNT" -ge 60 ]; then
-                  echo "========================================================"
-                  echo "❌ [死鎖確診] 滿 60 分鐘無增量且 CPU 處於絕對死寂狀態 ($LOAD1)！"
-                  echo "🛑 強行終止主進程，準備切換單線程降級救磚！"
-                  echo "========================================================"
-                  kill $MAIN_PID 2>/dev/null || true
-                  exit 1
-                fi
-              fi
-            else
-              STUCK_COUNT=0
-            fi
-          done
-          echo "=== 監視器安全退出 ==="
-        ) &
-        MONITOR_PID=$!
-
-        echo "========================================================"
-        echo "🚀 滿血編譯啟動（全路徑 I/O + 0.25 負載控線完美護航）"
-        echo "========================================================"
-
-        if make -j$(nproc); then
-          COMPILE_OK=true
-        else
-          echo "========================================================"
-          echo "⚠️  多線程編譯異常，正在清理監視器，準備單線程降級救磚..."
-          echo "========================================================"
-          kill $MONITOR_PID 2>/dev/null || true
-
-          echo "🔧 第二階段：單線程救磚模式 (make -j1 V=s)"
-          if make -j1 V=s; then
-            COMPILE_OK=true
-          else
-            COMPILE_OK=false
-          fi
-        fi
-
-        kill $MONITOR_PID 2>/dev/null || true
-
-        if [ "$COMPILE_OK" = "true" ]; then
-          grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
-          [ -s DEVICE_NAME ] && echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> $GITHUB_ENV
-          echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
-          echo "status=success" >> $GITHUB_OUTPUT
-        else
-          echo "status=failure" >> $GITHUB_OUTPUT
-          exit 1
-        fi
-
-    - name: Automatically Trigger SSH on Compilation Failure
-      uses: mxschmitt/action-tmate@v3
-      if: failure()
-      timeout-minutes: 30
-      with:
-        limit-access-to-actor: true
+        make -j$(nproc) || make -j1 || make -j1 V=s
+        grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
+        [ -s DEVICE_NAME ] && echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> $GITHUB_ENV
+        echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
+        echo "status=success" >> $GITHUB_OUTPUT
 
     - name: Check space usage
       if: (!cancelled())
       run: df -hT
+
+    - name: Upload bin directory
+      uses: actions/upload-artifact@v4
+      if: steps.compile.outputs.status == 'success' && env.UPLOAD_BIN_DIR == 'true'
+      with:
+        name: OpenWrt_bin${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
+        path: openwrt/bin
 
     - name: Organize files
       id: organize
@@ -309,16 +234,10 @@ jobs:
 
     - name: Upload firmware artifact
       uses: actions/upload-artifact@v4
-      if: steps.compile.outputs.status == 'success' && !cancelled()
       with:
         name: OpenWrt_${{ env.FILE_NAME }}_${{ env.DEVICE_NAME }}_${{ env.FILE_DATE }}
-        path: ${{ env.FIRMWARE }}
+        path: ${{ env.FIRMWARE || env.FIRMWARE_PATH }}
         retention-days: 30
-
-    - name: Ensure build log directory exists
-      if: always()
-      run: |
-        mkdir -p openwrt/logs
 
     - name: Upload build logs and config
       if: always()
@@ -328,6 +247,7 @@ jobs:
         path: |
           openwrt/logs/
           openwrt/.config
+          openwrt/bin/packages/
         retention-days: 7
 
     - name: Upload OpenWrt Firmware to Release

@@ -96,3 +96,5 @@ rm -rf tmp/
 # -------------------- 配置寫入 --------------------
 echo "CONFIG_PACKAGE_luci-app-partexp=y" >> .config
 echo "CONFIG_PACKAGE_luci-app-passwall2=y" >> .config
+# 徹底清除所有動態拉取軟體包中對 xray-plugin 的強依賴
+find ./package/ -type f -name "Makefile" -exec sed -i 's/+xray-plugin//g' {} + 2>/dev/null || true

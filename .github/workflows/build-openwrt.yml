@@ -3,7 +3,6 @@ name: Build OpenWrt for CM520-79F
 on:
   repository_dispatch:
   workflow_dispatch:
-    # 💡 徹底去掉了手動 SSH 的 inputs 參數開關
 
 env:
   REPO_URL: https://github.com/immortalwrt/immortalwrt
@@ -111,13 +110,12 @@ jobs:
         echo "DATE=$(date "+%Y-%m-%d %H:%M:%S")" >> $GITHUB_ENV
         echo "DATE1=$(date "+%Y-%m-%d")" >> $GITHUB_ENV
 
-    # 🛠️ 【修復致命點】：加入分支與環境鎖定，防緩存交叉污染
     - name: Cache
       uses: stupidloud/cachewrtbuild@main
       with:
         ccache: 'true'
         prefix: ${{ github.workspace }}/openwrt
-        mixkey: 'CM520-79F-${{ env.REPO_BRANCH }}-go126-v6'
+        mixkey: 'CM520-79F-${{ env.REPO_BRANCH }}-go126-v8'
 
     - name: Download and run create-banner.sh
       run: |
@@ -143,29 +141,53 @@ jobs:
           ../"$DIY_P1_SH"
         fi
 
-    # 100% 保留你原版強力的全局暴力篡改基因
     - name: Add additional feeds
       run: |
         cd openwrt
         echo "src-git golang https://github.com/sbwml/packages_lang_golang;26.x" >> feeds.conf.default
-        
-        echo "=== 正在強制將源碼內部的 Go 版本篡改為 1.26 ==="
-        find ./ -type f -name "*.mk" -exec sed -i 's/GO_VERSION:=1.25/GO_VERSION:=1.26/g' {} + 2>/dev/null || true
-        find ./ -type f -name "Makefile" -exec sed -i 's/go1.25/go1.26/g' {} + 2>/dev/null || true
-        
-        if [ -f rules.mk ]; then
-          sed -i 's/GO_VERSION:=.*/GO_VERSION:=1.26/g' rules.mk 2>/dev/null || true
-        fi
-        if [ -f include/host-build.mk ]; then
-          sed -i 's/GO_VERSION:=.*/GO_VERSION:=1.26/g' include/host-build.mk 2>/dev/null || true
-        fi
-        echo "=== 源碼底層 Go 版本篡改完成 ==="
 
     - name: Update feeds
       run: cd openwrt && ./scripts/feeds update -a
 
+    # ✅ 採納修正 2：升級為吃掉小版本尾巴的整行替換/精準正則，徹底粉碎 1.26.7 非法版本號隱患
+    - name: Force Go 1.26 alignment (post-update)
+      run: |
+        cd openwrt
+        echo "=== 後置 Go 版本對齊 ==="
+        
+        # 覆蓋 golang feed（整行改寫 + 殘留尾巴清理雙保險）
+        find feeds/golang/ -type f \( -name "Makefile" -o -name "*.mk" \) \
+          -exec sed -i '/GO_VERSION:=/s/.*/GO_VERSION:=1.26/' {} + 2>/dev/null || true
+        find feeds/golang/ -type f \( -name "Makefile" -o -name "*.mk" \) \
+          -exec sed -i 's/go1\.[0-9][0-9]*\(\.[0-9][0-9]*\)\{0,1\}/go1.26/g' {} + 2>/dev/null || true
+        
+        # 覆蓋自定義包目錄
+        find package/others/my_packages/ -type f \( -name "Makefile" -o -name "*.mk" \) \
+          -exec sed -i '/GO_VERSION:=/s/.*/GO_VERSION:=1.26/' {} + 2>/dev/null || true
+        find package/others/my_packages/ -type f \( -name "Makefile" -o -name "*.mk" \) \
+          -exec sed -i 's/go1\.[0-9][0-9]*\(\.[0-9][0-9]*\)\{0,1\}/go1.26/g' {} + 2>/dev/null || true
+        
+        # 頂層規則
+        [ -f rules.mk ] && sed -i '/GO_VERSION:=/s/.*/GO_VERSION:=1.26/' rules.mk
+        [ -f include/host-build.mk ] && sed -i '/GO_VERSION:=/s/.*/GO_VERSION:=1.26/' include/host-build.mk
+        
+        echo "=== 驗證 ==="
+        grep -r "GO_VERSION" feeds/golang/ 2>/dev/null | head -5 || echo "⚠️ feeds/golang 驗證失敗"
+        echo "=== 完成 ==="
+
     - name: Install feeds
       run: cd openwrt && ./scripts/feeds install -a
+
+    # ✅ 採納修正 1：加強驗證 golang/host 註冊狀態，若異常則單獨強制補火安裝，根治依賴警告
+    - name: Verify golang/host registration
+      run: |
+        cd openwrt
+        if ./scripts/feeds list -r golang 2>/dev/null | grep -q "golang"; then
+          echo "✓ golang feed 已註冊"
+        else
+          echo "⚠️ golang feed 註冊異常，嘗試單獨安裝"
+          ./scripts/feeds install golang
+        fi
 
     - name: Copy custom configuration
       run: |
@@ -190,8 +212,6 @@ jobs:
         fi
         make defconfig
 
-    # ❌ 依照要求：這裡原本的手動 SSH 模組已被徹底刪除，不留痕跡。
-
     - name: Download packages with retry
       id: package
       run: |
@@ -200,13 +220,11 @@ jobs:
         find dl -size -1024c -exec ls -l {} \;
         find dl -size -1024c -exec rm -f {} \;
 
-    # 🛠️ 【修復致命點】：拒絕假成功。如果多線程/單線程降級都失敗，立刻傳遞錯誤代碼給 Github 中斷。
-    # ❌ 依照要求：絕不在此觸發任何 SSH 掛起，出錯直接退。
     - name: Build OpenWrt firmware
       id: compile
       run: |
         cd openwrt
-        echo "🚀 原版基因全速編譯啟動..."
+        echo "🚀 修訂版 v4 全速編譯啟動..."
         
         if make -j$(nproc) || make -j1 || make -j1 V=s; then
           grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
@@ -214,7 +232,7 @@ jobs:
           echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
           echo "status=success" >> $GITHUB_OUTPUT
         else
-          echo "🚨 編譯徹底失敗！硬核中斷流程！"
+          echo "🚨 編譯徹底失敗！拒絕向下偽造成功狀態！"
           echo "status=failure" >> $GITHUB_OUTPUT
           exit 1
         fi

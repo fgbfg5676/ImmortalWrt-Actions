@@ -110,12 +110,13 @@ jobs:
         echo "DATE=$(date "+%Y-%m-%d %H:%M:%S")" >> $GITHUB_ENV
         echo "DATE1=$(date "+%Y-%m-%d")" >> $GITHUB_ENV
 
+    # ✅ 採納絕殺修正：緩存推進至 v9，徹底隔絕舊版 1.23 Toolchain 殘留污染
     - name: Cache
       uses: stupidloud/cachewrtbuild@main
       with:
         ccache: 'true'
         prefix: ${{ github.workspace }}/openwrt
-        mixkey: 'CM520-79F-${{ env.REPO_BRANCH }}-go126-v8'
+        mixkey: 'CM520-79F-${{ env.REPO_BRANCH }}-go126-v9'
 
     - name: Download and run create-banner.sh
       run: |
@@ -149,13 +150,17 @@ jobs:
     - name: Update feeds
       run: cd openwrt && ./scripts/feeds update -a
 
-    # ✅ 採納修正 2：升級為吃掉小版本尾巴的整行替換/精準正則，徹底粉碎 1.26.7 非法版本號隱患
+    # ✅ 採納終極案情診斷：物理拔除內置舊版、升級精準正則、同步覆蓋頂層規則
     - name: Force Go 1.26 alignment (post-update)
       run: |
         cd openwrt
-        echo "=== 後置 Go 版本對齊 ==="
+        echo "=== 刪除 feeds/packages 內建舊版 golang，強制使用注入的 26.x feed ==="
+        # 這是真正的元兇：構建系統優先選了這裡的舊版 go 1.23.12
+        rm -rf feeds/packages/lang/golang
+        echo "✓ 已刪除 feeds/packages/lang/golang"
         
-        # 覆蓋 golang feed（整行改寫 + 殘留尾巴清理雙保險）
+        echo "=== 後置 Go 版本對齊 ==="
+        # 覆蓋 golang feed
         find feeds/golang/ -type f \( -name "Makefile" -o -name "*.mk" \) \
           -exec sed -i '/GO_VERSION:=/s/.*/GO_VERSION:=1.26/' {} + 2>/dev/null || true
         find feeds/golang/ -type f \( -name "Makefile" -o -name "*.mk" \) \
@@ -171,14 +176,13 @@ jobs:
         [ -f rules.mk ] && sed -i '/GO_VERSION:=/s/.*/GO_VERSION:=1.26/' rules.mk
         [ -f include/host-build.mk ] && sed -i '/GO_VERSION:=/s/.*/GO_VERSION:=1.26/' include/host-build.mk
         
-        echo "=== 驗證 ==="
+        echo "=== 驗證（應只剩 feeds/golang/ 這一套） ==="
         grep -r "GO_VERSION" feeds/golang/ 2>/dev/null | head -5 || echo "⚠️ feeds/golang 驗證失敗"
         echo "=== 完成 ==="
 
     - name: Install feeds
       run: cd openwrt && ./scripts/feeds install -a
 
-    # ✅ 採納修正 1：加強驗證 golang/host 註冊狀態，若異常則單獨強制補火安裝，根治依賴警告
     - name: Verify golang/host registration
       run: |
         cd openwrt
@@ -224,7 +228,7 @@ jobs:
       id: compile
       run: |
         cd openwrt
-        echo "🚀 修訂版 v4 全速編譯啟動..."
+        echo "🚀 融入終極診斷方案（v5）全速編譯啟動..."
         
         if make -j$(nproc) || make -j1 || make -j1 V=s; then
           grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME

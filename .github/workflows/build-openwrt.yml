@@ -1,8 +1,9 @@
-name: Build OpenWrt for CM520-79F (Safe Precise Edition)
+name: Build OpenWrt for CM520-79F
 
 on:
   repository_dispatch:
   workflow_dispatch:
+    # 💡 徹底去掉了手動 SSH 的 inputs 參數開關
 
 env:
   REPO_URL: https://github.com/immortalwrt/immortalwrt
@@ -34,14 +35,12 @@ jobs:
         df -hT
         echo "=============================================================================="
 
-    # ✅ 整合優勢：高級磁碟擴容，確保固若金湯
-    - name: Maximize Build Space (Partition Expansion)
+    - name: Maximize Build Space (Partition Expansion - Reverted to Original Stable Config)
       uses: easimon/maximize-build-space@master
       with: 
         root-reserve-mb: 2048
         swap-size-mb: 1
 
-    # ✅ 整合優勢：現代化空間優化器
     - name: Optimize Disk Space (hugoalh/disk-space-optimizer-ghaction)
       uses: hugoalh/disk-space-optimizer-ghaction@v0.8.1
       with:
@@ -67,7 +66,6 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v4
 
-    # ✅ 整合優勢：環境初始化清理
     - name: Initialization environment
       env:
         DEBIAN_FRONTEND: noninteractive
@@ -84,12 +82,21 @@ jobs:
         sudo timedatectl set-timezone "$TZ"
         sudo chown $USER:$GROUPS $GITHUB_WORKSPACE
 
-    # ✅ 核心對齊：純淨的 Go 1.26 容器環境
     - name: Setup Go (1.26.x)
       uses: actions/setup-go@v5
       with:
         go-version: '1.26.x'
         cache: false
+
+    - name: Verify Go version
+      run: |
+        GO_VER=$(go version | awk '{print $3}')
+        if [[ "$GO_VER" != go1.26.* ]]; then
+          echo "[ERROR] Go version mismatch. Required: go1.26.x, Found: $GO_VER"
+          exit 1
+        else
+          echo "[SUCCESS] Go version OK: $GO_VER"
+        fi
 
     - name: Clone source code
       working-directory: ./
@@ -104,13 +111,13 @@ jobs:
         echo "DATE=$(date "+%Y-%m-%d %H:%M:%S")" >> $GITHUB_ENV
         echo "DATE1=$(date "+%Y-%m-%d")" >> $GITHUB_ENV
 
-    # ✅ 整合優勢：大版本與分支綁定的獨立緩存
-    - name: Cache build (ccache)
+    # 🛠️ 【修復致命點】：加入分支與環境鎖定，防緩存交叉污染
+    - name: Cache
       uses: stupidloud/cachewrtbuild@main
       with:
         ccache: 'true'
         prefix: ${{ github.workspace }}/openwrt
-        mixkey: 'CM520-79F-${{ env.REPO_BRANCH }}-go126-v4'
+        mixkey: 'CM520-79F-${{ env.REPO_BRANCH }}-go126-v6'
 
     - name: Download and run create-banner.sh
       run: |
@@ -120,6 +127,7 @@ jobs:
 
     - name: Debug banner package creation details
       run: |
+        echo "=== Detailed Banner Package Debug Information ==="
         if [ -d "openwrt/package/custom/luci-app-banner" ]; then
           echo "✓ Banner package directory exists"
         else
@@ -135,23 +143,23 @@ jobs:
           ../"$DIY_P1_SH"
         fi
 
-    # ✅ 【重大改動：精準外科手術式對齊】
-    # 徹底刪除了危險的全局 find + sed 暴力硬改
-    # 改為：注入 26.x 官方核心 feeds，並精準鎖定 golang 倉庫自身的版本定義，0 風險、0 污染！
-    - name: Add additional feeds & Precise Go Alignment
+    # 100% 保留你原版強力的全局暴力篡改基因
+    - name: Add additional feeds
       run: |
         cd openwrt
         echo "src-git golang https://github.com/sbwml/packages_lang_golang;26.x" >> feeds.conf.default
         
-        echo "=== 正在執行安全精準的 Go 核心版本對齊 ==="
-        ./scripts/feeds update golang
-        if [ -f "feeds/golang/lang/golang/Makefile" ]; then
-          sed -i 's/GO_VERSION:=.*/GO_VERSION:=1.26.0/g' feeds/golang/lang/golang/Makefile
-          echo "✓ 成功將 feeds/golang 核心版本精準對齊為 1.26.0"
-        else
-          echo "⚠️ 未找到 feeds/golang 路徑，將依靠 setup-go 容器和 26.x feeds 分支進行標準編譯"
+        echo "=== 正在強制將源碼內部的 Go 版本篡改為 1.26 ==="
+        find ./ -type f -name "*.mk" -exec sed -i 's/GO_VERSION:=1.25/GO_VERSION:=1.26/g' {} + 2>/dev/null || true
+        find ./ -type f -name "Makefile" -exec sed -i 's/go1.25/go1.26/g' {} + 2>/dev/null || true
+        
+        if [ -f rules.mk ]; then
+          sed -i 's/GO_VERSION:=.*/GO_VERSION:=1.26/g' rules.mk 2>/dev/null || true
         fi
-        echo "=== 精準對齊完成 ==="
+        if [ -f include/host-build.mk ]; then
+          sed -i 's/GO_VERSION:=.*/GO_VERSION:=1.26/g' include/host-build.mk 2>/dev/null || true
+        fi
+        echo "=== 源碼底層 Go 版本篡改完成 ==="
 
     - name: Update feeds
       run: cd openwrt && ./scripts/feeds update -a
@@ -182,6 +190,8 @@ jobs:
         fi
         make defconfig
 
+    # ❌ 依照要求：這裡原本的手動 SSH 模組已被徹底刪除，不留痕跡。
+
     - name: Download packages with retry
       id: package
       run: |
@@ -190,38 +200,35 @@ jobs:
         find dl -size -1024c -exec ls -l {} \;
         find dl -size -1024c -exec rm -f {} \;
 
-    # ✅ 100% 純淨編譯：無監控、零干擾，出錯立刻降級單線程，不浪費時間
+    # 🛠️ 【修復致命點】：拒絕假成功。如果多線程/單線程降級都失敗，立刻傳遞錯誤代碼給 Github 中斷。
+    # ❌ 依照要求：絕不在此觸發任何 SSH 掛起，出錯直接退。
     - name: Build OpenWrt firmware
       id: compile
       run: |
         cd openwrt
-        echo "========================================================"
-        echo "🚀 全速編譯啟動（安全精準流 + 無監控純淨環境）"
-        echo "========================================================"
+        echo "🚀 原版基因全速編譯啟動..."
         
-        if make -j$(nproc); then
+        if make -j$(nproc) || make -j1 || make -j1 V=s; then
           grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
           [ -s DEVICE_NAME ] && echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> $GITHUB_ENV
           echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
           echo "status=success" >> $GITHUB_OUTPUT
         else
-          echo "========================================================"
-          echo "⚠️ 多線程遭遇阻礙，立刻切換單線程安全降級 (make -j1 V=s)..."
-          echo "========================================================"
-          if make -j1 V=s; then
-            grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
-            [ -s DEVICE_NAME ] && echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> $GITHUB_ENV
-            echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
-            echo "status=success" >> $GITHUB_OUTPUT
-          else
-            echo "status=failure" >> $GITHUB_OUTPUT
-            exit 1
-          fi
+          echo "🚨 編譯徹底失敗！硬核中斷流程！"
+          echo "status=failure" >> $GITHUB_OUTPUT
+          exit 1
         fi
 
     - name: Check space usage
       if: (!cancelled())
       run: df -hT
+
+    - name: Upload bin directory
+      uses: actions/upload-artifact@v4
+      if: steps.compile.outputs.status == 'success' && env.UPLOAD_BIN_DIR == 'true'
+      with:
+        name: OpenWrt_bin${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
+        path: openwrt/bin
 
     - name: Organize files
       id: organize
@@ -237,13 +244,8 @@ jobs:
       if: steps.compile.outputs.status == 'success' && !cancelled()
       with:
         name: OpenWrt_${{ env.FILE_NAME }}_${{ env.DEVICE_NAME }}_${{ env.FILE_DATE }}
-        path: ${{ env.FIRMWARE }}
+        path: ${{ env.FIRMWARE || env.FIRMWARE_PATH }}
         retention-days: 30
-
-    - name: Ensure build log directory exists
-      if: always()
-      run: |
-        mkdir -p openwrt/logs
 
     - name: Upload build logs and config
       if: always()

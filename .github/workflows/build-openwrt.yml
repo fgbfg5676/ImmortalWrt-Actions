@@ -110,12 +110,13 @@ jobs:
         echo "DATE=$(date "+%Y-%m-%d %H:%M:%S")" >> $GITHUB_ENV
         echo "DATE1=$(date "+%Y-%m-%d")" >> $GITHUB_ENV
 
+    # 🚀 快取密鑰已升級至 v11，確保乾淨清爽的全新編譯環境
     - name: Cache
       uses: stupidloud/cachewrtbuild@main
       with:
         ccache: 'true'
         prefix: ${{ github.workspace }}/openwrt
-        mixkey: 'CM520-79F-${{ env.REPO_BRANCH }}-go126-v10'
+        mixkey: 'CM520-79F-${{ env.REPO_BRANCH }}-go126-v11'
 
     - name: Download and run create-banner.sh
       run: |
@@ -153,11 +154,8 @@ jobs:
       run: |
         cd openwrt
         echo "=== 強制用 sbwml golang feed 覆蓋內建版本 ==="
-        
-        # 顯式從 golang feed 安裝，覆蓋掉 packages feed 的舊版
         ./scripts/feeds install -p golang -f golang
         
-        # 覆蓋自定義包目錄版本號
         find package/others/my_packages/ -type f \( -name "Makefile" -o -name "*.mk" \) \
           -exec sed -i '/GO_VERSION:=/s/.*/GO_VERSION:=1.26/' {} + 2>/dev/null || true
         find package/others/my_packages/ -type f \( -name "Makefile" -o -name "*.mk" \) \
@@ -169,12 +167,10 @@ jobs:
           || echo "⚠️ 安裝後的 golang Makefile 未找到"
         echo "=== 完成 ==="
 
-    # ✅ 採納核心修改：加強 install 鏈條，全量 install 後執行二次強制點殺，粉碎覆蓋隱患
     - name: Install feeds
       run: |
         cd openwrt
         ./scripts/feeds install -a
-        echo "=== 二次強制覆蓋，防止 install -a 把 packages feed 的舊版重新壓回來 ==="
         ./scripts/feeds install -p golang -f golang
 
     - name: Copy custom configuration
@@ -212,7 +208,7 @@ jobs:
       id: compile
       run: |
         cd openwrt
-        echo "🚀 雙重防禦方案（v7）全速編譯啟動..."
+        echo "🚀 依賴鏈淨化方案（v11快取）全速編譯啟動..."
         
         if make -j$(nproc) || make -j1 || make -j1 V=s; then
           grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
@@ -220,7 +216,7 @@ jobs:
           echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
           echo "status=success" >> $GITHUB_OUTPUT
         else
-          echo "🚨 編譯徹底失敗！拒絕向下偽造成功狀態！"
+          echo "🚨 編譯徹底失敗！"
           echo "status=failure" >> $GITHUB_OUTPUT
           exit 1
         fi

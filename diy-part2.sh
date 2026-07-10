@@ -72,6 +72,9 @@ if [ -f "$CONFIG_GENERATE_FILE" ]; then
 fi
 
 # -------------------- 外圍應用處理 --------------------
+# 确保如果前面没定义该变量，给它一个安全的默认路径
+CUSTOM_PLUGINS_DIR="${CUSTOM_PLUGINS_DIR:-package/custom}"
+
 PLUGIN_LIST=("luci-app-partexp")
 PLUGIN_REPOS=("https://github.com/sirpdboy/luci-app-partexp.git")
 
@@ -80,13 +83,16 @@ for i in "${!PLUGIN_LIST[@]}"; do
     PLUGIN_URL="${PLUGIN_REPOS[$i]}"
     PLUGIN_PATH="$CUSTOM_PLUGINS_DIR/$PLUGIN_NAME"
 
+    # 1. 彻底清理旧目录，防止 Git 冲突
+    rm -rf "$PLUGIN_PATH"
+    rm -rf "package/$PLUGIN_NAME"
+
+    # 2. 尝试克隆（不指定特定分支，让 Git 自动跟随远程默认的主分支 main 或 master）
+    git clone --depth=1 "$PLUGIN_URL" "$PLUGIN_PATH"
+
+    # 3. 复制到编译包目录
     if [ -d "$PLUGIN_PATH" ]; then
-        rm -rf "$PLUGIN_PATH"
-    fi
-
-    git clone --depth 1 "$PLUGIN_URL" "$PLUGIN_PATH"
-
-    if [ ! -d "package/$PLUGIN_NAME" ]; then
+        mkdir -p package/
         cp -r "$PLUGIN_PATH" package/
     fi
 done
@@ -101,7 +107,7 @@ echo "CONFIG_PACKAGE_luci-i18n-passwall2-zh-cn=y" >> .config
 # 创建 OpenClash 内核存放目录
 mkdir -p package/luci-app-openclash/root/etc/openclash/core
 
-# 1. 预载 Meta(Mihomo) 内核（已修正 latest 拼写错误）
+# 1. 预载 Meta(Mihomo) 内核
 curl -sfL -o package/luci-app-openclash/root/etc/openclash/core/clash_meta.tar.gz https://raw.githubusercontent.com/vernesong/OpenClash/master/core-latest/meta/clash_meta-linux-armv7.tar.gz
 
 # 2. 如果下载成功，才执行解压操作

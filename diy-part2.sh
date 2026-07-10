@@ -72,9 +72,6 @@ if [ -f "$CONFIG_GENERATE_FILE" ]; then
 fi
 
 # -------------------- 外圍應用處理 --------------------
-# 确保如果前面没定义该变量，给它一个安全的默认路径
-CUSTOM_PLUGINS_DIR="${CUSTOM_PLUGINS_DIR:-package/custom}"
-
 PLUGIN_LIST=("luci-app-partexp")
 PLUGIN_REPOS=("https://github.com/sirpdboy/luci-app-partexp.git")
 
@@ -83,38 +80,38 @@ for i in "${!PLUGIN_LIST[@]}"; do
     PLUGIN_URL="${PLUGIN_REPOS[$i]}"
     PLUGIN_PATH="$CUSTOM_PLUGINS_DIR/$PLUGIN_NAME"
 
-    # 1. 彻底清理旧目录，防止 Git 冲突
-    rm -rf "$PLUGIN_PATH"
-    rm -rf "package/$PLUGIN_NAME"
+    if [ ! -d "$PLUGIN_PATH/.git" ]; then
+        log_info "Cloning $PLUGIN_NAME..."
+        git clone --depth 1 "$PLUGIN_URL" "$PLUGIN_PATH" || log_error "Failed to clone $PLUGIN_NAME"
+        log_success "Plugin $PLUGIN_NAME cloned successfully"
+    else
+        log_info "$PLUGIN_NAME already exists, skipping clone"
+    fi
 
-    # 2. 尝试克隆（不指定特定分支，让 Git 自动跟随远程默认的主分支 main 或 master）
-    git clone --depth=1 "$PLUGIN_URL" "$PLUGIN_PATH"
-
-    # 3. 复制到编译包目录
-    if [ -d "$PLUGIN_PATH" ]; then
-        mkdir -p package/
+    if [ ! -d "package/$PLUGIN_NAME" ]; then
         cp -r "$PLUGIN_PATH" package/
+        log_success "Plugin $PLUGIN_NAME copied to package/"
+    fi
+
+    if ! grep -q "CONFIG_PACKAGE_$PLUGIN_NAME=y" .config 2>/dev/null; then
+        echo "CONFIG_PACKAGE_$PLUGIN_NAME=y" >> .config
+        log_success "$PLUGIN_NAME enabled"
+    else
+        log_info "$PLUGIN_NAME already enabled, skipping"
     fi
 done
 
-rm -rf tmp/
-
-# -------------------- 配置寫入 --------------------
+# 1. 注入你需要的插件配置
 echo "CONFIG_PACKAGE_luci-app-partexp=y" >> .config
 echo "CONFIG_PACKAGE_luci-app-passwall2=y" >> .config
 echo "CONFIG_PACKAGE_luci-i18n-passwall2-zh-cn=y" >> .config
 
-# 创建 OpenClash 内核存放目录
-mkdir -p package/luci-app-openclash/root/etc/openclash/core
+# 2. 【核心】在源码包下载完成并开始编译前，强行在插件目录里创建 core 文件夹
+mkdir -p package/feeds/luci/luci-app-openclash/root/etc/openclash/core
 
-# 1. 预载 Meta(Mihomo) 内核
-curl -sfL -o package/luci-app-openclash/root/etc/openclash/core/clash_meta.tar.gz https://raw.githubusercontent.com/vernesong/OpenClash/master/core-latest/meta/clash_meta-linux-armv7.tar.gz
+# 3. 【核心】从官方下载对应你路由器的 armv7 独立二进制内核，直接重命名放入该目录
+# 注意：这一步直接使用 -f 参数。如果网络断开或 404，GitHub Actions 会在这一行直接明明白白报错，绝不扯到别的插件上。
+curl -fL -o package/feeds/luci/luci-app-openclash/root/etc/openclash/core/clash_meta https://raw.githubusercontent.com/vernesong/OpenClash/master/core-latest/meta/clash_meta-linux-armv7
 
-# 2. 如果下载成功，才执行解压操作
-if [ -f "package/luci-app-openclash/root/etc/openclash/core/clash_meta.tar.gz" ]; then
-    tar -zxf package/luci-app-openclash/root/etc/openclash/core/clash_meta.tar.gz -C package/luci-app-openclash/root/etc/openclash/core/
-    rm -f package/luci-app-openclash/root/etc/openclash/core/clash_meta.tar.gz
-fi
-
-# 3. 赋予执行权限
-chmod +x package/luci-app-openclash/root/etc/openclash/core/* 2>/dev/null || true
+# 4. 强行赋予编译树中的内核可执行权限，确保打包进固件后可以直接运行
+chmod +x package/feeds/luci/luci-app-openclash/root/etc/openclash/core/clash_meta

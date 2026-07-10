@@ -101,14 +101,14 @@ echo "CONFIG_PACKAGE_luci-i18n-passwall2-zh-cn=y" >> .config
 # 创建 OpenClash 内核存放目录
 mkdir -p package/luci-app-openclash/root/etc/openclash/core
 
-# 下载并将压缩包保存为 .tar.gz 后缀
-curl -sfL -o package/luci-app-openclash/root/etc/openclash/core/clash_meta.tar.gz https://raw.githubusercontent.com/vernesong/OpenClash/master/core-lateset/meta/clash_meta-linux-armv7.tar.gz
+# 1. 预载 Meta(Mihomo) 内核（已修正 latest 拼写错误）
+curl -sfL -o package/luci-app-openclash/root/etc/openclash/core/clash_meta.tar.gz https://raw.githubusercontent.com/vernesong/OpenClash/master/core-latest/meta/clash_meta-linux-armv7.tar.gz
 
-# 解压到指定目录
-tar -zxf package/luci-app-openclash/root/etc/openclash/core/clash_meta.tar.gz -C package/luci-app-openclash/root/etc/openclash/core/
+# 2. 如果下载成功，才执行解压操作
+if [ -f "package/luci-app-openclash/root/etc/openclash/core/clash_meta.tar.gz" ]; then
+    tar -zxf package/luci-app-openclash/root/etc/openclash/core/clash_meta.tar.gz -C package/luci-app-openclash/root/etc/openclash/core/
+    rm -f package/luci-app-openclash/root/etc/openclash/core/clash_meta.tar.gz
+fi
 
-# 删掉用完的压缩包
-rm -f package/luci-app-openclash/root/etc/openclash/core/clash_meta.tar.gz
-
-# 给内核赋予可执行权限
-chmod +x package/luci-app-openclash/root/etc/openclash/core/*
+# 3. 赋予执行权限
+chmod +x package/luci-app-openclash/root/etc/openclash/core/* 2>/dev/null || true

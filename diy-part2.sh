@@ -72,6 +72,9 @@ if [ -f "$CONFIG_GENERATE_FILE" ]; then
 fi
 
 # -------------------- 外圍應用處理 --------------------
+# 确保 CUSTOM_PLUGINS_DIR 有默认值
+CUSTOM_PLUGINS_DIR="${CUSTOM_PLUGINS_DIR:-package/custom}"
+
 PLUGIN_LIST=("luci-app-partexp")
 PLUGIN_REPOS=("https://github.com/sirpdboy/luci-app-partexp.git")
 
@@ -81,37 +84,37 @@ for i in "${!PLUGIN_LIST[@]}"; do
     PLUGIN_PATH="$CUSTOM_PLUGINS_DIR/$PLUGIN_NAME"
 
     if [ ! -d "$PLUGIN_PATH/.git" ]; then
-        log_info "Cloning $PLUGIN_NAME..."
-        git clone --depth 1 "$PLUGIN_URL" "$PLUGIN_PATH" || log_error "Failed to clone $PLUGIN_NAME"
-        log_success "Plugin $PLUGIN_NAME cloned successfully"
+        echo "INFO: Cloning $PLUGIN_NAME..."
+        # 彻底移除末尾的 log_error 函数，改用 Linux 标准的报错退出机制
+        git clone --depth=1 "$PLUGIN_URL" "$PLUGIN_PATH"
+        echo "SUCCESS: Plugin $PLUGIN_NAME cloned successfully"
     else
-        log_info "$PLUGIN_NAME already exists, skipping clone"
+        echo "INFO: $PLUGIN_NAME already exists, skipping clone"
     fi
 
     if [ ! -d "package/$PLUGIN_NAME" ]; then
         cp -r "$PLUGIN_PATH" package/
-        log_success "Plugin $PLUGIN_NAME copied to package/"
+        echo "SUCCESS: Plugin $PLUGIN_NAME copied to package/"
     fi
 
     if ! grep -q "CONFIG_PACKAGE_$PLUGIN_NAME=y" .config 2>/dev/null; then
         echo "CONFIG_PACKAGE_$PLUGIN_NAME=y" >> .config
-        log_success "$PLUGIN_NAME enabled"
+        echo "SUCCESS: $PLUGIN_NAME enabled"
     else
-        log_info "$PLUGIN_NAME already enabled, skipping"
+        echo "INFO: $PLUGIN_NAME already enabled, skipping"
     fi
 done
 
-# 1. 注入你需要的插件配置
-echo "CONFIG_PACKAGE_luci-app-partexp=y" >> .config
-echo "CONFIG_PACKAGE_luci-app-passwall2=y" >> .config
-echo "CONFIG_PACKAGE_luci-i18n-passwall2-zh-cn=y" >> .config
+# -------------------- OpenClash 内核硬核注入 --------------------
+echo "INFO: Starting OpenClash core injection..."
 
-# 2. 【核心】在源码包下载完成并开始编译前，强行在插件目录里创建 core 文件夹
+# 1. 强行创建精准的内核存放缓存路径（feeds 结构）
 mkdir -p package/feeds/luci/luci-app-openclash/root/etc/openclash/core
 
-# 3. 【核心】从官方下载对应你路由器的 armv7 独立二进制内核，直接重命名放入该目录
-# 注意：这一步直接使用 -f 参数。如果网络断开或 404，GitHub Actions 会在这一行直接明明白白报错，绝不扯到别的插件上。
+# 2. 从官方下载对应你路由器的 armv7 独立二进制内核，直接重命名放入该目录
 curl -fL -o package/feeds/luci/luci-app-openclash/root/etc/openclash/core/clash_meta https://raw.githubusercontent.com/vernesong/OpenClash/master/core-latest/meta/clash_meta-linux-armv7
 
-# 4. 强行赋予编译树中的内核可执行权限，确保打包进固件后可以直接运行
+# 3. 强行赋予编译树中的内核可执行权限，确保打包进固件后可以直接运行
 chmod +x package/feeds/luci/luci-app-openclash/root/etc/openclash/core/clash_meta
+
+echo "SUCCESS: OpenClash Meta core injected successfully!"

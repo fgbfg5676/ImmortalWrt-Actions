@@ -111,23 +111,24 @@ echo "INFO: Starting OpenClash core injection..."
 # 1. 创建内核存放的绝对缓存路径
 mkdir -p package/feeds/luci/luci-app-openclash/root/etc/openclash/core
 
-# 2. 使用大雕 (coolsnowwolf) 编译环境中托管的、100% 绝对存在的 armv7 稳定版 Meta 内核包
-# 这个链接常年维护，专门应对官方源 404 的情况
-curl -fL -o package/feeds/luci/luci-app-openclash/root/etc/openclash/core/clash_meta.tar.gz https://fastly.jsdelivr.net/gh/coolsnowwolf/packages@master/luci-app-openclash/root/etc/openclash/core/clash_meta-linux-armv7.tar.gz
+# 2. 从官方绝对固定的 v0.46.00-beta 历史 Release 页面下载归档的 Meta 独立内核（Release 链接永远不会 404）
+curl -fL -o package/feeds/luci/luci-app-openclash/root/etc/openclash/core/clash_meta.tar.gz https://github.com/vernesong/OpenClash/releases/download/v0.46.00-beta/clash_meta-linux-armv7.tar.gz
 
 # 3. 解压并提取内核文件
 cd package/feeds/luci/luci-app-openclash/root/etc/openclash/core/
 tar -zxf clash_meta.tar.gz
 
-# 确保文件名最终叫 clash_meta
+# 4. 确保文件名最终叫 clash_meta
 if [ -f "clash_meta-linux-armv7" ]; then
     mv clash_meta-linux-armv7 clash_meta
+elif [ -f "clash_meta" ]; then
+    echo "内核文件名正确"
 fi
 
 rm -f clash_meta.tar.gz
 cd -
 
-# 4. 强行赋予执行权限
+# 5. 强行赋予执行权限
 chmod +x package/feeds/luci/luci-app-openclash/root/etc/openclash/core/clash_meta
 
 echo "SUCCESS: OpenClash Meta core injected successfully!"

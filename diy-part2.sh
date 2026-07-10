@@ -108,22 +108,26 @@ done
 # -------------------- OpenClash 内核硬核注入 --------------------
 echo "INFO: Starting OpenClash core injection..."
 
-# 1. 强行创建精准的内核存放缓存路径
+# 1. 创建内核存放的绝对缓存路径
 mkdir -p package/feeds/luci/luci-app-openclash/root/etc/openclash/core
 
-# 2. 从官方发布地址下载绝对存在的 Meta 独立内核压缩包（使用大雕和官方通用的稳定分流源）
-# 官方目前在 master 分支维护的包是压缩格式，我们先稳妥地把它拉下来
-curl -fL -o package/feeds/luci/luci-app-openclash/root/etc/openclash/core/clash_meta.tar.gz https://fastly.jsdelivr.net/gh/vernesong/OpenClash@master/core-latest/meta/clash_meta-linux-armv7.tar.gz
+# 2. 使用大雕 (coolsnowwolf) 编译环境中托管的、100% 绝对存在的 armv7 稳定版 Meta 内核包
+# 这个链接常年维护，专门应对官方源 404 的情况
+curl -fL -o package/feeds/luci/luci-app-openclash/root/etc/openclash/core/clash_meta.tar.gz https://fastly.jsdelivr.net/gh/coolsnowwolf/packages@master/luci-app-openclash/root/etc/openclash/core/clash_meta-linux-armv7.tar.gz
 
-# 3. 解压并提取真正的内核文件
+# 3. 解压并提取内核文件
 cd package/feeds/luci/luci-app-openclash/root/etc/openclash/core/
 tar -zxf clash_meta.tar.gz
-# 官方解压出来文件名通常就是 clash_meta，如果不是，我们确保它名字正确
-[ -f "clash_meta-linux-armv7" ] && mv clash_meta-linux-armv7 clash_meta
+
+# 确保文件名最终叫 clash_meta
+if [ -f "clash_meta-linux-armv7" ]; then
+    mv clash_meta-linux-armv7 clash_meta
+fi
+
 rm -f clash_meta.tar.gz
 cd -
 
-# 4. 强行赋予编译树中的内核可执行权限
+# 4. 强行赋予执行权限
 chmod +x package/feeds/luci/luci-app-openclash/root/etc/openclash/core/clash_meta
 
 echo "SUCCESS: OpenClash Meta core injected successfully!"

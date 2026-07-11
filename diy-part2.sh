@@ -124,7 +124,7 @@ if [ $? -ne 0 ]; then
 fi
 
 tar -zxf "$CORE_DIR/clash_meta.tar.gz" -C "$CORE_DIR"
-mv "$CORE_DIR/clash-linux-armv7" "$CORE_DIR/clash_meta" 2>/dev/null || true
+mv "$CORE_DIR/clash" "$CORE_DIR/clash_meta"
 rm -f "$CORE_DIR/clash_meta.tar.gz"
 chmod +x "$CORE_DIR/clash_meta"
 echo "SUCCESS: OpenClash meta core injected."

@@ -131,11 +131,10 @@ echo "SUCCESS: OpenClash dev core injected. Version: $(./clash -v 2>/dev/null ||
 cd -
 
 # -------------------- OpenClash Meta 内核注入 --------------------
-echo "INFO: Downloading clash meta core..."
+echo "INFO: Downloading clash meta core (Smart版)..."
 CORE_DIR="package/feeds/luci/luci-app-openclash/root/etc/openclash/core"
 
-# 直接用固定的 Prerelease-Alpha tag，不走 API
-META_URL="https://github.com/MetaCubeX/mihomo/releases/download/Prerelease-Alpha/mihomo-linux-armv7-alpha.gz"
+META_URL="https://github.com/vernesong/mihomo/releases/download/Prerelease-Alpha/mihomo-linux-armv7-alpha.gz"
 
 echo "INFO: Meta URL: $META_URL"
 
@@ -148,6 +147,6 @@ if [ $? -ne 0 ]; then
 fi
 
 gzip -d "$CORE_DIR/clash_meta.gz"
-mv "$CORE_DIR/clash_meta" "$CORE_DIR/clash_meta" 2>/dev/null || true
+mv "$CORE_DIR"/mihomo-linux-armv7* "$CORE_DIR/clash_meta" 2>/dev/null || true
 chmod +x "$CORE_DIR/clash_meta"
-echo "SUCCESS: OpenClash meta core injected."
+echo "SUCCESS: OpenClash meta core (Smart版) injected."

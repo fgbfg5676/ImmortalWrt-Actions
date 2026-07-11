@@ -134,19 +134,31 @@ cd -
 echo "INFO: Downloading clash meta core (Smart版)..."
 CORE_DIR="package/feeds/luci/luci-app-openclash/root/etc/openclash/core"
 
-META_URL="https://github.com/vernesong/mihomo/releases/download/Prerelease-Alpha/mihomo-linux-armv7-alpha.gz"
+# 列出 vernesong/mihomo Prerelease-Alpha 的所有文件
+echo "INFO: Fetching asset list..."
+ASSET_LIST=$(curl -fsSL \
+  -H "Accept: application/vnd.github+json" \
+  "https://api.github.com/repos/vernesong/mihomo/releases/tags/Prerelease-Alpha" \
+  | grep -o '"browser_download_url": *"[^"]*"' \
+  | grep -o 'https://[^"]*')
+
+echo "INFO: Available assets:"
+echo "$ASSET_LIST"
+
+# 筛选 armv7 的 gz 文件
+META_URL=$(echo "$ASSET_LIST" | grep "armv7" | grep "\.gz$" | head -1)
+
+if [ -z "$META_URL" ]; then
+  echo "ERROR: No armv7 gz asset found!"
+  exit 1
+fi
 
 echo "INFO: Meta URL: $META_URL"
-
 curl -fL --retry 3 --connect-timeout 30 \
   -o "$CORE_DIR/clash_meta.gz" \
   "$META_URL"
-if [ $? -ne 0 ]; then
-  echo "ERROR: Meta core download failed!"
-  exit 1
-fi
 
 gzip -d "$CORE_DIR/clash_meta.gz"
 mv "$CORE_DIR"/mihomo-linux-armv7* "$CORE_DIR/clash_meta" 2>/dev/null || true
 chmod +x "$CORE_DIR/clash_meta"
-echo "SUCCESS: OpenClash meta core (Smart版) injected."
+echo "SUCCESS: OpenClash meta core injected."

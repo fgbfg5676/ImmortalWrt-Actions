@@ -108,29 +108,33 @@ done
 # -------------------- OpenClash 内核硬核注入 --------------------
 echo "INFO: Starting OpenClash core injection..."
 
-# 1. 强行创建精准的内核存放缓存路径
-mkdir -p package/feeds/luci/luci-app-openclash/root/etc/openclash/core
+CORE_DIR="package/feeds/luci/luci-app-openclash/root/etc/openclash/core"
+mkdir -p "$CORE_DIR"
 
-# 2. 从官方 master 分支的绝对静态依赖路径下载最新编译的稳定 dev 核心（对齐你说的包名）
-# 官方在 2026 年将所有的预编译依赖都收纳进了这个 core-latest/dev/ 目录下，这条链接绝对不存在 404
-curl -fL -o package/feeds/luci/luci-app-openclash/root/etc/openclash/core/clash.tar.gz "https://raw.githubusercontent.com/vernesong/OpenClash/master/core-latest/dev/clash-linux-armv7.tar.gz"
+# 正确的 dev 内核下载地址（来自 Release tag: Clash）
+CORE_URL="https://github.com/vernesong/OpenClash/releases/download/Clash/clash-linux-armv7.tar.gz"
 
-# 3. 进入目录解压并正确重命名
-cd package/feeds/luci/luci-app-openclash/root/etc/openclash/core/
-if [ -f "clash.tar.gz" ]; then
-    tar -zxf clash.tar.gz
-    
-    # 官方解压出来文件名通常为 clash-linux-armv7，我们强行统一重命名为 OpenClash 后台识别的唯一名字 "clash"
-    mv clash-linux-armv7 clash 2>/dev/null || true
-    rm -f clash.tar.gz
-    echo "SUCCESS: Core extracted and renamed successfully."
-else
-    echo "ERROR: clash.tar.gz download failed!"
-    exit 1
+echo "INFO: Downloading clash dev core..."
+curl -fL --retry 3 --connect-timeout 30 \
+  -o "$CORE_DIR/clash.tar.gz" \
+  "$CORE_URL"
+
+if [ $? -ne 0 ]; then
+  echo "ERROR: Download failed! URL: $CORE_URL"
+  exit 1
 fi
+
+cd "$CORE_DIR"
+tar -zxf clash.tar.gz
+
+# 解压出来的文件名就是 clash（无需重命名）
+# 但保险起见做一次检查
+if [ ! -f "clash" ]; then
+  # 如果文件名带架构后缀，统一改名
+  mv clash-linux-armv7 clash 2>/dev/null || true
+fi
+
+rm -f clash.tar.gz
+chmod +x clash
+echo "SUCCESS: OpenClash dev core injected. Version: $(./clash -v 2>/dev/null || echo 'unknown')"
 cd -
-
-# 4. 强行赋予编译树中的内核可执行权限
-chmod +x package/feeds/luci/luci-app-openclash/root/etc/openclash/core/* 2>/dev/null || true
-
-echo "SUCCESS: OpenClash latest core injected successfully!"

@@ -136,6 +136,7 @@ META_URL=$(curl -fsSL https://api.github.com/repos/MetaCubeX/mihomo/releases \
   | grep "browser_download_url" \
   | grep "linux-armv7" \
   | grep "alpha" \
+  | grep "\.gz\"" \
   | grep -v ".sha256" \
   | head -1 \
   | cut -d '"' -f 4)

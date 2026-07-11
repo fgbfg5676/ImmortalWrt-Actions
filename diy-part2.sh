@@ -105,58 +105,35 @@ for i in "${!PLUGIN_LIST[@]}"; do
     fi
 done
 
-# -------------------- OpenClash 内核硬核注入 --------------------
-echo "INFO: Starting OpenClash core injection..."
-CORE_DIR="package/feeds/luci/luci-app-openclash/root/etc/openclash/core"
-mkdir -p "$CORE_DIR"
-
-# 正确的 dev 内核下载地址（来自 Release tag: Clash）
-CORE_URL="https://github.com/vernesong/OpenClash/releases/download/Clash/clash-linux-armv7.tar.gz"
-echo "INFO: Downloading clash dev core..."
-curl -fL --retry 3 --connect-timeout 30 \
-  -o "$CORE_DIR/clash.tar.gz" \
-  "$CORE_URL"
-if [ $? -ne 0 ]; then
-  echo "ERROR: Download failed! URL: $CORE_URL"
-  exit 1
-fi
-cd "$CORE_DIR"
-tar -zxf clash.tar.gz
-if [ ! -f "clash" ]; then
-  mv clash-linux-armv7 clash 2>/dev/null || true
-fi
-rm -f clash.tar.gz
-chmod +x clash
-echo "SUCCESS: OpenClash dev core injected. Version: $(./clash -v 2>/dev/null || echo 'unknown')"
-cd -
-
 # -------------------- OpenClash Meta 内核注入 --------------------
 echo "INFO: Downloading clash meta core (Smart版)..."
 CORE_DIR="package/feeds/luci/luci-app-openclash/root/etc/openclash/core"
+mkdir -p "$CORE_DIR"
 
-# 列出 vernesong/mihomo Prerelease-Alpha 的所有文件
-echo "INFO: Fetching asset list..."
+# 获取 vernesong/mihomo Prerelease-Alpha 资产列表
 ASSET_LIST=$(curl -fsSL \
   -H "Accept: application/vnd.github+json" \
   "https://api.github.com/repos/vernesong/mihomo/releases/tags/Prerelease-Alpha" \
   | grep -o '"browser_download_url": *"[^"]*"' \
   | grep -o 'https://[^"]*')
 
-echo "INFO: Available assets:"
-echo "$ASSET_LIST"
+META_URL=$(echo "$ASSET_LIST" | grep "linux-armv7" | grep "\.gz$" | head -1)
 
-# 筛选 armv7 的 gz 文件
-META_URL=$(echo "$ASSET_LIST" | grep "armv7" | grep "\.gz$" | head -1)
+echo "INFO: Meta URL: $META_URL"
 
 if [ -z "$META_URL" ]; then
-  echo "ERROR: No armv7 gz asset found!"
+  echo "ERROR: No linux-armv7 gz asset found!"
   exit 1
 fi
 
-echo "INFO: Meta URL: $META_URL"
 curl -fL --retry 3 --connect-timeout 30 \
   -o "$CORE_DIR/clash_meta.gz" \
   "$META_URL"
+
+if [ $? -ne 0 ]; then
+  echo "ERROR: Meta core download failed!"
+  exit 1
+fi
 
 gzip -d "$CORE_DIR/clash_meta.gz"
 mv "$CORE_DIR"/mihomo-linux-armv7* "$CORE_DIR/clash_meta" 2>/dev/null || true

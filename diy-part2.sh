@@ -128,3 +128,6 @@ mv "$CORE_DIR/clash" "$CORE_DIR/clash_meta"
 rm -f "$CORE_DIR/clash_meta.tar.gz"
 chmod +x "$CORE_DIR/clash_meta"
 echo "SUCCESS: OpenClash meta core injected."
+
+# 启用 passwall2
+echo "CONFIG_PACKAGE_luci-app-passwall2=y" >> .config
